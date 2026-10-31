@@ -12,7 +12,8 @@ import {
   FileSpreadsheet,
   Cpu,
   X,
-  Check
+  Check,
+  BookOpen
 } from 'lucide-react';
 
 interface CaseMeta {
@@ -419,6 +420,16 @@ export default function App() {
             >
               <FileCode size={14} />
               <span>Export Script.py</span>
+            </a>
+
+            <a
+              href={`/api/cases/${selectedCaseId}/export-notebook`}
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center space-x-1.5 text-xs font-medium border border-zinc-300 hover:border-zinc-900 text-zinc-800 px-3 py-1.5 rounded transition"
+            >
+              <BookOpen size={14} />
+              <span>Export Notebook.ipynb</span>
             </a>
 
             <button
@@ -1334,6 +1345,38 @@ export default function App() {
                     >
                       <Download size={14} />
                       <span>Download OOF Predictions</span>
+                    </a>
+                  </div>
+
+                  <div className="border border-zinc-200 rounded p-6 space-y-3">
+                    <h4 className="font-semibold text-sm text-zinc-950">3. Standalone Solution Script (.py)</h4>
+                    <p className="text-xs text-zinc-500 leading-relaxed">
+                      Self-contained clean Python code for deliverables. Runs from terminal: `python solution.py`.
+                    </p>
+                    <a
+                      href={`/api/cases/${selectedCaseId}/export-script`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center space-x-2 border border-zinc-300 hover:border-zinc-900 bg-white text-zinc-800 text-xs font-semibold py-2.5 px-4 rounded transition"
+                    >
+                      <FileCode size={14} />
+                      <span>Download Solution Script (.py)</span>
+                    </a>
+                  </div>
+
+                  <div className="border border-zinc-200 rounded p-6 space-y-3">
+                    <h4 className="font-semibold text-sm text-zinc-950">4. Jupyter Solution Notebook (.ipynb)</h4>
+                    <p className="text-xs text-zinc-500 leading-relaxed">
+                      Interactive competition notebook with methodology markdown cells ready to submit to judges.
+                    </p>
+                    <a
+                      href={`/api/cases/${selectedCaseId}/export-notebook`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center space-x-2 bg-zinc-950 hover:bg-zinc-800 text-white text-xs font-semibold py-2.5 px-4 rounded transition"
+                    >
+                      <BookOpen size={14} />
+                      <span>Download Jupyter Notebook (.ipynb)</span>
                     </a>
                   </div>
                 </div>

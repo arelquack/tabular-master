@@ -807,14 +807,224 @@ def main():
     results = pipeline.run(train_df, test_df)
 
     print("\\n============================================================")
-    print(f"CHAMPION: {{results['champion']['model']}} | SCORE: {{results['champion']['score']:.5f}}")
-    print(f"Submission saved to: {{results['champion'].get('submission_path')}}")
+    print(f"CHAMPION: {results.get('champion_model')} | SCORE: {results.get('champion_score', 0):.5f}")
+    print(f"Submission saved to: {results.get('submission_path', 'submission.csv')}")
     print("============================================================\\n")
 
 if __name__ == "__main__":
     main()
 '''
-    return Response(content=script, media_type="text/plain")
+    return Response(content=script, media_type="text/plain", headers={"Content-Disposition": f"attachment; filename={case_id}_solution.py"})
+
+@app.get("/api/cases/{case_id}/export-notebook")
+def export_standalone_notebook(case_id: str):
+    case_dir = os.path.join(CASES_DIR, case_id)
+    case_json = os.path.join(case_dir, "case.json")
+    with open(case_json, "r") as f:
+        meta = json.load(f)
+
+    hook_file = os.path.join(case_dir, "feature_hook.py")
+    hook_code = ""
+    if os.path.exists(hook_file):
+        with open(hook_file, "r") as hf:
+            hook_code = hf.read()
+    else:
+        hook_code = """class CustomFeatures(BaseFeatureHook):
+    def transform(self, train_df: pd.DataFrame, test_df: pd.DataFrame = None):
+        return train_df, test_df"""
+
+    nb = {
+        "cells": [
+            {
+                "cell_type": "markdown",
+                "metadata": {},
+                "source": [
+                    f"# Machine Learning Solution: {meta.get('name', case_id)}\n",
+                    "### Competitive Leak-Free Tabular Pipeline & Multi-Model Ensembling\n",
+                    f"- **Task Type**: `{meta.get('task_type', 'binary')}`\n",
+                    f"- **Target Column**: `{meta.get('target_col')}`\n",
+                    f"- **Evaluation Metric**: `{meta.get('eval_metric', 'roc_auc').upper()}`\n",
+                    f"- **Cross-Validation**: `{meta.get('n_splits', 5)}-Fold {meta.get('cv_strategy', 'stratified_kfold')}`\n"
+                ]
+            },
+            {
+                "cell_type": "markdown",
+                "metadata": {},
+                "source": [
+                    "## 1. Setup & Environment Dependencies\n",
+                    "Import core tabular machine learning packages."
+                ]
+            },
+            {
+                "cell_type": "code",
+                "execution_count": None,
+                "metadata": {},
+                "outputs": [],
+                "source": [
+                    "import os\n",
+                    "import sys\n",
+                    "import time\n",
+                    "import json\n",
+                    "import numpy as np\n",
+                    "import pandas as pd\n",
+                    "import lightgbm as lgb\n",
+                    "import xgboost as xgb\n",
+                    "import catboost as cb\n",
+                    "import sklearn\n",
+                    "from tabular_pipeline import PipelineConfig, TabularPipeline, BaseFeatureHook\n",
+                    "\n",
+                    "print(f\"Pandas     : {pd.__version__}\")\n",
+                    "print(f\"LightGBM   : {lgb.__version__}\")\n",
+                    "print(f\"XGBoost    : {xgb.__version__}\")\n",
+                    "print(f\"CatBoost   : {cb.__version__}\")"
+                ]
+            },
+            {
+                "cell_type": "markdown",
+                "metadata": {},
+                "source": [
+                    "## 2. Dataset Ingestion & Integrity Audit\n",
+                    "Load train and test datasets."
+                ]
+            },
+            {
+                "cell_type": "code",
+                "execution_count": None,
+                "metadata": {},
+                "outputs": [],
+                "source": [
+                    f"train_path = '{meta['train_path']}'\n",
+                    f"test_path = '{meta.get('test_path', '')}'\n",
+                    "\n",
+                    "train_df = pd.read_csv(train_path)\n",
+                    "test_df = pd.read_csv(test_path) if test_path and os.path.exists(test_path) else None\n",
+                    "\n",
+                    "print(f\"Training Matrix : {train_df.shape[0]:,} rows x {train_df.shape[1]} columns\")\n",
+                    "if test_df is not None:\n",
+                    "    print(f\"Testing Matrix  : {test_df.shape[0]:,} rows x {test_df.shape[1]} columns\")\n",
+                    "train_df.head(5)"
+                ]
+            },
+            {
+                "cell_type": "markdown",
+                "metadata": {},
+                "source": [
+                    "## 3. Domain Feature Engineering Hook\n",
+                    "Custom domain transformations (contextual imputations, interaction terms, ratio features)."
+                ]
+            },
+            {
+                "cell_type": "code",
+                "execution_count": None,
+                "metadata": {},
+                "outputs": [],
+                "source": [
+                    hook_code
+                ]
+            },
+            {
+                "cell_type": "markdown",
+                "metadata": {},
+                "source": [
+                    "## 4. Pipeline Execution & Leak-Free Cross-Validation\n",
+                    "Execute 5-fold cross-validation on LightGBM, XGBoost, and CatBoost with automated ensembling."
+                ]
+            },
+            {
+                "cell_type": "code",
+                "execution_count": None,
+                "metadata": {},
+                "outputs": [],
+                "source": [
+                    f"cfg = PipelineConfig(\n",
+                    f"    project_name='{meta.get('name', case_id)}',\n",
+                    f"    output_dir='experiments/{case_id}_notebook_run',\n",
+                    f"    seed={meta.get('seed', 2026)},\n",
+                    f"    id_col='{meta.get('id_col')}',\n",
+                    f"    target_col='{meta.get('target_col')}',\n",
+                    f"    task_type='{meta.get('task_type', 'binary')}',\n",
+                    f"    eval_metric='{meta.get('eval_metric', 'roc_auc')}',\n",
+                    f"    cv_strategy='{meta.get('cv_strategy', 'stratified_kfold')}',\n",
+                    f"    n_splits={meta.get('n_splits', 5)},\n",
+                    f"    models={json.dumps(meta.get('models', ['lgbm', 'xgb', 'catboost']))},\n",
+                    f"    model_params={json.dumps(meta.get('model_params', {}))},\n",
+                    f"    ensemble_methods=['mean', 'rank', 'opt_weights', 'hill_climbing', 'stacking'],\n",
+                    f"    run_adversarial_validation=True,\n",
+                    f"    save_oof_predictions=True,\n",
+                    f"    save_test_predictions=True\n",
+                    f")\n",
+                    "\n",
+                    "pipeline = TabularPipeline(cfg, feature_hook=CustomFeatures())\n",
+                    "results = pipeline.run(train_df, test_df)\n"
+                ]
+            },
+            {
+                "cell_type": "markdown",
+                "metadata": {},
+                "source": [
+                    "## 5. Validation Leaderboard & Champion Model Evaluation\n",
+                    "Display Out-Of-Fold validation scores and gain across evaluated models."
+                ]
+            },
+            {
+                "cell_type": "code",
+                "execution_count": None,
+                "metadata": {},
+                "outputs": [],
+                "source": [
+                    "scores = results.get('all_scores', {})\n",
+                    "leaderboard = pd.DataFrame(list(scores.items()), columns=['Strategy', 'OOF Score']).sort_values('OOF Score', ascending=False).reset_index(drop=True)\n",
+                    "leaderboard['Rank'] = np.arange(1, len(leaderboard) + 1)\n",
+                    "print(f\"CHAMPION: {results.get('champion_model')} | SCORE: {results.get('champion_score', 0):.5f}\")\n",
+                    "leaderboard[['Rank', 'Strategy', 'OOF Score']]"
+                ]
+            },
+            {
+                "cell_type": "markdown",
+                "metadata": {},
+                "source": [
+                    "## 6. Submission File Sanity Audit\n",
+                    "Verify shape, missing values, and value ranges for competition submission."
+                ]
+            },
+            {
+                "cell_type": "code",
+                "execution_count": None,
+                "metadata": {},
+                "outputs": [],
+                "source": [
+                    "sub_path = os.path.join(cfg.output_dir, 'submission.csv')\n",
+                    "if os.path.exists(sub_path):\n",
+                    "    sub = pd.read_csv(sub_path)\n",
+                    "    print(f\"Submission Shape : {sub.shape}\")\n",
+                    "    print(f\"Missing Values   : {sub.isna().sum().sum()}\")\n",
+                    "    print(sub.head())\n",
+                    "else:\n",
+                    "    print('No test dataset provided. OOF models ready for inference.')"
+                ]
+            }
+        ],
+        "metadata": {
+            "kernelspec": {
+                "display_name": "Python 3",
+                "language": "python",
+                "name": "python3"
+            },
+            "language_info": {
+                "name": "python",
+                "version": "3.11"
+            }
+        },
+        "nbformat": 4,
+        "nbformat_minor": 5
+    }
+
+    nb_json = json.dumps(nb, indent=2)
+    return Response(
+        content=nb_json,
+        media_type="application/x-ipynb+json",
+        headers={"Content-Disposition": f"attachment; filename={case_id}_solution.ipynb"}
+    )
 
 # Mount static frontend build if dist folder exists
 frontend_dist = os.path.join(ROOT_DIR, "frontend", "dist")
