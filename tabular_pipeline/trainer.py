@@ -19,6 +19,7 @@ class CrossValidatorTrainer:
         categorical_encoder: str = "ordinal",
         seed: int = 42,
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+        is_aborted: Optional[Callable[[], bool]] = None,
     ):
         self.task_type = task_type
         self.eval_metric = eval_metric
@@ -27,6 +28,7 @@ class CrossValidatorTrainer:
         self.categorical_encoder = categorical_encoder
         self.seed = seed
         self.progress_callback = progress_callback
+        self.is_aborted = is_aborted
 
     def train_model(
         self,
@@ -69,6 +71,8 @@ class CrossValidatorTrainer:
         splits = list(splitter.split(X_train, y_train, groups=groups))
 
         for fold, (train_idx, val_idx) in enumerate(splits):
+            if self.is_aborted and self.is_aborted():
+                raise InterruptedError("Execution stopped by user.")
             if self.progress_callback is not None:
                 self.progress_callback({
                     "stage": "training_fold_start",

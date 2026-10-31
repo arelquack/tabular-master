@@ -17,7 +17,8 @@ import {
   Save,
   BarChart2,
   Activity,
-  FolderOpen
+  FolderOpen,
+  Square
 } from 'lucide-react';
 
 interface CaseMeta {
@@ -381,6 +382,18 @@ class CustomFeatures(BaseFeatureHook):
     }
   };
 
+  // Stop Pipeline
+  const handleStopPipeline = async () => {
+    if (!selectedCaseId) return;
+    try {
+      await fetch(`/api/cases/${selectedCaseId}/stop`, { method: 'POST' });
+      setRunning(false);
+      fetchCaseDetail(selectedCaseId);
+    } catch (e) {
+      console.error('Failed to stop pipeline:', e);
+    }
+  };
+
   // Run Caruana
   const handleRunCaruana = async () => {
     if (!selectedCaseId) return;
@@ -576,16 +589,24 @@ class CustomFeatures(BaseFeatureHook):
               <span>Export Notebook.ipynb</span>
             </a>
 
-            <button
-              onClick={handleExecute}
-              disabled={running}
-              className={`flex items-center space-x-1.5 px-4 py-1.5 rounded text-xs font-semibold text-white transition ${
-                running ? 'bg-zinc-400 cursor-not-allowed' : 'bg-zinc-950 hover:bg-zinc-800'
-              }`}
-            >
-              {running ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
-              <span>{running ? 'Running Pipeline...' : 'Run Pipeline'}</span>
-            </button>
+            {running ? (
+              <button
+                onClick={handleStopPipeline}
+                className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded text-xs font-semibold text-white bg-red-600 hover:bg-red-700 transition shadow-sm"
+                title="Halt current training execution immediately"
+              >
+                <Square size={12} className="fill-current" />
+                <span>Stop Pipeline</span>
+              </button>
+            ) : (
+              <button
+                onClick={handleExecute}
+                className="flex items-center space-x-1.5 px-4 py-1.5 rounded text-xs font-semibold text-white bg-zinc-950 hover:bg-zinc-800 transition"
+              >
+                <Play size={14} />
+                <span>Run Pipeline</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -654,8 +675,18 @@ class CustomFeatures(BaseFeatureHook):
                     </div>
                   </div>
 
-                  <div className="text-sm font-mono font-bold text-white">
-                    {caseDetail.job_state.progress}%
+                  <div className="flex items-center space-x-3">
+                    <button
+                      onClick={handleStopPipeline}
+                      className="flex items-center space-x-1 bg-red-600 hover:bg-red-700 text-white text-[11px] font-semibold px-2.5 py-1 rounded transition shadow-sm"
+                      title="Halt active pipeline execution"
+                    >
+                      <Square size={10} className="fill-current" />
+                      <span>Stop Pipeline</span>
+                    </button>
+                    <div className="text-sm font-mono font-bold text-white">
+                      {caseDetail.job_state.progress}%
+                    </div>
                   </div>
                 </div>
 

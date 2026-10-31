@@ -50,6 +50,7 @@ os.makedirs(CASES_DIR, exist_ok=True)
 job_state = {}
 eda_cache = {}
 tune_state = {}
+stop_events = {}
 
 class CreateCaseRequest(BaseModel):
     id: str
@@ -436,6 +437,9 @@ def inspect_dataset(req: InspectDatasetRequest):
         return {"exists": False, "error": str(e)}
 
 def run_pipeline_thread(case_id: str, meta: dict, case_dir: str):
+    stop_event = threading.Event()
+    stop_events[case_id] = stop_event
+
     job_state[case_id] = {
         "status": "running",
         "progress": 5,
@@ -528,7 +532,7 @@ def run_pipeline_thread(case_id: str, meta: dict, case_dir: str):
         log(f"Starting {cfg.n_splits}-fold CV on {', '.join(cfg.models).upper()}...")
         job_state[case_id]["progress"] = 22
 
-        pipeline = TabularPipeline(cfg, feature_hook=hook, progress_callback=on_progress)
+        pipeline = TabularPipeline(cfg, feature_hook=hook, progress_callback=on_progress, is_aborted=stop_event.is_set)
         results = pipeline.run(train_df, test_df)
 
         job_state[case_id]["progress"] = 100
@@ -539,9 +543,25 @@ def run_pipeline_thread(case_id: str, meta: dict, case_dir: str):
         champ_score = results.get('champion_score', 0.0)
         log(f"All stages finished! Champion: {champ_name} (Score: {champ_score:.5f})")
 
+    except InterruptedError:
+        job_state[case_id]["status"] = "stopped"
+        job_state[case_id]["current_model"] = "Stopped"
+        job_state[case_id]["current_fold"] = "Cancelled"
+        log("Pipeline execution successfully halted by user.")
     except Exception as e:
         job_state[case_id]["status"] = "error"
         log(f"Error during execution: {str(e)}")
+
+@app.post("/api/cases/{case_id}/stop")
+def stop_case_pipeline(case_id: str):
+    if case_id in stop_events:
+        stop_events[case_id].set()
+    if case_id in job_state:
+        job_state[case_id]["status"] = "stopped"
+        job_state[case_id]["current_model"] = "Stopped"
+        job_state[case_id]["current_fold"] = "Cancelled"
+        job_state[case_id]["logs"].append(f"[{time.strftime('%H:%M:%S')}] Stop signal sent by user. Halting...")
+    return {"status": "stopped", "case_id": case_id}
 
 @app.post("/api/cases/{case_id}/run")
 def run_case_pipeline(case_id: str, req: Optional[RunPipelineRequest] = None):

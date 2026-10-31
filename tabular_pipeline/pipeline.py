@@ -23,12 +23,14 @@ class TabularPipeline:
         self,
         config: PipelineConfig,
         feature_hook: Optional[Union[BaseFeatureHook, Callable]] = None,
-        progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None
+        progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+        is_aborted: Optional[Callable[[], bool]] = None
     ):
         self.config = config
         self.config.validate()
         self.feature_hook = feature_hook
         self.progress_callback = progress_callback
+        self.is_aborted = is_aborted
         self.detector = DataDetector()
         self.results: Dict[str, Any] = {}
         os.makedirs(self.config.output_dir, exist_ok=True)
@@ -157,10 +159,13 @@ class TabularPipeline:
             categorical_encoder=self.config.categorical_encoder,
             seed=self.config.seed,
             progress_callback=self.progress_callback,
+            is_aborted=self.is_aborted,
         )
 
         model_results = {}
         for m_name in self.config.models:
+            if self.is_aborted and self.is_aborted():
+                raise InterruptedError("Execution stopped by user.")
             m_params = self.config.model_params.get(m_name, {})
             res = trainer.train_model(
                 model_name=m_name,
