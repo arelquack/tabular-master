@@ -16,7 +16,8 @@ import {
   BookOpen,
   Save,
   BarChart2,
-  Activity
+  Activity,
+  FolderOpen
 } from 'lucide-react';
 
 interface CaseMeta {
@@ -133,6 +134,9 @@ export default function App() {
   const [inspectPath, setInspectPath] = useState<string>('');
   const [inspectData, setInspectData] = useState<any>(null);
   const [inspectLoading, setInspectLoading] = useState<boolean>(false);
+  const [scannedCsvs, setScannedCsvs] = useState<Array<{ path: string; filename: string; size_mb: number }>>([]);
+  const [isBrowsingTrain, setIsBrowsingTrain] = useState<boolean>(false);
+  const [isBrowsingTest, setIsBrowsingTest] = useState<boolean>(false);
 
   const [newCase, setNewCase] = useState({
     id: '',
@@ -170,6 +174,24 @@ export default function App() {
   useEffect(() => {
     fetchCases();
   }, []);
+
+  const fetchScannedCsvs = async () => {
+    try {
+      const res = await fetch('/api/scan-csvs');
+      const data = await res.json();
+      if (data?.files) {
+        setScannedCsvs(data.files);
+      }
+    } catch (err) {
+      console.error('Failed to scan workspace CSVs:', err);
+    }
+  };
+
+  useEffect(() => {
+    if (isModalOpen) {
+      fetchScannedCsvs();
+    }
+  }, [isModalOpen]);
 
   // Fetch selected case details & EDA
   const fetchCaseDetail = async (id: string) => {
@@ -390,22 +412,79 @@ class CustomFeatures(BaseFeatureHook):
     }
   };
 
-  // Inspect Dataset file (in modal)
-  const handleInspect = async () => {
-    if (!inspectPath) return;
+  // Inspect Dataset file (in modal) with smart column detection
+  const handleInspect = async (pathOverride?: string) => {
+    const targetPath = pathOverride || inspectPath || newCase.train_path;
+    if (!targetPath) return;
     setInspectLoading(true);
     try {
       const res = await fetch('/api/inspect-dataset', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: inspectPath })
+        body: JSON.stringify({ path: targetPath })
       });
       const data = await res.json();
       setInspectData(data);
+
+      if (data.columns && Array.isArray(data.columns)) {
+        const colNames: string[] = data.columns.map((c: any) => c.column);
+        
+        // Auto-detect ID column
+        const detectedId = colNames.find(c => {
+          const lower = c.toLowerCase();
+          return lower === 'id' || lower === 'passengerid' || lower === 'sk_id_curr' || lower.endsWith('_id') || lower === 'identifier';
+        });
+
+        // Auto-detect Target column
+        const detectedTarget = colNames.find(c => {
+          const lower = c.toLowerCase();
+          return ['target', 'satisfaction', 'transported', 'label', 'survived', 'class', 'outcome', 'y'].includes(lower);
+        });
+
+        // Auto-infer ID / Name if currently empty
+        const filename = targetPath.split(/[\\/]/).pop()?.replace('.csv', '') || 'case';
+        const inferredId = filename.toLowerCase().replace(/[^a-z0-9_]/g, '_');
+        const inferredName = filename.replace(/[_-]/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+
+        setNewCase(prev => ({
+          ...prev,
+          train_path: targetPath,
+          id: prev.id || inferredId,
+          name: prev.name || inferredName,
+          id_col: prev.id_col || detectedId || '',
+          target_col: prev.target_col || detectedTarget || ''
+        }));
+      }
     } catch (e) {
       console.error(e);
     } finally {
       setInspectLoading(false);
+    }
+  };
+
+  // Browse file using native Windows File Dialog
+  const handleBrowseFile = async (field: 'train' | 'test') => {
+    if (field === 'train') setIsBrowsingTrain(true);
+    else setIsBrowsingTest(true);
+
+    try {
+      const title = field === 'train' ? 'Select Training Dataset (CSV)' : 'Select Test Dataset (CSV)';
+      const res = await fetch(`/api/browse-file?title=${encodeURIComponent(title)}`);
+      const data = await res.json();
+      if (data?.path) {
+        if (field === 'train') {
+          setNewCase(prev => ({ ...prev, train_path: data.path }));
+          setInspectPath(data.path);
+          handleInspect(data.path);
+        } else {
+          setNewCase(prev => ({ ...prev, test_path: data.path }));
+        }
+      }
+    } catch (err) {
+      console.error('File dialog error:', err);
+    } finally {
+      if (field === 'train') setIsBrowsingTrain(false);
+      else setIsBrowsingTest(false);
     }
   };
 
@@ -1828,7 +1907,14 @@ class CustomFeatures(BaseFeatureHook):
               </div>
 
               <div>
-                <label className="text-xs font-semibold text-zinc-700">Train CSV File Path</label>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-zinc-700">Train CSV File Path</label>
+                  {scannedCsvs.length > 0 && (
+                    <span className="text-[10px] text-zinc-500 font-mono">
+                      {scannedCsvs.length} workspace CSVs detected
+                    </span>
+                  )}
+                </div>
                 <div className="flex space-x-2 mt-1">
                   <input
                     type="text"
@@ -1843,7 +1929,17 @@ class CustomFeatures(BaseFeatureHook):
                   />
                   <button
                     type="button"
-                    onClick={handleInspect}
+                    onClick={() => handleBrowseFile('train')}
+                    disabled={isBrowsingTrain}
+                    className="px-3 py-2 border border-zinc-300 hover:border-zinc-950 bg-zinc-50 hover:bg-zinc-100 text-xs font-medium rounded whitespace-nowrap flex items-center space-x-1 text-zinc-900 transition"
+                    title="Open native Windows Explorer file picker"
+                  >
+                    {isBrowsingTrain ? <Loader2 size={12} className="animate-spin" /> : <FolderOpen size={12} />}
+                    <span>{isBrowsingTrain ? 'Picking...' : 'Browse...'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleInspect()}
                     disabled={inspectLoading}
                     className="px-3 py-2 border border-zinc-300 hover:border-zinc-900 text-xs font-medium rounded whitespace-nowrap flex items-center space-x-1"
                   >
@@ -1851,6 +1947,29 @@ class CustomFeatures(BaseFeatureHook):
                     <span>{inspectLoading ? 'Inspecting...' : 'Inspect'}</span>
                   </button>
                 </div>
+                {scannedCsvs.length > 0 && (
+                  <div className="mt-1.5 flex items-center space-x-2">
+                    <span className="text-zinc-500 text-[11px] whitespace-nowrap">Quick Select:</span>
+                    <select
+                      onChange={e => {
+                        if (e.target.value) {
+                          setNewCase(prev => ({ ...prev, train_path: e.target.value }));
+                          setInspectPath(e.target.value);
+                          handleInspect(e.target.value);
+                        }
+                      }}
+                      className="w-full text-[11px] border border-zinc-200 rounded px-2 py-1 font-mono text-zinc-800 bg-zinc-50 focus:outline-none focus:border-zinc-950 truncate"
+                      value=""
+                    >
+                      <option value="" disabled>Choose detected CSV from project workspace...</option>
+                      {scannedCsvs.map(csv => (
+                        <option key={csv.path} value={csv.path}>
+                          {csv.path} ({csv.size_mb} MB)
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
 
               {inspectData?.columns && (
@@ -1868,13 +1987,46 @@ class CustomFeatures(BaseFeatureHook):
 
               <div>
                 <label className="text-xs font-semibold text-zinc-700">Test CSV File Path (Optional)</label>
-                <input
-                  type="text"
-                  placeholder="e.g. playground-series/dataset/test.csv"
-                  value={newCase.test_path}
-                  onChange={e => setNewCase({ ...newCase, test_path: e.target.value })}
-                  className="mt-1 w-full text-xs border border-zinc-300 rounded p-2 font-mono text-zinc-900 focus:outline-none focus:border-zinc-950"
-                />
+                <div className="flex space-x-2 mt-1">
+                  <input
+                    type="text"
+                    placeholder="e.g. playground-series/dataset/test.csv"
+                    value={newCase.test_path}
+                    onChange={e => setNewCase({ ...newCase, test_path: e.target.value })}
+                    className="w-full text-xs border border-zinc-300 rounded p-2 font-mono text-zinc-900 focus:outline-none focus:border-zinc-950"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleBrowseFile('test')}
+                    disabled={isBrowsingTest}
+                    className="px-3 py-2 border border-zinc-300 hover:border-zinc-950 bg-zinc-50 hover:bg-zinc-100 text-xs font-medium rounded whitespace-nowrap flex items-center space-x-1 text-zinc-900 transition"
+                    title="Open native Windows Explorer file picker"
+                  >
+                    {isBrowsingTest ? <Loader2 size={12} className="animate-spin" /> : <FolderOpen size={12} />}
+                    <span>{isBrowsingTest ? 'Picking...' : 'Browse...'}</span>
+                  </button>
+                </div>
+                {scannedCsvs.length > 0 && (
+                  <div className="mt-1.5 flex items-center space-x-2">
+                    <span className="text-zinc-500 text-[11px] whitespace-nowrap">Quick Select:</span>
+                    <select
+                      onChange={e => {
+                        if (e.target.value) {
+                          setNewCase(prev => ({ ...prev, test_path: e.target.value }));
+                        }
+                      }}
+                      className="w-full text-[11px] border border-zinc-200 rounded px-2 py-1 font-mono text-zinc-800 bg-zinc-50 focus:outline-none focus:border-zinc-950 truncate"
+                      value=""
+                    >
+                      <option value="" disabled>Choose detected CSV from project workspace...</option>
+                      {scannedCsvs.map(csv => (
+                        <option key={csv.path} value={csv.path}>
+                          {csv.path} ({csv.size_mb} MB)
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-4">

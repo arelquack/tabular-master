@@ -33,6 +33,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.middleware("http")
+async def add_no_cache_headers(request, call_next):
+    response = await call_next(request)
+    p = request.url.path
+    if p.endswith(".html") or p == "/" or p.endswith(".js") or p.endswith(".css"):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
 CASES_DIR = os.path.join(ROOT_DIR, "cases")
 os.makedirs(CASES_DIR, exist_ok=True)
 
@@ -347,6 +357,55 @@ def create_case(req: CreateCaseRequest):
             f.write(req.hook_code)
 
     return {"status": "created", "case_id": req.id}
+
+@app.get("/api/scan-csvs")
+def scan_workspace_csvs():
+    """Scans the workspace recursively for CSV datasets."""
+    csv_list = []
+    ignored_dirs = {".venv", "venv", "node_modules", "experiments", "catboost_info", ".git", "experiments_backup_archive", "dist"}
+    for root, dirs, files in os.walk(ROOT_DIR):
+        dirs[:] = [d for d in dirs if d not in ignored_dirs and not d.startswith(".")]
+        for f in files:
+            if f.endswith(".csv"):
+                full_p = os.path.join(root, f)
+                rel_p = os.path.relpath(full_p, ROOT_DIR).replace("\\", "/")
+                size_mb = round(os.path.getsize(full_p) / (1024 * 1024), 2)
+                csv_list.append({
+                    "path": rel_p,
+                    "filename": f,
+                    "size_mb": size_mb
+                })
+    csv_list.sort(key=lambda x: x["path"])
+    return {"files": csv_list}
+
+@app.get("/api/browse-file")
+def browse_file(title: str = "Select CSV Dataset"):
+    """Opens the native Windows Explorer File Dialog to choose a CSV dataset."""
+    import subprocess
+    ps_cmd = f"""
+Add-Type -AssemblyName System.Windows.Forms
+$dialog = New-Object System.Windows.Forms.OpenFileDialog
+$dialog.Filter = "CSV Files (*.csv)|*.csv|All Files (*.*)|*.*"
+$dialog.Title = "{title}"
+$dialog.InitialDirectory = [System.IO.Path]::GetFullPath(".")
+if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {{
+    Write-Output $dialog.FileName
+}}
+"""
+    try:
+        proc = subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd], capture_output=True, text=True, timeout=120)
+        selected_file = proc.stdout.strip()
+        if selected_file:
+            try:
+                rel = os.path.relpath(selected_file, ROOT_DIR)
+                if not rel.startswith(".."):
+                    return {"path": rel.replace("\\", "/"), "full_path": selected_file.replace("\\", "/")}
+            except Exception:
+                pass
+            return {"path": selected_file.replace("\\", "/"), "full_path": selected_file.replace("\\", "/")}
+    except Exception as e:
+        print(f"Error in browse_file: {e}")
+    return {"path": ""}
 
 @app.post("/api/inspect-dataset")
 def inspect_dataset(req: InspectDatasetRequest):
