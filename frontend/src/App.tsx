@@ -14,7 +14,9 @@ import {
   X,
   Check,
   BookOpen,
-  Save
+  Save,
+  BarChart2,
+  Activity
 } from 'lucide-react';
 
 interface CaseMeta {
@@ -104,6 +106,7 @@ export default function App() {
   const [edaData, setEdaData] = useState<EdaData | null>(null);
   const [edaLoading, setEdaLoading] = useState<boolean>(false);
   const [selectedFeature, setSelectedFeature] = useState<string>('');
+  const [edaViewMode, setEdaViewMode] = useState<'composite' | 'trend' | 'bars'>('composite');
 
   // Model Selection for Pipeline Execution
   const [selectedModels, setSelectedModels] = useState<string[]>(['lgbm', 'xgb', 'catboost']);
@@ -774,56 +777,317 @@ class CustomFeatures(BaseFeatureHook):
                             </div>
                           )}
 
-                          {/* Distribution Bars */}
-                          {activeCol?.distribution && activeCol.distribution.length > 0 ? (
-                            <div className="space-y-3 pt-2">
-                              <div className="flex justify-between items-center text-xs text-zinc-500">
-                                <span>Bin Range / Category</span>
-                                <div className="flex items-center space-x-6 text-[11px] font-mono">
-                                  <span className="flex items-center space-x-1">
-                                    <span className="inline-block w-2.5 h-2.5 bg-zinc-900 rounded-sm"></span>
-                                    <span>Frequency (% of Total)</span>
-                                  </span>
-                                  {activeCol.distribution.some(d => d.target_rate !== undefined) && (
-                                    <span className="flex items-center space-x-1">
-                                      <span className="inline-block w-2.5 h-2.5 bg-zinc-400 rounded-sm"></span>
-                                      <span>Target Positive Rate (% {edaData.summary.target_col})</span>
-                                    </span>
-                                  )}
-                                </div>
+                          {/* View Mode Toggle: Composite vs Line Curve vs Bars */}
+                          {activeCol?.distribution && activeCol.distribution.length > 0 && (
+                            <div className="flex items-center justify-between border-b border-zinc-100 pb-3">
+                              <span className="text-xs font-semibold text-zinc-700">Visualization Perspective:</span>
+                              <div className="flex items-center space-x-1 bg-zinc-100 p-1 rounded">
+                                <button
+                                  type="button"
+                                  onClick={() => setEdaViewMode('composite')}
+                                  className={`flex items-center space-x-1.5 px-3 py-1 text-xs font-mono rounded transition ${
+                                    edaViewMode === 'composite' ? 'bg-white text-zinc-950 font-bold shadow-xs' : 'text-zinc-600 hover:text-zinc-900'
+                                  }`}
+                                >
+                                  <Activity size={12} />
+                                  <span>Composite Curve</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setEdaViewMode('trend')}
+                                  className={`flex items-center space-x-1.5 px-3 py-1 text-xs font-mono rounded transition ${
+                                    edaViewMode === 'trend' ? 'bg-white text-zinc-950 font-bold shadow-xs' : 'text-zinc-600 hover:text-zinc-900'
+                                  }`}
+                                >
+                                  <TrendingUp size={12} />
+                                  <span>Trend Line Curve</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setEdaViewMode('bars')}
+                                  className={`flex items-center space-x-1.5 px-3 py-1 text-xs font-mono rounded transition ${
+                                    edaViewMode === 'bars' ? 'bg-white text-zinc-950 font-bold shadow-xs' : 'text-zinc-600 hover:text-zinc-900'
+                                  }`}
+                                >
+                                  <BarChart2 size={12} />
+                                  <span>Bar Breakdown</span>
+                                </button>
                               </div>
+                            </div>
+                          )}
 
-                              <div className="space-y-2.5">
-                                {activeCol.distribution.map(item => {
-                                  const maxPct = Math.max(...activeCol.distribution!.map(d => d.pct), 1);
-                                  const barWidth = Math.max(3, Math.round((item.pct / maxPct) * 100));
+                          {/* Chart Container */}
+                          {activeCol?.distribution && activeCol.distribution.length > 0 ? (
+                            <div className="space-y-4 pt-1">
+                              {edaViewMode !== 'bars' ? (
+                                /* SVG Target Response Curve / Trend Line Chart */
+                                (() => {
+                                  const dist = activeCol.distribution!;
+                                  const validPoints = dist.filter(d => d.target_rate !== undefined);
+                                  const globalTargetPct = edaData.target_distribution.length === 2 ? edaData.target_distribution[1].percentage : 50;
+
+                                  // Calculate Monotonicity & Inflection Jump
+                                  let trendNature = 'Stable / Neutral';
+                                  let maxDelta = 0;
+                                  let inflectionFrom = '';
+                                  let inflectionTo = '';
+                                  let maxDeltaSign = '+';
+
+                                  if (validPoints.length >= 2) {
+                                    let inc = 0;
+                                    let dec = 0;
+                                    for (let i = 0; i < validPoints.length - 1; i++) {
+                                      const diff = validPoints[i + 1].target_rate! - validPoints[i].target_rate!;
+                                      if (diff > 2) inc++;
+                                      else if (diff < -2) dec++;
+
+                                      if (Math.abs(diff) > maxDelta) {
+                                        maxDelta = Math.abs(diff);
+                                        maxDeltaSign = diff >= 0 ? '+' : '-';
+                                        inflectionFrom = validPoints[i].label;
+                                        inflectionTo = validPoints[i + 1].label;
+                                      }
+                                    }
+
+                                    if (inc > 0 && dec === 0) trendNature = 'Monotonically Increasing';
+                                    else if (dec > 0 && inc === 0) trendNature = 'Monotonically Decreasing';
+                                    else if (inc > 0 && dec > 0) trendNature = 'Non-Linear / Inflection Curve';
+                                  }
+
+                                  const svgWidth = 680;
+                                  const svgHeight = 220;
+                                  const padLeft = 45;
+                                  const padRight = 30;
+                                  const padTop = 25;
+                                  const padBottom = 45;
+                                  const plotW = svgWidth - padLeft - padRight;
+                                  const plotH = svgHeight - padTop - padBottom;
+
+                                  const getY = (val: number) => padTop + (1 - val / 100) * plotH;
+                                  const getX = (i: number) => padLeft + (i + 0.5) * (plotW / validPoints.length);
+                                  const maxPct = Math.max(...dist.map(d => d.pct), 1);
+                                  const baseLineY = getY(globalTargetPct);
+
+                                  const polylinePts = validPoints.map((item, i) => `${getX(i)},${getY(item.target_rate!)}`).join(' ');
+
                                   return (
-                                    <div key={item.label} className="grid grid-cols-12 gap-3 items-center text-xs font-mono">
-                                      <div className="col-span-3 truncate text-zinc-800 font-medium" title={item.label}>
-                                        {item.label}
-                                      </div>
-                                      <div className="col-span-6 space-y-1">
-                                        <div className="w-full bg-zinc-100 h-3 rounded overflow-hidden">
-                                          <div className="bg-zinc-900 h-full rounded transition-all duration-300" style={{ width: `${barWidth}%` }} />
-                                        </div>
-                                        {item.target_rate !== undefined && (
-                                          <div className="w-full bg-zinc-100 h-1.5 rounded overflow-hidden">
-                                            <div className="bg-zinc-400 h-full rounded" style={{ width: `${item.target_rate}%` }} />
-                                          </div>
-                                        )}
-                                      </div>
-                                      <div className="col-span-3 flex items-center justify-end space-x-3 text-right">
-                                        <span className="text-zinc-900 font-semibold">{item.pct}%</span>
-                                        {item.target_rate !== undefined && (
-                                          <span className="text-zinc-500 text-[11px]">
-                                            ({item.target_rate}% target)
+                                    <div className="space-y-4">
+                                      {/* Legend Header */}
+                                      <div className="flex items-center justify-between text-[11px] font-mono text-zinc-500">
+                                        <div className="flex items-center space-x-6">
+                                          <span className="flex items-center space-x-1.5">
+                                            <span className="inline-block w-3 h-0.5 bg-zinc-950"></span>
+                                            <span className="text-zinc-900 font-semibold">Target Response Curve (% {edaData.summary.target_col})</span>
                                           </span>
+                                          {edaViewMode === 'composite' && (
+                                            <span className="flex items-center space-x-1.5">
+                                              <span className="inline-block w-2.5 h-2.5 bg-zinc-200 border border-zinc-300 rounded-xs"></span>
+                                              <span>Population Density Bar</span>
+                                            </span>
+                                          )}
+                                          <span className="flex items-center space-x-1.5">
+                                            <span className="inline-block w-3 h-0.5 border-t border-dashed border-zinc-400"></span>
+                                            <span>Dataset Avg ({globalTargetPct}%)</span>
+                                          </span>
+                                        </div>
+                                        <span className="text-zinc-400">Y-Axis: Target Probability (0% - 100%)</span>
+                                      </div>
+
+                                      {/* Responsive SVG Chart */}
+                                      <div className="w-full bg-zinc-50/40 border border-zinc-200 rounded p-2 overflow-x-auto">
+                                        <svg viewBox={`0 0 ${svgWidth} ${svgHeight}`} className="w-full h-auto min-w-[500px]">
+                                          {/* Horizontal Grid Lines */}
+                                          {[0, 25, 50, 75, 100].map(v => (
+                                            <g key={v}>
+                                              <line
+                                                x1={padLeft}
+                                                y1={getY(v)}
+                                                x2={svgWidth - padRight}
+                                                y2={getY(v)}
+                                                stroke="#e4e4e7"
+                                                strokeWidth="1"
+                                                strokeDasharray="2 3"
+                                              />
+                                              <text
+                                                x={padLeft - 6}
+                                                y={getY(v) + 3}
+                                                textAnchor="end"
+                                                fontSize="9"
+                                                fontFamily="monospace"
+                                                fill="#71717a"
+                                              >
+                                                {v}%
+                                              </text>
+                                            </g>
+                                          ))}
+
+                                          {/* Dataset Baseline Average Dashed Line */}
+                                          <line
+                                            x1={padLeft}
+                                            y1={baseLineY}
+                                            x2={svgWidth - padRight}
+                                            y2={baseLineY}
+                                            stroke="#a1a1aa"
+                                            strokeWidth="1.5"
+                                            strokeDasharray="4 4"
+                                          />
+
+                                          {/* Composite Background Density Bars */}
+                                          {edaViewMode === 'composite' &&
+                                            validPoints.map((item, i) => {
+                                              const barW = Math.max(12, Math.min(32, (plotW / validPoints.length) * 0.5));
+                                              const h = (item.pct / maxPct) * plotH;
+                                              return (
+                                                <rect
+                                                  key={item.label}
+                                                  x={getX(i) - barW / 2}
+                                                  y={padTop + plotH - h}
+                                                  width={barW}
+                                                  height={h}
+                                                  fill="#e4e4e7"
+                                                  stroke="#d4d4d8"
+                                                  rx="1.5"
+                                                />
+                                              );
+                                            })}
+
+                                          {/* Target Response Polyline */}
+                                          <polyline
+                                            points={polylinePts}
+                                            fill="none"
+                                            stroke="#09090b"
+                                            strokeWidth="2.5"
+                                            strokeLinecap="round"
+                                            strokeLinejoin="round"
+                                          />
+
+                                          {/* Data Point Circles and Text Badges */}
+                                          {validPoints.map((item, i) => {
+                                            const cx = getX(i);
+                                            const cy = getY(item.target_rate!);
+                                            return (
+                                              <g key={item.label}>
+                                                <circle
+                                                  cx={cx}
+                                                  cy={cy}
+                                                  r="4.5"
+                                                  fill="#ffffff"
+                                                  stroke="#09090b"
+                                                  strokeWidth="2.5"
+                                                />
+                                                <text
+                                                  x={cx}
+                                                  y={cy - 9}
+                                                  textAnchor="middle"
+                                                  fontSize="10"
+                                                  fontFamily="monospace"
+                                                  fontWeight="700"
+                                                  fill="#09090b"
+                                                >
+                                                  {item.target_rate}%
+                                                </text>
+                                                {/* X Axis Label */}
+                                                <text
+                                                  x={cx}
+                                                  y={svgHeight - 14}
+                                                  textAnchor="middle"
+                                                  fontSize="9"
+                                                  fontFamily="monospace"
+                                                  fill="#52525b"
+                                                >
+                                                  {item.label}
+                                                </text>
+                                              </g>
+                                            );
+                                          })}
+                                        </svg>
+                                      </div>
+
+                                      {/* Inflection & Monotonicity Insight Panel */}
+                                      <div className="border border-zinc-200 rounded p-4 bg-zinc-50 flex flex-col md:flex-row md:items-center justify-between gap-4 text-xs font-mono">
+                                        <div className="space-y-1">
+                                          <div className="flex items-center space-x-2">
+                                            <span className="font-semibold text-zinc-950 uppercase">Curve Diagnosis:</span>
+                                            <span className="bg-zinc-900 text-white px-2 py-0.5 rounded text-[11px] font-bold">
+                                              {trendNature}
+                                            </span>
+                                          </div>
+                                          <p className="text-zinc-600 font-sans text-xs">
+                                            {trendNature === 'Non-Linear / Inflection Curve'
+                                              ? 'Complex non-linear response detected. GBDT trees will benefit from threshold boundary splits.'
+                                              : trendNature === 'Monotonically Increasing'
+                                              ? 'Strict positive linear signal. Highly predictive monotonic ranking feature.'
+                                              : 'Monotonically decreasing signal. Inversely proportional to positive target probability.'}
+                                          </p>
+                                        </div>
+
+                                        {maxDelta > 0 && (
+                                          <div className="border border-zinc-300 bg-white p-2.5 rounded text-right space-y-0.5 shrink-0">
+                                            <div className="text-[10px] uppercase text-zinc-500 font-semibold">Max Inflection Jump</div>
+                                            <div className="font-bold text-zinc-950 text-sm">
+                                              {maxDeltaSign}{maxDelta.toFixed(1)}% shift
+                                            </div>
+                                            <div className="text-[10px] text-zinc-500 truncate max-w-[200px]">
+                                              Between "{inflectionFrom}" & "{inflectionTo}"
+                                            </div>
+                                          </div>
                                         )}
                                       </div>
                                     </div>
                                   );
-                                })}
-                              </div>
+                                })()
+                              ) : (
+                                /* Classic Bar Distribution View */
+                                <div className="space-y-3 pt-2">
+                                  <div className="flex justify-between items-center text-xs text-zinc-500">
+                                    <span>Bin Range / Category</span>
+                                    <div className="flex items-center space-x-6 text-[11px] font-mono">
+                                      <span className="flex items-center space-x-1">
+                                        <span className="inline-block w-2.5 h-2.5 bg-zinc-900 rounded-sm"></span>
+                                        <span>Frequency (% of Total)</span>
+                                      </span>
+                                      {activeCol.distribution.some(d => d.target_rate !== undefined) && (
+                                        <span className="flex items-center space-x-1">
+                                          <span className="inline-block w-2.5 h-2.5 bg-zinc-400 rounded-sm"></span>
+                                          <span>Target Positive Rate (% {edaData.summary.target_col})</span>
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  <div className="space-y-2.5">
+                                    {activeCol.distribution.map(item => {
+                                      const maxPct = Math.max(...activeCol.distribution!.map(d => d.pct), 1);
+                                      const barWidth = Math.max(3, Math.round((item.pct / maxPct) * 100));
+                                      return (
+                                        <div key={item.label} className="grid grid-cols-12 gap-3 items-center text-xs font-mono">
+                                          <div className="col-span-3 truncate text-zinc-800 font-medium" title={item.label}>
+                                            {item.label}
+                                          </div>
+                                          <div className="col-span-6 space-y-1">
+                                            <div className="w-full bg-zinc-100 h-3 rounded overflow-hidden">
+                                              <div className="bg-zinc-900 h-full rounded transition-all duration-300" style={{ width: `${barWidth}%` }} />
+                                            </div>
+                                            {item.target_rate !== undefined && (
+                                              <div className="w-full bg-zinc-100 h-1.5 rounded overflow-hidden">
+                                                <div className="bg-zinc-400 h-full rounded" style={{ width: `${item.target_rate}%` }} />
+                                              </div>
+                                            )}
+                                          </div>
+                                          <div className="col-span-3 flex items-center justify-end space-x-3 text-right">
+                                            <span className="text-zinc-900 font-semibold">{item.pct}%</span>
+                                            {item.target_rate !== undefined && (
+                                              <span className="text-zinc-500 text-[11px]">
+                                                ({item.target_rate}% target)
+                                              </span>
+                                            )}
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           ) : (
                             <div className="py-8 text-center text-xs text-zinc-400">
