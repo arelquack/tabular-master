@@ -119,8 +119,8 @@ export default function App() {
   const [hookSaved, setHookSaved] = useState<boolean>(false);
 
   // Optuna Tuning state
-  const [tuneModel, setTuneModel] = useState<'lgbm' | 'xgb' | 'catboost'>('lgbm');
-  const [tuneTrials, setTuneTrials] = useState<number>(15);
+  const [tuneModel, setTuneModel] = useState<'lgbm' | 'xgb' | 'catboost' | 'all'>('all');
+  const [tuneTrials, setTuneTrials] = useState<number>(30);
   const [tuning, setTuning] = useState<boolean>(false);
   const [tuneStatus, setTuneStatus] = useState<any>(null);
 
@@ -1517,49 +1517,51 @@ class CustomFeatures(BaseFeatureHook):
                 </div>
 
                 {/* Optuna Bayesian Hyperparameter Optimization Studio */}
-                <div className="border border-zinc-200 rounded p-6 bg-white space-y-5">
-                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-zinc-100 pb-4">
+                <div className="border border-[#E5E9E6] rounded-2xl p-6 bg-white space-y-5 shadow-sm">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[#E5E9E6] pb-4">
                     <div>
                       <div className="flex items-center space-x-2">
-                        <h3 className="font-bold text-sm text-zinc-950 uppercase tracking-tight">Automated Hyperparameter Optimization (Optuna Engine)</h3>
-                        <span className="text-[10px] font-mono uppercase bg-zinc-900 text-white px-2 py-0.5 rounded">
+                        <h3 className="font-bold text-sm text-[#121816] uppercase tracking-tight">Automated Hyperparameter Optimization (Optuna Engine)</h3>
+                        <span className="text-[10px] font-mono uppercase bg-[#E8F3ED] text-[#164E33] border border-[#D2E7DC] px-2 py-0.5 rounded font-bold">
                           Bayesian TPE
                         </span>
                       </div>
-                      <p className="text-xs text-zinc-500 mt-1">
-                        Discovers deeper tree architectures, learning rates, and L1/L2 regularization to maximize OOF score without manual trial-and-error.
+                      <p className="text-xs text-[#76807B] mt-1">
+                        Discovers deeper tree architectures, learning rates, and L1/L2 regularization across single models or all 3 algorithms sequentially.
                       </p>
                     </div>
 
                     {/* Tuning Action Controls */}
-                    <div className="flex items-center space-x-3">
+                    <div className="flex items-center space-x-2.5">
                       <select
                         value={tuneModel}
                         onChange={e => setTuneModel(e.target.value as any)}
                         disabled={tuning}
-                        className="bg-zinc-50 border border-zinc-300 rounded px-3 py-1.5 text-xs font-mono font-medium text-zinc-900 focus:outline-none"
+                        className="bg-[#F8FAF9] border border-[#E5E9E6] hover:border-[#164E33] rounded-xl px-3 py-1.5 text-xs font-mono font-medium text-[#121816] focus:outline-none focus:border-[#164E33] transition"
                       >
-                        <option value="lgbm">LightGBM</option>
-                        <option value="xgb">XGBoost</option>
-                        <option value="catboost">CatBoost</option>
+                        <option value="all">All 3 Models (Sequential Auto-Tune)</option>
+                        <option value="lgbm">LightGBM Only</option>
+                        <option value="xgb">XGBoost Only</option>
+                        <option value="catboost">CatBoost Only</option>
                       </select>
 
                       <select
                         value={tuneTrials}
                         onChange={e => setTuneTrials(Number(e.target.value))}
                         disabled={tuning}
-                        className="bg-zinc-50 border border-zinc-300 rounded px-3 py-1.5 text-xs font-mono font-medium text-zinc-900 focus:outline-none"
+                        className="bg-[#F8FAF9] border border-[#E5E9E6] hover:border-[#164E33] rounded-xl px-3 py-1.5 text-xs font-mono font-medium text-[#121816] focus:outline-none focus:border-[#164E33] transition"
                       >
-                        <option value={10}>10 Trials (Fast)</option>
-                        <option value={15}>15 Trials (Balanced)</option>
-                        <option value={25}>25 Trials (Deep)</option>
+                        <option value={15}>15 Trials (Fast Exploration)</option>
+                        <option value={30}>30 Trials (Balanced - Recommended)</option>
+                        <option value={50}>50 Trials (Deep Optimization)</option>
+                        <option value={100}>100 Trials (Exhaustive)</option>
                       </select>
 
                       <button
                         onClick={handleStartTune}
                         disabled={tuning || running}
-                        className={`flex items-center space-x-1.5 px-4 py-1.5 rounded text-xs font-semibold text-white transition ${
-                          tuning || running ? 'bg-zinc-400 cursor-not-allowed' : 'bg-zinc-950 hover:bg-zinc-800'
+                        className={`flex items-center space-x-1.5 px-4 py-1.5 rounded-xl text-xs font-semibold text-white transition shadow-2xs ${
+                          tuning || running ? 'bg-[#98A29D] cursor-not-allowed' : 'bg-[#164E33] hover:bg-[#113C27]'
                         }`}
                       >
                         {tuning ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}
@@ -1571,36 +1573,62 @@ class CustomFeatures(BaseFeatureHook):
                   {/* Active Tuning Status or Results */}
                   {tuneStatus && tuneStatus.status !== 'idle' && (
                     <div className="space-y-4">
-                      <div className="grid grid-cols-3 gap-4">
-                        <div className="border border-zinc-200 rounded p-3 bg-zinc-50/50">
-                          <div className="text-[10px] uppercase font-semibold text-zinc-500">Optimization Status</div>
-                          <div className="text-sm font-bold text-zinc-900 mt-0.5 capitalize font-mono">{tuneStatus.status}</div>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                        <div className="border border-[#E5E9E6] rounded-xl p-3 bg-[#F8FAF9]">
+                          <div className="text-[10px] uppercase font-semibold text-[#76807B]">Optimization Status</div>
+                          <div className="text-sm font-bold text-[#121816] mt-0.5 capitalize font-mono">{tuneStatus.status}</div>
                         </div>
-                        <div className="border border-zinc-200 rounded p-3 bg-zinc-50/50">
-                          <div className="text-[10px] uppercase font-semibold text-zinc-500">Trials Progress</div>
-                          <div className="text-sm font-bold text-zinc-900 mt-0.5 font-mono">
+                        <div className="border border-[#E5E9E6] rounded-xl p-3 bg-[#F8FAF9]">
+                          <div className="text-[10px] uppercase font-semibold text-[#76807B]">Current Target</div>
+                          <div className="text-sm font-bold text-[#164E33] mt-0.5 font-mono">
+                            {tuneStatus.current_model || (tuneStatus.model === 'all' ? 'ALL 3' : tuneStatus.model?.toUpperCase())}
+                          </div>
+                        </div>
+                        <div className="border border-[#E5E9E6] rounded-xl p-3 bg-[#F8FAF9]">
+                          <div className="text-[10px] uppercase font-semibold text-[#76807B]">Trials Progress</div>
+                          <div className="text-sm font-bold text-[#121816] mt-0.5 font-mono">
                             {tuneStatus.current_trial || tuneStatus.trials?.length || 0} / {tuneStatus.total_trials || tuneTrials}
                           </div>
                         </div>
-                        <div className="border border-zinc-200 rounded p-3 bg-zinc-50/50">
-                          <div className="text-[10px] uppercase font-semibold text-zinc-500">Best Trial {meta?.eval_metric.toUpperCase()}</div>
-                          <div className="text-sm font-bold text-zinc-950 mt-0.5 font-mono">
+                        <div className="border border-[#E5E9E6] rounded-xl p-3 bg-[#F8FAF9]">
+                          <div className="text-[10px] uppercase font-semibold text-[#76807B]">Highest {meta?.eval_metric.toUpperCase()}</div>
+                          <div className="text-sm font-bold text-[#121816] mt-0.5 font-mono">
                             {tuneStatus.best_score ? tuneStatus.best_score.toFixed(5) : '-'}
                           </div>
                         </div>
                       </div>
 
+                      {/* Multi-model or Single-model Summary */}
+                      {tuneStatus.all_best_scores && Object.keys(tuneStatus.all_best_scores).length > 0 && (
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                          {['lgbm', 'xgb', 'catboost'].map(m => {
+                            const sc = tuneStatus.all_best_scores[m];
+                            if (sc === undefined) return null;
+                            return (
+                              <div key={m} className="border border-[#E5E9E6] rounded-xl p-3 bg-[#F8FAF9]">
+                                <div className="text-[10px] uppercase font-semibold text-[#76807B]">{m.toUpperCase()} Optimal Score</div>
+                                <div className="text-sm font-bold text-[#164E33] mt-0.5 font-mono">
+                                  {sc.toFixed(5)}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
                       {tuneStatus.best_params && (
-                        <div className="border border-zinc-200 rounded p-4 bg-zinc-50/30 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                          <div className="space-y-1">
-                            <div className="text-xs font-semibold text-zinc-950">Discovered Optimal Hyperparameters ({tuneModel.toUpperCase()})</div>
-                            <pre className="text-[11px] font-mono text-zinc-600 bg-white p-2.5 rounded border border-zinc-200 max-h-32 overflow-y-auto">
+                        <div className="border border-[#E5E9E6] rounded-xl p-4 bg-[#F8FAF9] flex flex-col md:flex-row md:items-center justify-between gap-4">
+                          <div className="space-y-1 overflow-hidden w-full">
+                            <div className="text-xs font-semibold text-[#121816]">
+                              Discovered Optimal Hyperparameters ({tuneStatus.model === 'all' ? 'All 3 Models' : tuneStatus.model?.toUpperCase()})
+                            </div>
+                            <pre className="text-[11px] font-mono text-[#4A5550] bg-white p-3 rounded-xl border border-[#E5E9E6] max-h-40 overflow-y-auto">
                               {JSON.stringify(tuneStatus.best_params, null, 2)}
                             </pre>
                           </div>
                           <button
                             onClick={handleApplyTunedParams}
-                            className="flex items-center space-x-1.5 bg-zinc-950 hover:bg-zinc-800 text-white text-xs font-semibold px-4 py-2 rounded transition whitespace-nowrap self-start md:self-auto"
+                            className="flex items-center space-x-1.5 bg-[#164E33] hover:bg-[#113C27] text-white text-xs font-semibold px-4 py-2 rounded-xl transition whitespace-nowrap self-start md:self-auto shadow-2xs"
                           >
                             <Check size={14} />
                             <span>Apply to Pipeline Config</span>
@@ -1609,7 +1637,7 @@ class CustomFeatures(BaseFeatureHook):
                       )}
 
                       {/* Optuna Console Log */}
-                      <div className="bg-zinc-950 text-zinc-100 rounded p-3 font-mono text-[11px] max-h-40 overflow-y-auto space-y-1">
+                      <div className="bg-[#121816] text-[#E8F3ED] rounded-xl p-3 font-mono text-[11px] max-h-40 overflow-y-auto space-y-1">
                         {tuneStatus.logs?.map((l: string, i: number) => (
                           <div key={i}>{l}</div>
                         ))}

@@ -605,15 +605,21 @@ def get_case_status(case_id: str):
     return job_state.get(case_id, {"status": "idle", "progress": 0, "logs": []})
 
 def run_tune_thread(case_id: str, model_name: str, n_trials: int, meta: dict, case_dir: str):
+    models_to_tune = ["lgbm", "xgb", "catboost"] if model_name.lower() == "all" else [model_name.lower()]
+    total_trials = len(models_to_tune) * n_trials
     tune_state[case_id] = {
         "status": "running",
         "model": model_name,
+        "current_model": models_to_tune[0].upper(),
         "current_trial": 0,
-        "total_trials": n_trials,
+        "total_trials": total_trials,
+        "trials_per_model": n_trials,
         "best_score": None,
         "best_params": None,
+        "all_best_params": {},
+        "all_best_scores": {},
         "trials": [],
-        "logs": [f"[{time.strftime('%H:%M:%S')}] Initializing Optuna study for {model_name.upper()}..."]
+        "logs": [f"[{time.strftime('%H:%M:%S')}] Initializing Optuna study ({'All 3 Models (Sequential)' if model_name.lower() == 'all' else model_name.upper()})..."]
     }
     def tlog(msg):
         tune_state[case_id]["logs"].append(f"[{time.strftime('%H:%M:%S')}] {msg}")
@@ -650,44 +656,82 @@ def run_tune_thread(case_id: str, model_name: str, n_trials: int, meta: dict, ca
         for col in X.select_dtypes(include=["object"]).columns:
             X[col] = X[col].astype("category").cat.codes
 
-        tlog(f"Starting {n_trials} Bayesian Optimization trials on {len(X):,} rows x {len(X.columns)} features...")
+        tlog(f"Preparing Optuna search space on {len(X):,} rows x {len(X.columns)} features ({total_trials} total trials scheduled)...")
 
-        def on_tune_progress(pinfo: dict):
-            trial_num = pinfo["trial"]
-            sc = pinfo["score"]
-            bsc = pinfo["best_score"]
-            is_best = pinfo["is_new_best"]
-            tune_state[case_id]["current_trial"] = trial_num
-            tune_state[case_id]["best_score"] = bsc
-            tune_state[case_id]["trials"].append({
-                "trial": trial_num,
-                "score": sc,
-                "best_score": bsc,
-                "is_new_best": is_best,
-                "params": pinfo["params"]
-            })
-            marker = " [NEW BEST]" if is_best else ""
-            tlog(f"Trial {trial_num}/{n_trials} -> Score: {sc:.5f} (Best: {bsc:.5f}){marker}")
+        higher_is_better = MetricEvaluator.is_higher_better(meta["eval_metric"])
+        overall_best_score = -float("inf") if higher_is_better else float("inf")
+        all_best_params = {}
+        all_best_scores = {}
+        trial_offset = 0
 
         tuner = HyperparameterTuner(
             task_type=meta["task_type"],
             eval_metric=meta["eval_metric"],
             seed=meta.get("seed", 2026),
-            progress_callback=on_tune_progress
+            progress_callback=None
         )
 
-        res = tuner.tune_model(
-            model_name=model_name,
-            X=X,
-            y=y,
-            n_trials=n_trials,
-            sample_size=60000,
-        )
+        for m in models_to_tune:
+            tune_state[case_id]["current_model"] = m.upper()
+            tlog(f"Starting {n_trials} Bayesian Optimization trials for {m.upper()}...")
+
+            def make_callback(curr_m, offset):
+                def on_tune_progress(pinfo: dict):
+                    trial_num = pinfo["trial"]
+                    overall_num = offset + trial_num
+                    sc = pinfo["score"]
+                    bsc = pinfo["best_score"]
+                    is_best = pinfo["is_new_best"]
+                    tune_state[case_id]["current_trial"] = overall_num
+                    tune_state[case_id]["current_model"] = curr_m.upper()
+                    
+                    curr_bs = tune_state[case_id]["best_score"]
+                    if curr_bs is None:
+                        tune_state[case_id]["best_score"] = sc
+                    elif higher_is_better and sc > curr_bs:
+                        tune_state[case_id]["best_score"] = sc
+                    elif not higher_is_better and sc < curr_bs:
+                        tune_state[case_id]["best_score"] = sc
+
+                    tune_state[case_id]["trials"].append({
+                        "trial": overall_num,
+                        "model": curr_m.upper(),
+                        "score": sc,
+                        "best_score": bsc,
+                        "is_new_best": is_best,
+                        "params": pinfo["params"]
+                    })
+                    marker = " [NEW BEST]" if is_best else ""
+                    tlog(f"[{curr_m.upper()}] Trial {trial_num}/{n_trials} -> Score: {sc:.5f} (Best: {bsc:.5f}){marker}")
+                return on_tune_progress
+
+            tuner.progress_callback = make_callback(m, trial_offset)
+            res = tuner.tune_model(
+                model_name=m,
+                X=X,
+                y=y,
+                n_trials=n_trials,
+                sample_size=60000,
+            )
+            all_best_params[m] = res["best_params"]
+            all_best_scores[m] = res["best_score"]
+            tlog(f"Completed {m.upper()} study! Best {meta['eval_metric'].upper()}: {res['best_score']:.5f}")
+
+            if higher_is_better:
+                if res["best_score"] > overall_best_score:
+                    overall_best_score = res["best_score"]
+            else:
+                if res["best_score"] < overall_best_score:
+                    overall_best_score = res["best_score"]
+
+            trial_offset += n_trials
 
         tune_state[case_id]["status"] = "completed"
-        tune_state[case_id]["best_score"] = res["best_score"]
-        tune_state[case_id]["best_params"] = res["best_params"]
-        tlog(f"Optuna Optimization Completed! Best {meta['eval_metric'].upper()}: {res['best_score']:.5f}")
+        tune_state[case_id]["best_score"] = overall_best_score
+        tune_state[case_id]["best_params"] = all_best_params if model_name.lower() == "all" else all_best_params[models_to_tune[0]]
+        tune_state[case_id]["all_best_params"] = all_best_params
+        tune_state[case_id]["all_best_scores"] = all_best_scores
+        tlog(f"Optuna Optimization Finished! Highest Single Model Score: {overall_best_score:.5f}")
 
     except Exception as e:
         tune_state[case_id]["status"] = "failed"
@@ -718,7 +762,7 @@ def get_tune_status(case_id: str):
 @app.post("/api/cases/{case_id}/tune-apply")
 def apply_tuned_params(case_id: str):
     t_info = tune_state.get(case_id)
-    if not t_info or not t_info.get("best_params"):
+    if not t_info or (not t_info.get("best_params") and not t_info.get("all_best_params")):
         raise HTTPException(status_code=400, detail="No tuned parameters available to apply.")
 
     case_dir = os.path.join(CASES_DIR, case_id)
@@ -729,13 +773,17 @@ def apply_tuned_params(case_id: str):
     if "model_params" not in meta:
         meta["model_params"] = {}
 
-    m_name = t_info["model"]
-    meta["model_params"][m_name] = t_info["best_params"]
+    m_name = t_info.get("model", "").lower()
+    if m_name == "all" and "all_best_params" in t_info:
+        for m, params in t_info["all_best_params"].items():
+            meta["model_params"][m] = params
+    else:
+        meta["model_params"][m_name] = t_info["best_params"]
 
     with open(case_json, "w") as f:
         json.dump(meta, f, indent=4)
 
-    return {"status": "applied", "model": m_name, "best_params": t_info["best_params"]}
+    return {"status": "applied", "model": m_name, "model_params": meta["model_params"]}
 
 @app.post("/api/cases/{case_id}/ensemble/hill-climb")
 def run_hill_climb(case_id: str):
