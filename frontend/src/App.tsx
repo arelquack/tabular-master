@@ -535,13 +535,16 @@ class CustomFeatures(BaseFeatureHook):
   }
 
   return (
-    <div className="min-h-screen bg-white text-zinc-950 font-sans antialiased">
+    <div className="min-h-screen bg-[#F4F5F6] text-[#121816] font-sans antialiased selection:bg-[#E8F3ED] selection:text-[#164E33]">
       {/* Top Header */}
-      <header className="border-b border-zinc-200 bg-white sticky top-0 z-20">
+      <header className="border-b border-[#E5E9E6] bg-white sticky top-0 z-20 shadow-2xs">
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center space-x-6">
-            <div>
-              <span className="font-bold tracking-tight text-lg text-zinc-950">TABULAR STUDIO</span>
+            <div className="flex items-center space-x-2.5">
+              <span className="font-bold tracking-tight text-base text-[#121816]">TABULAR STUDIO</span>
+              <span className="text-[10px] font-mono font-bold bg-[#E8F3ED] text-[#164E33] border border-[#D2E7DC] px-2 py-0.5 rounded-full">
+                NEXUS
+              </span>
             </div>
 
             {/* Case Selector */}
@@ -549,7 +552,7 @@ class CustomFeatures(BaseFeatureHook):
               <select
                 value={selectedCaseId}
                 onChange={e => setSelectedCaseId(e.target.value)}
-                className="bg-zinc-50 border border-zinc-300 rounded px-3 py-1.5 text-sm font-medium text-zinc-900 focus:outline-none focus:border-zinc-900"
+                className="bg-[#F8FAF9] border border-[#E5E9E6] hover:border-[#164E33] rounded-xl px-3 py-1.5 text-xs font-medium text-[#121816] focus:outline-none focus:border-[#164E33] transition"
               >
                 {cases.map(c => (
                   <option key={c.id} value={c.id}>
@@ -560,9 +563,9 @@ class CustomFeatures(BaseFeatureHook):
               
               <button
                 onClick={() => setIsModalOpen(true)}
-                className="flex items-center space-x-1 border border-zinc-300 hover:border-zinc-900 text-zinc-800 text-xs font-medium px-2.5 py-1.5 rounded transition"
+                className="flex items-center space-x-1.5 border border-[#E5E9E6] hover:border-[#164E33] hover:bg-[#F8FAF9] text-[#121816] text-xs font-medium px-3 py-1.5 rounded-xl transition shadow-2xs"
               >
-                <Plus size={14} />
+                <Plus size={13} />
                 <span>New Case</span>
               </button>
             </div>
@@ -573,9 +576,9 @@ class CustomFeatures(BaseFeatureHook):
               href={`/api/cases/${selectedCaseId}/export-script`}
               target="_blank"
               rel="noreferrer"
-              className="flex items-center space-x-1.5 text-xs font-medium border border-zinc-300 hover:border-zinc-900 text-zinc-800 px-3 py-1.5 rounded transition"
+              className="flex items-center space-x-1.5 text-xs font-medium border border-[#E5E9E6] hover:border-[#164E33] hover:bg-[#F8FAF9] text-[#121816] px-3 py-1.5 rounded-xl transition shadow-2xs"
             >
-              <FileCode size={14} />
+              <FileCode size={13} />
               <span>Export Script.py</span>
             </a>
 
@@ -583,16 +586,16 @@ class CustomFeatures(BaseFeatureHook):
               href={`/api/cases/${selectedCaseId}/export-notebook`}
               target="_blank"
               rel="noreferrer"
-              className="flex items-center space-x-1.5 text-xs font-medium border border-zinc-300 hover:border-zinc-900 text-zinc-800 px-3 py-1.5 rounded transition"
+              className="flex items-center space-x-1.5 text-xs font-medium border border-[#E5E9E6] hover:border-[#164E33] hover:bg-[#F8FAF9] text-[#121816] px-3 py-1.5 rounded-xl transition shadow-2xs"
             >
-              <BookOpen size={14} />
+              <BookOpen size={13} />
               <span>Export Notebook.ipynb</span>
             </a>
 
             {running ? (
               <button
                 onClick={handleStopPipeline}
-                className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded text-xs font-semibold text-white bg-red-600 hover:bg-red-700 transition shadow-sm"
+                className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 transition shadow-sm"
                 title="Halt current training execution immediately"
               >
                 <Square size={12} className="fill-current" />
@@ -601,9 +604,9 @@ class CustomFeatures(BaseFeatureHook):
             ) : (
               <button
                 onClick={handleExecute}
-                className="flex items-center space-x-1.5 px-4 py-1.5 rounded text-xs font-semibold text-white bg-zinc-950 hover:bg-zinc-800 transition"
+                className="flex items-center space-x-1.5 px-4 py-1.5 rounded-xl text-xs font-semibold text-white bg-[#164E33] hover:bg-[#123E28] transition shadow-sm"
               >
-                <Play size={14} />
+                <Play size={13} />
                 <span>Run Pipeline</span>
               </button>
             )}
@@ -625,16 +628,16 @@ class CustomFeatures(BaseFeatureHook):
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id as any)}
-                className={`flex items-center space-x-2 py-3 border-b-2 text-sm font-medium transition ${
+                className={`flex items-center space-x-2 py-3 border-b-2 text-xs font-medium transition ${
                   active
-                    ? 'border-zinc-950 text-zinc-950 font-semibold'
-                    : 'border-transparent text-zinc-500 hover:text-zinc-900'
+                    ? 'border-[#164E33] text-[#164E33] font-bold'
+                    : 'border-transparent text-[#76807B] hover:text-[#121816] hover:border-zinc-300'
                 }`}
               >
-                <span className={`text-[11px] font-mono px-1.5 py-0.2 rounded ${active ? 'bg-zinc-900 text-white' : 'bg-zinc-100 text-zinc-600'}`}>
+                <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded-md font-bold ${active ? 'bg-[#E8F3ED] text-[#164E33] border border-[#D2E7DC]' : 'bg-zinc-100 text-[#76807B]'}`}>
                   {tab.step}
                 </span>
-                <Icon size={16} />
+                <Icon size={14} />
                 <span>{tab.label}</span>
               </button>
             );
@@ -728,63 +731,76 @@ class CustomFeatures(BaseFeatureHook):
                   <>
                     {/* Executive Summary Metrics */}
                     <div className="grid grid-cols-4 gap-4">
-                      <div className="border border-zinc-200 rounded p-4 bg-zinc-50/50">
-                        <div className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Total Rows (Exact)</div>
-                        <div className="text-2xl font-bold mt-1 text-zinc-950 font-mono">
-                          {edaData.summary.total_rows.toLocaleString()}
+                      <div className="bg-white border border-[#E5E9E6] rounded-2xl p-5 shadow-sm flex flex-col justify-between">
+                        <div>
+                          <div className="text-[11px] font-bold uppercase tracking-wider text-[#76807B] font-mono">Total Rows</div>
+                          <div className="text-2xl font-bold mt-1 text-[#121816] font-mono">
+                            {edaData.summary.total_rows.toLocaleString()}
+                          </div>
                         </div>
-                        <div className="text-xs text-zinc-500 mt-1">Full Training Records</div>
+                        <div className="text-xs text-[#76807B] mt-2 pt-2 border-t border-[#E5E9E6]/60">Full Training Records</div>
                       </div>
 
-                      <div className="border border-zinc-200 rounded p-4 bg-zinc-50/50">
-                        <div className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Total Features</div>
-                        <div className="text-2xl font-bold mt-1 text-zinc-950 font-mono">
-                          {edaData.summary.total_cols} Cols
+                      <div className="bg-white border border-[#E5E9E6] rounded-2xl p-5 shadow-sm flex flex-col justify-between">
+                        <div>
+                          <div className="text-[11px] font-bold uppercase tracking-wider text-[#76807B] font-mono">Total Features</div>
+                          <div className="text-2xl font-bold mt-1 text-[#121816] font-mono">
+                            {edaData.summary.total_cols} Cols
+                          </div>
                         </div>
-                        <div className="text-xs text-zinc-500 mt-1">
-                          File Size: {edaData.summary.file_size_mb} MB
-                        </div>
-                      </div>
-
-                      <div className="border border-zinc-200 rounded p-4 bg-zinc-50/50">
-                        <div className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Missing Values (Sample)</div>
-                        <div className="text-2xl font-bold mt-1 text-zinc-950 font-mono">
-                          {edaData.summary.missing_pct_sample}
-                        </div>
-                        <div className="text-xs text-zinc-500 mt-1">
-                          {edaData.summary.missing_cells_sample.toLocaleString()} cells ({edaData.summary.null_cols_note || 'in sample'})
+                        <div className="text-xs text-[#76807B] mt-2 pt-2 border-t border-[#E5E9E6]/60">
+                          Dataset Size: <span className="font-semibold text-[#121816]">{edaData.summary.file_size_mb} MB</span>
                         </div>
                       </div>
 
-                      <div className="border border-zinc-200 rounded p-4 bg-zinc-50/50">
-                        <div className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Target Variable</div>
-                        <div className="text-2xl font-bold mt-1 text-zinc-950 font-mono truncate">
-                          {edaData.summary.target_col}
+                      <div className="bg-white border border-[#E5E9E6] rounded-2xl p-5 shadow-sm flex flex-col justify-between">
+                        <div>
+                          <div className="text-[11px] font-bold uppercase tracking-wider text-[#76807B] font-mono">Missing Values</div>
+                          <div className="text-2xl font-bold mt-1 text-[#121816] font-mono">
+                            {edaData.summary.missing_pct_sample}
+                          </div>
                         </div>
-                        <div className="text-xs text-zinc-500 mt-1">
-                          {edaData.target_distribution.length} Distinct Classes
+                        <div className="text-xs text-[#76807B] mt-2 pt-2 border-t border-[#E5E9E6]/60">
+                          <span className="font-semibold text-[#121816]">{edaData.summary.missing_cells_sample.toLocaleString()}</span> cells
+                          <div className="text-[11px] text-[#76807B] truncate mt-0.5" title={edaData.summary.null_cols_note}>
+                            {edaData.summary.null_cols_note?.startsWith("Across") 
+                              ? edaData.summary.null_cols_note 
+                              : `in ${edaData.summary.null_cols_note || 'sample'}`}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="bg-white border border-[#E5E9E6] rounded-2xl p-5 shadow-sm flex flex-col justify-between">
+                        <div>
+                          <div className="text-[11px] font-bold uppercase tracking-wider text-[#76807B] font-mono">Target Variable</div>
+                          <div className="text-2xl font-bold mt-1 text-[#121816] font-mono truncate">
+                            {edaData.summary.target_col}
+                          </div>
+                        </div>
+                        <div className="text-xs text-[#76807B] mt-2 pt-2 border-t border-[#E5E9E6]/60">
+                          <span className="font-semibold text-[#121816]">{edaData.target_distribution.length}</span> Distinct Classes
                         </div>
                       </div>
                     </div>
 
                     {/* Target Distribution & Correlation Ranking */}
-                    <div className="grid grid-cols-3 gap-8">
+                    <div className="grid grid-cols-3 gap-6">
                       {/* Target Class Balance */}
-                      <div className="border border-zinc-200 rounded p-5 bg-white space-y-4">
-                        <h3 className="font-semibold text-sm text-zinc-950">Target Class Balance</h3>
-                        <p className="text-xs text-zinc-500">
+                      <div className="bg-white border border-[#E5E9E6] rounded-2xl p-6 shadow-sm space-y-4">
+                        <h3 className="font-bold text-sm text-[#121816]">Target Class Balance</h3>
+                        <p className="text-xs text-[#76807B] leading-relaxed">
                           Class distribution in sample. Equal distribution indicates no class imbalance treatment needed.
                         </p>
 
-                        <div className="space-y-3 pt-2">
+                        <div className="space-y-3.5 pt-2">
                           {edaData.target_distribution.map(td => (
-                            <div key={td.label} className="space-y-1">
+                            <div key={td.label} className="space-y-1.5">
                               <div className="flex justify-between text-xs font-medium">
-                                <span className="font-mono text-zinc-900">{td.label}</span>
-                                <span className="text-zinc-500 font-mono">{td.percentage}% ({td.count.toLocaleString()})</span>
+                                <span className="font-mono font-semibold text-[#121816]">{td.label}</span>
+                                <span className="text-[#76807B] font-mono">{td.percentage}% ({td.count.toLocaleString()})</span>
                               </div>
-                              <div className="w-full bg-zinc-100 h-2.5 rounded overflow-hidden">
-                                <div className="bg-zinc-900 h-full rounded" style={{ width: `${td.percentage}%` }} />
+                              <div className="w-full bg-[#F4F5F6] h-2.5 rounded-full overflow-hidden border border-[#E5E9E6]/60">
+                                <div className="bg-[#164E33] h-full rounded-full" style={{ width: `${td.percentage}%` }} />
                               </div>
                             </div>
                           ))}
@@ -792,25 +808,27 @@ class CustomFeatures(BaseFeatureHook):
                       </div>
 
                       {/* Top Correlations with Target */}
-                      <div className="col-span-2 border border-zinc-200 rounded p-5 bg-white space-y-4">
+                      <div className="col-span-2 bg-white border border-[#E5E9E6] rounded-2xl p-6 shadow-sm space-y-4">
                         <div className="flex justify-between items-center">
-                          <h3 className="font-semibold text-sm text-zinc-950">Top Predictive Signals (Correlations with Target)</h3>
-                          <span className="text-xs font-mono text-zinc-500">Pearson Correlation (r)</span>
+                          <h3 className="font-bold text-sm text-[#121816]">Top Predictive Signals (Correlations with Target)</h3>
+                          <span className="text-[11px] font-mono bg-[#E8F3ED] text-[#164E33] px-2 py-0.5 rounded-md border border-[#D2E7DC]">
+                            Pearson (r)
+                          </span>
                         </div>
-                        <p className="text-xs text-zinc-500">
-                          Features with highest linear correlation magnitude with {edaData.summary.target_col}. Strong indicators for model splitting.
+                        <p className="text-xs text-[#76807B] leading-relaxed">
+                          Features with highest linear correlation magnitude with {edaData.summary.target_col}. Strong indicators for tree node splitting.
                         </p>
 
-                        <div className="grid grid-cols-2 gap-x-6 gap-y-2 pt-2">
+                        <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 pt-2">
                           {edaData.correlations.map((c, idx) => (
                             <div 
                               key={c.feature} 
                               onClick={() => setSelectedFeature(c.feature)}
-                              className="flex items-center justify-between text-xs font-mono py-1 border-b border-zinc-100 hover:bg-zinc-50 cursor-pointer px-1 rounded transition"
+                              className="flex items-center justify-between text-xs font-mono py-1.5 border-b border-[#E5E9E6]/60 hover:bg-[#F8FAF9] cursor-pointer px-2 rounded-lg transition"
                               title="Click to view distribution"
                             >
-                              <span className="truncate w-44 text-zinc-800 font-medium">#{idx + 1} {c.feature}</span>
-                              <span className={`font-semibold ${c.correlation >= 0 ? 'text-zinc-950' : 'text-zinc-500'}`}>
+                              <span className="truncate w-44 text-[#121816] font-medium">#{idx + 1} {c.feature}</span>
+                              <span className={`font-semibold ${c.correlation >= 0 ? 'text-[#164E33]' : 'text-[#76807B]'}`}>
                                 {c.correlation > 0 ? `+${c.correlation.toFixed(3)}` : c.correlation.toFixed(3)}
                               </span>
                             </div>
@@ -1419,47 +1437,47 @@ class CustomFeatures(BaseFeatureHook):
               <div className="space-y-8">
                 {/* 4 Status KPI Cards */}
                 <div className="grid grid-cols-4 gap-4">
-                  <div className="border border-zinc-200 rounded p-4 bg-zinc-50/50">
-                    <div className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Target Variable</div>
-                    <div className="text-xl font-bold mt-1 text-zinc-950">{meta?.target_col}</div>
-                    <div className="text-xs text-zinc-500 mt-1 capitalize">{meta?.task_type} Classification</div>
+                  <div className="bg-white border border-[#E5E9E6] rounded-2xl p-5 shadow-sm">
+                    <div className="text-[11px] font-bold uppercase tracking-wider text-[#76807B] font-mono">Target Variable</div>
+                    <div className="text-xl font-bold mt-1 text-[#121816] font-mono">{meta?.target_col}</div>
+                    <div className="text-xs text-[#76807B] mt-1 capitalize">{meta?.task_type} Classification</div>
                   </div>
 
-                  <div className="border border-zinc-200 rounded p-4 bg-zinc-50/50">
-                    <div className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Primary Metric</div>
-                    <div className="text-xl font-bold mt-1 text-zinc-950">{meta?.eval_metric.toUpperCase()}</div>
-                    <div className="text-xs text-zinc-500 mt-1">{meta?.n_splits}-Fold {meta?.cv_strategy}</div>
+                  <div className="bg-white border border-[#E5E9E6] rounded-2xl p-5 shadow-sm">
+                    <div className="text-[11px] font-bold uppercase tracking-wider text-[#76807B] font-mono">Primary Metric</div>
+                    <div className="text-xl font-bold mt-1 text-[#121816] font-mono">{meta?.eval_metric.toUpperCase()}</div>
+                    <div className="text-xs text-[#76807B] mt-1">{meta?.n_splits}-Fold {meta?.cv_strategy}</div>
                   </div>
 
-                  <div className="border border-zinc-200 rounded p-4 bg-zinc-50/50">
-                    <div className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+                  <div className="bg-white border border-[#E5E9E6] rounded-2xl p-5 shadow-sm">
+                    <div className="text-[11px] font-bold uppercase tracking-wider text-[#76807B] font-mono">
                       Best Single Model ({bestSingleName.toUpperCase() || 'N/A'})
                     </div>
-                    <div className="text-xl font-bold mt-1 text-zinc-950">
+                    <div className="text-xl font-bold mt-1 text-[#121816] font-mono">
                       {bestSingleScore ? bestSingleScore.toFixed(5) : 'Not Run'}
                     </div>
-                    <div className="text-xs text-zinc-500 mt-1">Single Model Baseline</div>
+                    <div className="text-xs text-[#76807B] mt-1">Single Model Baseline</div>
                   </div>
 
-                  <div className="border border-zinc-200 rounded p-4 bg-zinc-50/50">
-                    <div className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Champion Ensemble</div>
-                    <div className="text-xl font-bold mt-1 text-zinc-950 flex items-center space-x-2">
+                  <div className="bg-white border border-[#E5E9E6] rounded-2xl p-5 shadow-sm">
+                    <div className="text-[11px] font-bold uppercase tracking-wider text-[#76807B] font-mono">Champion Ensemble</div>
+                    <div className="text-xl font-bold mt-1 text-[#121816] font-mono flex items-center space-x-2">
                       <span>{championScore ? championScore.toFixed(5) : 'Not Run'}</span>
                       {championScore && bestSingleScore && (
-                        <span className="text-xs font-mono font-medium px-1.5 py-0.5 rounded bg-zinc-200 text-zinc-800">
+                        <span className="text-[11px] font-mono font-bold px-2 py-0.5 rounded-full bg-[#E8F3ED] text-[#164E33] border border-[#D2E7DC]">
                           +{ (championScore - bestSingleScore).toFixed(5) }
                         </span>
                       )}
                     </div>
-                    <div className="text-xs text-zinc-500 mt-1 font-mono truncate">{championModel || 'None'}</div>
+                    <div className="text-xs text-[#76807B] mt-1 font-mono truncate">{championModel || 'None'}</div>
                   </div>
                 </div>
 
                 {/* Active Model Selector for Distributed Team Training */}
-                <div className="border border-zinc-200 rounded p-4 bg-zinc-50/50 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="bg-white border border-[#E5E9E6] rounded-2xl p-5 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
                   <div className="space-y-0.5">
-                    <div className="text-xs font-bold uppercase tracking-tight text-zinc-950">Active Execution Models (Distributed Parallel Training)</div>
-                    <div className="text-xs text-zinc-500">
+                    <div className="text-xs font-bold uppercase tracking-tight text-[#121816]">Active Execution Models (Distributed Parallel Training)</div>
+                    <div className="text-xs text-[#76807B]">
                       Toggle which models to execute on this machine. Teammates can train single models in parallel and ensemble in Step 4.
                     </div>
                   </div>
@@ -1484,10 +1502,10 @@ class CustomFeatures(BaseFeatureHook):
                               setSelectedModels([...selectedModels, item.id]);
                             }
                           }}
-                          className={`flex items-center space-x-1.5 text-xs font-mono font-medium px-3 py-1.5 rounded border transition ${
+                          className={`flex items-center space-x-1.5 text-xs font-mono font-medium px-3.5 py-1.5 rounded-xl border transition ${
                             active 
-                              ? 'bg-zinc-950 text-white border-zinc-950 font-semibold' 
-                              : 'bg-white text-zinc-600 border-zinc-300 hover:border-zinc-800'
+                              ? 'bg-[#164E33] text-white border-[#164E33] font-semibold shadow-2xs' 
+                              : 'bg-white text-[#76807B] border-[#E5E9E6] hover:border-[#164E33]'
                           }`}
                         >
                           <span>{active ? '[x]' : '[ ]'}</span>

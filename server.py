@@ -210,7 +210,12 @@ def get_case_eda(case_id: str):
     file_size_mb = round(os.path.getsize(train_path) / (1024 * 1024), 2)
 
     null_cols = [c for c in df_sample.columns if df_sample[c].isna().sum() > 0]
-    null_cols_note = f"in {', '.join(null_cols)}" if null_cols else "No null cells"
+    if not null_cols:
+        null_cols_note = "Zero missing values"
+    elif len(null_cols) <= 3:
+        null_cols_note = f"in {', '.join(null_cols)}"
+    else:
+        null_cols_note = f"Across {len(null_cols)} columns (e.g. {', '.join(null_cols[:2])}, +{len(null_cols) - 2} more)"
 
     # 4. Target Distribution
     target_dist = []
