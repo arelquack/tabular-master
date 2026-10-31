@@ -1,0 +1,17 @@
+{
+    "id": "home_credit",
+    "name": "Home Credit Default Risk",
+    "description": "Predict clients repayment abilities using financial records.",
+    "train_path": "home-credit/application_train.csv",
+    "test_path": "home-credit/application_test.csv",
+    "auxiliary_paths": [],
+    "id_col": "SK_ID_CURR",
+    "target_col": "TARGET",
+    "task_type": "binary",
+    "eval_metric": "roc_auc",
+    "cv_strategy": "stratified_kfold",
+    "n_splits": 5,
+    "seed": 2026,
+    "models": ["lgbm", "xgb", "catboost"],
+    "output_dir": "experiments/case3_homecredit"
+}

@@ -1,0 +1,72 @@
+# Virtual environments
+.venv/
+*/.venv/
+venv/
+env/
+ENV/
+
+# Python cache and bytecode
+__pycache__/
+*/__pycache__/
+*/*/__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+!frontend/dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Frontend dependency trees
+node_modules/
+frontend/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Datasets and large binary files (Kaggle CSVs, Parquet, Archives)
+*.csv
+*.parquet
+*.zip
+*.rar
+*.7z
+*.gz
+*.tar
+
+# Runtime experiment logs and model weight outputs
+catboost_info/
+*/catboost_info/
+experiments/
+experiments_backup_archive/
+*.npy
+*.npz
+*.bin
+*.log
+
+# Temporary and local scratch files
+*.txt
+!requirements.txt
+scratch/
+.tmp/
+*.tmp
+
+# Operating system and editor artifacts
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db

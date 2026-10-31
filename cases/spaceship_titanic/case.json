@@ -1,0 +1,17 @@
+{
+    "id": "spaceship_titanic",
+    "name": "Spaceship Titanic",
+    "description": "Predict which passengers were transported to an alternate dimension.",
+    "train_path": "spaceship-titanic/train.csv",
+    "test_path": "spaceship-titanic/test.csv",
+    "auxiliary_paths": [],
+    "id_col": "PassengerId",
+    "target_col": "Transported",
+    "task_type": "binary",
+    "eval_metric": "accuracy",
+    "cv_strategy": "stratified_kfold",
+    "n_splits": 5,
+    "seed": 2026,
+    "models": ["lgbm", "xgb", "catboost"],
+    "output_dir": "experiments/spaceship_run"
+}
