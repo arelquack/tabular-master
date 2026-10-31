@@ -13,7 +13,8 @@ import {
   Cpu,
   X,
   Check,
-  BookOpen
+  BookOpen,
+  Save
 } from 'lucide-react';
 
 interface CaseMeta {
@@ -104,6 +105,14 @@ export default function App() {
   const [edaLoading, setEdaLoading] = useState<boolean>(false);
   const [selectedFeature, setSelectedFeature] = useState<string>('');
 
+  // Model Selection for Pipeline Execution
+  const [selectedModels, setSelectedModels] = useState<string[]>(['lgbm', 'xgb', 'catboost']);
+
+  // Editable Feature Hook Code
+  const [editableHookCode, setEditableHookCode] = useState<string>('');
+  const [savingHook, setSavingHook] = useState<boolean>(false);
+  const [hookSaved, setHookSaved] = useState<boolean>(false);
+
   // Optuna Tuning state
   const [tuneModel, setTuneModel] = useState<'lgbm' | 'xgb' | 'catboost'>('lgbm');
   const [tuneTrials, setTuneTrials] = useState<number>(15);
@@ -180,6 +189,29 @@ export default function App() {
         setRunning(true);
       } else {
         setRunning(false);
+      }
+
+      if (data.hook_code) {
+        setEditableHookCode(data.hook_code);
+      } else {
+        setEditableHookCode(`import pandas as pd
+import numpy as np
+from tabular_pipeline import BaseFeatureHook
+
+class CustomFeatures(BaseFeatureHook):
+    """
+    User-definable domain feature engineering hook.
+    """
+    def transform(self, train_df: pd.DataFrame, test_df: pd.DataFrame = None):
+        dfs = [train_df] if test_df is None else [train_df, test_df]
+        for df in dfs:
+            pass # Write manual domain features here
+        return train_df, test_df
+`);
+      }
+
+      if (data.meta?.models?.length > 0) {
+        setSelectedModels(data.meta.models);
       }
 
       // Automatically load EDA
@@ -281,13 +313,43 @@ export default function App() {
     }
   };
 
+  const handleSaveHook = async () => {
+    if (!selectedCaseId) return;
+    setSavingHook(true);
+    setHookSaved(false);
+    try {
+      const res = await fetch(`/api/cases/${selectedCaseId}/hook`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hook_code: editableHookCode })
+      });
+      if (res.ok) {
+        setHookSaved(true);
+        setTimeout(() => setHookSaved(false), 3000);
+        fetchCaseDetail(selectedCaseId);
+      }
+    } catch (e) {
+      console.error('Failed to save hook:', e);
+    } finally {
+      setSavingHook(false);
+    }
+  };
+
   // Execute Pipeline
   const handleExecute = async () => {
     if (!selectedCaseId) return;
+    if (selectedModels.length === 0) {
+      alert('Please select at least one model to train.');
+      return;
+    }
     setRunning(true);
     setActiveTab('training');
     try {
-      await fetch(`/api/cases/${selectedCaseId}/run`, { method: 'POST' });
+      await fetch(`/api/cases/${selectedCaseId}/run`, { 
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ models: selectedModels })
+      });
     } catch (e) {
       console.error(e);
       setRunning(false);
@@ -927,28 +989,53 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* 2. Custom Domain Hook (feature_hook.py) */}
-                <div className="border border-zinc-200 rounded p-6">
-                  <div className="flex items-center justify-between mb-4">
+                {/* 2. Interactive Domain Feature Engineering Hook Editor */}
+                <div className="border border-zinc-200 rounded p-6 bg-white space-y-4">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-zinc-100 pb-4">
                     <div>
-                      <h4 className="font-semibold text-sm text-zinc-950">Registered Domain Hook: `feature_hook.py`</h4>
-                      <p className="text-xs text-zinc-500">Loaded from cases/{selectedCaseId}/feature_hook.py (Domain physics & contextual imputations)</p>
+                      <div className="flex items-center space-x-2">
+                        <h4 className="font-bold text-sm text-zinc-950 uppercase tracking-tight">Interactive Custom Feature Hook (`feature_hook.py`)</h4>
+                        <span className="text-[10px] font-mono uppercase bg-zinc-100 text-zinc-800 border border-zinc-300 px-2 py-0.5 rounded">
+                          Live In-Browser Code Editor
+                        </span>
+                      </div>
+                      <p className="text-xs text-zinc-500 mt-1">
+                        Write domain-specific formulas, ratio interactions, or physics logic. Executes leak-free before model splits.
+                      </p>
                     </div>
 
-                    <a
-                      href={`/api/cases/${selectedCaseId}/export-script`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="flex items-center space-x-1.5 border border-zinc-300 hover:border-zinc-900 text-xs font-semibold px-3 py-1.5 rounded transition"
-                    >
-                      <Download size={14} />
-                      <span>Download Full Pipeline Script (.py)</span>
-                    </a>
+                    <div className="flex items-center space-x-3">
+                      {hookSaved && (
+                        <span className="text-xs font-mono text-zinc-900 font-semibold flex items-center space-x-1">
+                          <Check size={14} />
+                          <span>Saved & Ready</span>
+                        </span>
+                      )}
+                      <button
+                        onClick={handleSaveHook}
+                        disabled={savingHook}
+                        className="flex items-center space-x-1.5 bg-zinc-950 hover:bg-zinc-800 text-white text-xs font-semibold px-4 py-2 rounded transition"
+                      >
+                        {savingHook ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
+                        <span>{savingHook ? 'Saving Hook...' : 'Save Feature Hook'}</span>
+                      </button>
+                    </div>
                   </div>
 
-                  <pre className="bg-zinc-950 text-zinc-100 p-5 rounded font-mono text-xs overflow-x-auto leading-relaxed border border-zinc-800">
-                    {caseDetail.hook_code || '# No custom feature hook registered. Universal Auto-FE primitives used.'}
-                  </pre>
+                  <div className="space-y-2">
+                    <textarea
+                      value={editableHookCode}
+                      onChange={e => setEditableHookCode(e.target.value)}
+                      rows={16}
+                      spellCheck={false}
+                      className="w-full bg-zinc-950 text-zinc-100 p-4 rounded font-mono text-xs leading-relaxed border border-zinc-800 focus:outline-none focus:border-zinc-500 selection:bg-zinc-800"
+                      placeholder="Write your custom BaseFeatureHook transform() method here..."
+                    />
+                    <div className="flex justify-between items-center text-[11px] text-zinc-500 font-mono">
+                      <span>File Target: cases/{selectedCaseId}/feature_hook.py</span>
+                      <span>Transform Signature: `transform(self, train_df, test_df=None)`</span>
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
@@ -991,6 +1078,49 @@ export default function App() {
                       )}
                     </div>
                     <div className="text-xs text-zinc-500 mt-1 font-mono truncate">{championModel || 'None'}</div>
+                  </div>
+                </div>
+
+                {/* Active Model Selector for Distributed Team Training */}
+                <div className="border border-zinc-200 rounded p-4 bg-zinc-50/50 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div className="space-y-0.5">
+                    <div className="text-xs font-bold uppercase tracking-tight text-zinc-950">Active Execution Models (Distributed Parallel Training)</div>
+                    <div className="text-xs text-zinc-500">
+                      Toggle which models to execute on this machine. Teammates can train single models in parallel and ensemble in Step 4.
+                    </div>
+                  </div>
+
+                  <div className="flex items-center space-x-2">
+                    {[
+                      { id: 'lgbm', label: 'LightGBM' },
+                      { id: 'xgb', label: 'XGBoost' },
+                      { id: 'catboost', label: 'CatBoost' }
+                    ].map(item => {
+                      const active = selectedModels.includes(item.id);
+                      return (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => {
+                            if (active) {
+                              if (selectedModels.length > 1) {
+                                setSelectedModels(selectedModels.filter(m => m !== item.id));
+                              }
+                            } else {
+                              setSelectedModels([...selectedModels, item.id]);
+                            }
+                          }}
+                          className={`flex items-center space-x-1.5 text-xs font-mono font-medium px-3 py-1.5 rounded border transition ${
+                            active 
+                              ? 'bg-zinc-950 text-white border-zinc-950 font-semibold' 
+                              : 'bg-white text-zinc-600 border-zinc-300 hover:border-zinc-800'
+                          }`}
+                        >
+                          <span>{active ? '[x]' : '[ ]'}</span>
+                          <span>{item.label}</span>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
 

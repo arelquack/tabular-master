@@ -62,6 +62,12 @@ class TuneRequest(BaseModel):
     model: str = "lgbm"
     n_trials: int = 15
 
+class RunPipelineRequest(BaseModel):
+    models: Optional[List[str]] = None
+
+class SaveHookRequest(BaseModel):
+    hook_code: str
+
 class BlendRequest(BaseModel):
     weights: Dict[str, float]
 
@@ -479,7 +485,7 @@ def run_pipeline_thread(case_id: str, meta: dict, case_dir: str):
         log(f"Error during execution: {str(e)}")
 
 @app.post("/api/cases/{case_id}/run")
-def run_case_pipeline(case_id: str, background_tasks: BackgroundTasks):
+def run_case_pipeline(case_id: str, req: Optional[RunPipelineRequest] = None):
     case_dir = os.path.join(CASES_DIR, case_id)
     case_json = os.path.join(case_dir, "case.json")
     if not os.path.exists(case_json):
@@ -488,6 +494,9 @@ def run_case_pipeline(case_id: str, background_tasks: BackgroundTasks):
     with open(case_json, "r") as f:
         meta = json.load(f)
 
+    if req and req.models and len(req.models) > 0:
+        meta["models"] = req.models
+
     if job_state.get(case_id, {}).get("status") == "running":
         return {"status": "already_running"}
 
@@ -495,7 +504,17 @@ def run_case_pipeline(case_id: str, background_tasks: BackgroundTasks):
     thread.daemon = True
     thread.start()
 
-    return {"status": "started", "case_id": case_id}
+    return {"status": "started", "case_id": case_id, "models": meta["models"]}
+
+@app.post("/api/cases/{case_id}/hook")
+def save_case_hook(case_id: str, req: SaveHookRequest):
+    case_dir = os.path.join(CASES_DIR, case_id)
+    if not os.path.exists(case_dir):
+        raise HTTPException(status_code=404, detail="Case not found")
+    hook_file = os.path.join(case_dir, "feature_hook.py")
+    with open(hook_file, "w", encoding="utf-8") as f:
+        f.write(req.hook_code)
+    return {"status": "saved", "path": hook_file}
 
 @app.get("/api/cases/{case_id}/status")
 def get_case_status(case_id: str):
