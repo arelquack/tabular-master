@@ -118,6 +118,11 @@ export default function App() {
   const [savingHook, setSavingHook] = useState<boolean>(false);
   const [hookSaved, setHookSaved] = useState<boolean>(false);
 
+  // Quick Visual Feature Engineering Builder
+  const [feColA, setFeColA] = useState<string>('');
+  const [feOp, setFeOp] = useState<string>('/');
+  const [feColB, setFeColB] = useState<string>('');
+
   // Optuna Tuning state
   const [tuneModel, setTuneModel] = useState<'lgbm' | 'xgb' | 'catboost' | 'all'>('all');
   const [tuneTrials, setTuneTrials] = useState<number>(30);
@@ -359,6 +364,94 @@ class CustomFeatures(BaseFeatureHook):
     } finally {
       setSavingHook(false);
     }
+  };
+
+  const insertCodeIntoHook = (codeSnippet: string) => {
+    if (!editableHookCode || editableHookCode.trim().length === 0) {
+      const boilerplate = `from tabular_pipeline import BaseFeatureHook
+import pandas as pd
+import numpy as np
+
+class CustomFeatureHook(BaseFeatureHook):
+    def transform(self, train_df: pd.DataFrame, test_df: pd.DataFrame = None):
+        # Universal Leak-Free Feature Hook
+        ${codeSnippet.trim()}
+
+        return train_df, test_df
+`;
+      setEditableHookCode(boilerplate);
+      return;
+    }
+
+    if (editableHookCode.includes('return train_df, test_df')) {
+      const parts = editableHookCode.split('return train_df, test_df');
+      setEditableHookCode(parts[0] + '        ' + codeSnippet.trim() + '\n\n        return train_df, test_df' + (parts[1] || ''));
+    } else {
+      setEditableHookCode(prev => prev + '\n        ' + codeSnippet.trim());
+    }
+  };
+
+  const handleInsertFormula = () => {
+    if (!feColA || !feColB) {
+      alert('Please select both Column A and Column B.');
+      return;
+    }
+    const cleanA = feColA.replace(/[^a-zA-Z0-9_]/g, '_');
+    const cleanB = feColB.replace(/[^a-zA-Z0-9_]/g, '_');
+    const opNames: Record<string, string> = { '/': 'ratio', '*': 'mult', '-': 'diff', '+': 'sum' };
+    const opName = opNames[feOp] || 'feat';
+    const newColName = `${cleanA}_${opName}_${cleanB}`;
+
+    let expr = '';
+    if (feOp === '/') {
+      expr = `# Visual Formula: ${newColName}\n        for df in ([train_df, test_df] if test_df is not None else [train_df]):\n            df['${newColName}'] = df['${feColA}'] / (df['${feColB}'].abs() + 1e-5)`;
+    } else if (feOp === '*') {
+      expr = `# Visual Formula: ${newColName}\n        for df in ([train_df, test_df] if test_df is not None else [train_df]):\n            df['${newColName}'] = df['${feColA}'] * df['${feColB}']`;
+    } else if (feOp === '-') {
+      expr = `# Visual Formula: ${newColName}\n        for df in ([train_df, test_df] if test_df is not None else [train_df]):\n            df['${newColName}'] = df['${feColA}'] - df['${feColB}']`;
+    } else {
+      expr = `# Visual Formula: ${newColName}\n        for df in ([train_df, test_df] if test_df is not None else [train_df]):\n            df['${newColName}'] = df['${feColA}'] + df['${feColB}']`;
+    }
+
+    insertCodeIntoHook(expr);
+  };
+
+  const handleInsertDealBreakerTemplate = () => {
+    const snippet = `# --- DOMAIN AGGREGATIONS (DEAL-BREAKER / SATISFACTION SUMMARY) ---
+        rating_cols = [c for c in train_df.columns if train_df[c].dtype in ['int64', 'float64'] and train_df[c].nunique() <= 6 and c not in ['id', 'ID', 'target', 'satisfaction']]
+        if len(rating_cols) >= 3:
+            for df in ([train_df, test_df] if test_df is not None else [train_df]):
+                df['service_rating_mean'] = df[rating_cols].mean(axis=1)
+                df['service_rating_min'] = df[rating_cols].min(axis=1)  # Deal-breaker rating
+                df['service_rating_max'] = df[rating_cols].max(axis=1)
+                df['service_rating_std'] = df[rating_cols].std(axis=1).fillna(0)
+                df['service_low_ratings_count'] = (df[rating_cols] <= 2).sum(axis=1)`;
+    insertCodeIntoHook(snippet);
+  };
+
+  const handleInsertDelayDistanceTemplate = () => {
+    const snippet = `# --- DOMAIN RATIO (TOTAL DELAY RELATIVE TO DISTANCE) ---
+        for df in ([train_df, test_df] if test_df is not None else [train_df]):
+            if 'Departure_Delay_in_Minutes' in df.columns and 'Arrival_Delay_in_Minutes' in df.columns:
+                df['total_delay'] = df['Departure_Delay_in_Minutes'].fillna(0) + df['Arrival_Delay_in_Minutes'].fillna(0)
+                if 'Flight_Distance' in df.columns:
+                    df['delay_per_distance'] = df['total_delay'] / (df['Flight_Distance'] + 1.0)`;
+    insertCodeIntoHook(snippet);
+  };
+
+  const handleInsertCrossCategoryTemplate = () => {
+    const snippet = `# --- CATEGORICAL CROSS INTERACTION & FREQUENCY ---
+        cat_cols = [c for c in train_df.select_dtypes(include=['object', 'category']).columns if c not in ['id', 'ID', 'target', 'satisfaction']]
+        if len(cat_cols) >= 2:
+            c1, c2 = cat_cols[0], cat_cols[1]
+            cross_name = f"{c1}_x_{c2}"
+            for df in ([train_df, test_df] if test_df is not None else [train_df]):
+                df[cross_name] = df[c1].astype(str) + "_" + df[c2].astype(str)
+            freq = train_df[cross_name].value_counts(normalize=True).to_dict()
+            train_df[f"{cross_name}_freq"] = train_df[cross_name].map(freq).fillna(0)
+            if test_df is not None:
+                test_df[f"{cross_name}_freq"] = test_df[cross_name].map(freq).fillna(0)`;
+    insertCodeIntoHook(snippet);
   };
 
   // Execute Pipeline
@@ -1382,23 +1475,23 @@ class CustomFeatures(BaseFeatureHook):
                 </div>
 
                 {/* 2. Interactive Domain Feature Engineering Hook Editor */}
-                <div className="border border-zinc-200 rounded p-6 bg-white space-y-4">
-                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-zinc-100 pb-4">
+                <div className="border border-[#E5E9E6] rounded-2xl p-6 bg-white space-y-5 shadow-sm">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[#E5E9E6] pb-4">
                     <div>
                       <div className="flex items-center space-x-2">
-                        <h4 className="font-bold text-sm text-zinc-950 uppercase tracking-tight">Interactive Custom Feature Hook (`feature_hook.py`)</h4>
-                        <span className="text-[10px] font-mono uppercase bg-zinc-100 text-zinc-800 border border-zinc-300 px-2 py-0.5 rounded">
-                          Live In-Browser Code Editor
+                        <h4 className="font-bold text-sm text-[#121816] uppercase tracking-tight">Domain Feature Engineering Hook (`feature_hook.py`)</h4>
+                        <span className="text-[10px] font-mono uppercase bg-[#E8F3ED] text-[#164E33] border border-[#D2E7DC] px-2 py-0.5 rounded font-bold">
+                          Live In-Browser Code & Visual Builder
                         </span>
                       </div>
-                      <p className="text-xs text-zinc-500 mt-1">
-                        Write domain-specific formulas, ratio interactions, or physics logic. Executes leak-free before model splits.
+                      <p className="text-xs text-[#76807B] mt-1">
+                        Generate domain-specific formulas visually or write custom Python transform logic. Executes leak-free before cross-validation folds.
                       </p>
                     </div>
 
                     <div className="flex items-center space-x-3">
                       {hookSaved && (
-                        <span className="text-xs font-mono text-zinc-900 font-semibold flex items-center space-x-1">
+                        <span className="text-xs font-mono text-[#164E33] font-semibold flex items-center space-x-1">
                           <Check size={14} />
                           <span>Saved & Ready</span>
                         </span>
@@ -1406,10 +1499,91 @@ class CustomFeatures(BaseFeatureHook):
                       <button
                         onClick={handleSaveHook}
                         disabled={savingHook}
-                        className="flex items-center space-x-1.5 bg-zinc-950 hover:bg-zinc-800 text-white text-xs font-semibold px-4 py-2 rounded transition"
+                        className="flex items-center space-x-1.5 bg-[#164E33] hover:bg-[#113C27] text-white text-xs font-semibold px-4 py-2 rounded-xl transition shadow-2xs"
                       >
                         {savingHook ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
                         <span>{savingHook ? 'Saving Hook...' : 'Save Feature Hook'}</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 1-Click Domain Presets */}
+                  <div className="space-y-2">
+                    <div className="text-[11px] font-bold uppercase tracking-wider text-[#76807B] font-mono">1-Click Domain Presets (Instant Code Injection)</div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={handleInsertDealBreakerTemplate}
+                        className="flex items-center space-x-1.5 bg-[#F8FAF9] hover:bg-[#E8F3ED] text-[#121816] hover:text-[#164E33] border border-[#E5E9E6] hover:border-[#164E33] px-3 py-1.5 rounded-xl text-xs font-medium transition shadow-2xs"
+                      >
+                        <Plus size={12} />
+                        <span>+ Deal-Breaker / Rating Aggregations</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleInsertDelayDistanceTemplate}
+                        className="flex items-center space-x-1.5 bg-[#F8FAF9] hover:bg-[#E8F3ED] text-[#121816] hover:text-[#164E33] border border-[#E5E9E6] hover:border-[#164E33] px-3 py-1.5 rounded-xl text-xs font-medium transition shadow-2xs"
+                      >
+                        <Plus size={12} />
+                        <span>+ Total Delay per Distance Ratio</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleInsertCrossCategoryTemplate}
+                        className="flex items-center space-x-1.5 bg-[#F8FAF9] hover:bg-[#E8F3ED] text-[#121816] hover:text-[#164E33] border border-[#E5E9E6] hover:border-[#164E33] px-3 py-1.5 rounded-xl text-xs font-medium transition shadow-2xs"
+                      >
+                        <Plus size={12} />
+                        <span>+ Categorical Cross & Frequency</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Visual Formula Builder */}
+                  <div className="border border-[#E5E9E6] rounded-xl p-4 bg-[#F8FAF9] space-y-3">
+                    <div className="text-[11px] font-bold uppercase tracking-wider text-[#76807B] font-mono">Visual Formula & Ratio Generator</div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <select
+                        value={feColA}
+                        onChange={e => setFeColA(e.target.value)}
+                        className="bg-white border border-[#E5E9E6] hover:border-[#164E33] rounded-xl px-3 py-1.5 text-xs font-mono font-medium text-[#121816] focus:outline-none focus:border-[#164E33] transition"
+                      >
+                        <option value="">-- Select Column A --</option>
+                        {edaData?.columns_profile?.map((c: any) => (
+                          <option key={c.name} value={c.name}>{c.name}</option>
+                        ))}
+                      </select>
+
+                      <select
+                        value={feOp}
+                        onChange={e => setFeOp(e.target.value)}
+                        className="bg-white border border-[#E5E9E6] hover:border-[#164E33] rounded-xl px-3 py-1.5 text-xs font-mono font-bold text-[#164E33] focus:outline-none focus:border-[#164E33] transition"
+                      >
+                        <option value="/">/ (Ratio)</option>
+                        <option value="*">* (Product)</option>
+                        <option value="-">- (Difference)</option>
+                        <option value="+">+ (Sum)</option>
+                      </select>
+
+                      <select
+                        value={feColB}
+                        onChange={e => setFeColB(e.target.value)}
+                        className="bg-white border border-[#E5E9E6] hover:border-[#164E33] rounded-xl px-3 py-1.5 text-xs font-mono font-medium text-[#121816] focus:outline-none focus:border-[#164E33] transition"
+                      >
+                        <option value="">-- Select Column B --</option>
+                        {edaData?.columns_profile?.map((c: any) => (
+                          <option key={c.name} value={c.name}>{c.name}</option>
+                        ))}
+                      </select>
+
+                      <button
+                        type="button"
+                        onClick={handleInsertFormula}
+                        className="flex items-center space-x-1.5 bg-[#121816] hover:bg-[#164E33] text-white text-xs font-semibold px-4 py-1.5 rounded-xl transition shadow-2xs"
+                      >
+                        <Plus size={13} />
+                        <span>Insert Formula into Hook</span>
                       </button>
                     </div>
                   </div>
@@ -1420,12 +1594,12 @@ class CustomFeatures(BaseFeatureHook):
                       onChange={e => setEditableHookCode(e.target.value)}
                       rows={16}
                       spellCheck={false}
-                      className="w-full bg-zinc-950 text-zinc-100 p-4 rounded font-mono text-xs leading-relaxed border border-zinc-800 focus:outline-none focus:border-zinc-500 selection:bg-zinc-800"
+                      className="w-full bg-[#121816] text-[#E8F3ED] p-4 rounded-xl font-mono text-xs leading-relaxed border border-[#E5E9E6] focus:outline-none focus:border-[#164E33] selection:bg-[#164E33]"
                       placeholder="Write your custom BaseFeatureHook transform() method here..."
                     />
-                    <div className="flex justify-between items-center text-[11px] text-zinc-500 font-mono">
-                      <span>File Target: cases/{selectedCaseId}/feature_hook.py</span>
-                      <span>Transform Signature: `transform(self, train_df, test_df=None)`</span>
+                    <div className="flex justify-between items-center text-[11px] text-[#76807B] font-mono">
+                      <span>Target: cases/{selectedCaseId}/feature_hook.py</span>
+                      <span>Signature: transform(self, train_df, test_df=None)</span>
                     </div>
                   </div>
                 </div>
