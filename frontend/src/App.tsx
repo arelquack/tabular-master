@@ -416,41 +416,58 @@ class CustomFeatureHook(BaseFeatureHook):
     insertCodeIntoHook(expr);
   };
 
-  const handleInsertDealBreakerTemplate = () => {
-    const snippet = `# --- DOMAIN AGGREGATIONS (DEAL-BREAKER / SATISFACTION SUMMARY) ---
-        rating_cols = [c for c in train_df.columns if train_df[c].dtype in ['int64', 'float64'] and train_df[c].nunique() <= 6 and c not in ['id', 'ID', 'target', 'satisfaction']]
-        if len(rating_cols) >= 3:
-            for df in ([train_df, test_df] if test_df is not None else [train_df]):
-                df['service_rating_mean'] = df[rating_cols].mean(axis=1)
-                df['service_rating_min'] = df[rating_cols].min(axis=1)  # Deal-breaker rating
-                df['service_rating_max'] = df[rating_cols].max(axis=1)
-                df['service_rating_std'] = df[rating_cols].std(axis=1).fillna(0)
-                df['service_low_ratings_count'] = (df[rating_cols] <= 2).sum(axis=1)`;
-    insertCodeIntoHook(snippet);
-  };
-
-  const handleInsertDelayDistanceTemplate = () => {
-    const snippet = `# --- DOMAIN RATIO (TOTAL DELAY RELATIVE TO DISTANCE) ---
-        for df in ([train_df, test_df] if test_df is not None else [train_df]):
-            if 'Departure_Delay_in_Minutes' in df.columns and 'Arrival_Delay_in_Minutes' in df.columns:
-                df['total_delay'] = df['Departure_Delay_in_Minutes'].fillna(0) + df['Arrival_Delay_in_Minutes'].fillna(0)
-                if 'Flight_Distance' in df.columns:
-                    df['delay_per_distance'] = df['total_delay'] / (df['Flight_Distance'] + 1.0)`;
-    insertCodeIntoHook(snippet);
-  };
-
-  const handleInsertCrossCategoryTemplate = () => {
-    const snippet = `# --- CATEGORICAL CROSS INTERACTION & FREQUENCY ---
+  const handleInsertGroupStatsTemplate = () => {
+    const snippet = `# --- UNIVERSAL PRIMITIVE 1: GROUP-BY AGGREGATIONS & RELATIVE Z-SCORES ---
+        # Computes peer-group baseline statistics (mean, std, and relative deviation)
         cat_cols = [c for c in train_df.select_dtypes(include=['object', 'category']).columns if c not in ['id', 'ID', 'target', 'satisfaction']]
-        if len(cat_cols) >= 2:
-            c1, c2 = cat_cols[0], cat_cols[1]
-            cross_name = f"{c1}_x_{c2}"
-            for df in ([train_df, test_df] if test_df is not None else [train_df]):
-                df[cross_name] = df[c1].astype(str) + "_" + df[c2].astype(str)
-            freq = train_df[cross_name].value_counts(normalize=True).to_dict()
-            train_df[f"{cross_name}_freq"] = train_df[cross_name].map(freq).fillna(0)
+        num_cols = [c for c in train_df.select_dtypes(include=['number']).columns if c not in ['id', 'ID', 'target', 'satisfaction']]
+        if len(cat_cols) > 0 and len(num_cols) > 0:
+            group_col = cat_cols[0]
+            val_col = num_cols[0]
+            group_stats = train_df.groupby(group_col)[val_col].agg(['mean', 'std']).reset_index()
+            group_stats.columns = [group_col, f'{val_col}_grp_mean', f'{val_col}_grp_std']
+            train_df = train_df.merge(group_stats, on=group_col, how='left')
+            train_df[f'{val_col}_diff_grp_mean'] = train_df[val_col] - train_df[f'{val_col}_grp_mean']
             if test_df is not None:
-                test_df[f"{cross_name}_freq"] = test_df[cross_name].map(freq).fillna(0)`;
+                test_df = test_df.merge(group_stats, on=group_col, how='left')
+                test_df[f'{val_col}_diff_grp_mean'] = test_df[val_col] - test_df[f'{val_col}_grp_mean']`;
+    insertCodeIntoHook(snippet);
+  };
+
+  const handleInsertRowStatsTemplate = () => {
+    const snippet = `# --- UNIVERSAL PRIMITIVE 2: ROW-WISE INTENSITY & CONSISTENCY STATISTICS ---
+        # Computes across-the-board intensity, dispersion, and missingness per entity
+        numeric_cols = [c for c in train_df.select_dtypes(include=['number']).columns if c not in ['id', 'ID', 'target', 'satisfaction']][:8]
+        if len(numeric_cols) >= 2:
+            for df in ([train_df, test_df] if test_df is not None else [train_df]):
+                df['row_stat_mean'] = df[numeric_cols].mean(axis=1)
+                df['row_stat_std'] = df[numeric_cols].std(axis=1).fillna(0)
+                df['row_stat_min'] = df[numeric_cols].min(axis=1)
+                df['row_stat_max'] = df[numeric_cols].max(axis=1)
+                df['row_null_count'] = df[numeric_cols].isnull().sum(axis=1)`;
+    insertCodeIntoHook(snippet);
+  };
+
+  const handleInsertFreqEncodingTemplate = () => {
+    const snippet = `# --- UNIVERSAL PRIMITIVE 3: HIGH-CARDINALITY FREQUENCY & RARITY ENCODING ---
+        # Maps categorical entities (categories, postal codes, devices) to prevalence rates
+        cat_cols = [c for c in train_df.select_dtypes(include=['object', 'category']).columns if c not in ['id', 'ID', 'target', 'satisfaction']]
+        for c in cat_cols:
+            freq = train_df[c].value_counts(normalize=True).to_dict()
+            train_df[f'{c}_freq'] = train_df[c].map(freq).fillna(0)
+            if test_df is not None:
+                test_df[f'{c}_freq'] = test_df[c].map(freq).fillna(0)`;
+    insertCodeIntoHook(snippet);
+  };
+
+  const handleInsertLogTransformTemplate = () => {
+    const snippet = `# --- UNIVERSAL PRIMITIVE 4: SKEW CORRECTION & LOG-DIFFERENCE RATIOS ---
+        # Stabilizes heavy-tailed variables (financial, revenue, delays, physical quantities)
+        num_cols = [c for c in train_df.select_dtypes(include=['number']).columns if c not in ['id', 'ID', 'target', 'satisfaction']]
+        for c in num_cols[:4]:
+            if (train_df[c] >= 0).all():
+                for df in ([train_df, test_df] if test_df is not None else [train_df]):
+                    df[f'{c}_log1p'] = np.log1p(df[c].clip(lower=0))`;
     insertCodeIntoHook(snippet);
   };
 
@@ -1507,35 +1524,44 @@ class CustomFeatureHook(BaseFeatureHook):
                     </div>
                   </div>
 
-                  {/* 1-Click Domain Presets */}
+                  {/* 1-Click Universal Feature Primitives */}
                   <div className="space-y-2">
-                    <div className="text-[11px] font-bold uppercase tracking-wider text-[#76807B] font-mono">1-Click Domain Presets (Instant Code Injection)</div>
+                    <div className="text-[11px] font-bold uppercase tracking-wider text-[#76807B] font-mono">Universal Feature Primitives (Applicable to Any Tabular Task)</div>
                     <div className="flex flex-wrap gap-2">
                       <button
                         type="button"
-                        onClick={handleInsertDealBreakerTemplate}
+                        onClick={handleInsertGroupStatsTemplate}
                         className="flex items-center space-x-1.5 bg-[#F8FAF9] hover:bg-[#E8F3ED] text-[#121816] hover:text-[#164E33] border border-[#E5E9E6] hover:border-[#164E33] px-3 py-1.5 rounded-xl text-xs font-medium transition shadow-2xs"
                       >
                         <Plus size={12} />
-                        <span>+ Deal-Breaker / Rating Aggregations</span>
+                        <span>+ Group-By Baseline & Relative Z-Scores</span>
                       </button>
 
                       <button
                         type="button"
-                        onClick={handleInsertDelayDistanceTemplate}
+                        onClick={handleInsertRowStatsTemplate}
                         className="flex items-center space-x-1.5 bg-[#F8FAF9] hover:bg-[#E8F3ED] text-[#121816] hover:text-[#164E33] border border-[#E5E9E6] hover:border-[#164E33] px-3 py-1.5 rounded-xl text-xs font-medium transition shadow-2xs"
                       >
                         <Plus size={12} />
-                        <span>+ Total Delay per Distance Ratio</span>
+                        <span>+ Row-wise Intensity & Summary Stats</span>
                       </button>
 
                       <button
                         type="button"
-                        onClick={handleInsertCrossCategoryTemplate}
+                        onClick={handleInsertFreqEncodingTemplate}
                         className="flex items-center space-x-1.5 bg-[#F8FAF9] hover:bg-[#E8F3ED] text-[#121816] hover:text-[#164E33] border border-[#E5E9E6] hover:border-[#164E33] px-3 py-1.5 rounded-xl text-xs font-medium transition shadow-2xs"
                       >
                         <Plus size={12} />
-                        <span>+ Categorical Cross & Frequency</span>
+                        <span>+ High-Cardinality Frequency Rarity</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleInsertLogTransformTemplate}
+                        className="flex items-center space-x-1.5 bg-[#F8FAF9] hover:bg-[#E8F3ED] text-[#121816] hover:text-[#164E33] border border-[#E5E9E6] hover:border-[#164E33] px-3 py-1.5 rounded-xl text-xs font-medium transition shadow-2xs"
+                      >
+                        <Plus size={12} />
+                        <span>+ Log1p Skew Correction</span>
                       </button>
                     </div>
                   </div>
