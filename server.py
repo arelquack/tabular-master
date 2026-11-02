@@ -72,6 +72,10 @@ class CreateCaseRequest(BaseModel):
     seed: int = 2026
     models: List[str] = ["lgbm", "xgb", "catboost"]
     hook_code: Optional[str] = None
+    auto_stitch: Optional[bool] = False
+    stitch_base_pattern: Optional[str] = None
+    stitch_join_pattern: Optional[str] = None
+    stitch_join_keys: Optional[List[str]] = None
 
 class TuneRequest(BaseModel):
     model: str = "lgbm"
@@ -607,8 +611,27 @@ def create_case(req: CreateCaseRequest):
     case_dir = os.path.join(CASES_DIR, req.id)
     os.makedirs(case_dir, exist_ok=True)
     
-    case_data = req.dict(exclude={"hook_code"})
+    case_data = req.dict(exclude={"hook_code", "auto_stitch", "stitch_base_pattern", "stitch_join_pattern", "stitch_join_keys"})
     case_data["output_dir"] = f"experiments/{req.id}_run"
+
+    # Handle automatic partition stitching on creation if requested
+    if req.auto_stitch and req.stitch_base_pattern and req.stitch_join_pattern:
+        base_p = req.stitch_base_pattern.strip().strip('"').strip("'")
+        join_p = req.stitch_join_pattern.strip().strip('"').strip("'")
+        base_full = os.path.join(ROOT_DIR, base_p) if not os.path.isabs(base_p) else base_p
+        join_full = os.path.join(ROOT_DIR, join_p) if not os.path.isabs(join_p) else join_p
+        base_files = sorted(glob.glob(base_full))
+        join_files = sorted(glob.glob(join_full))
+        if base_files and join_files:
+            base_dfs = [pd.read_csv(f) for f in base_files]
+            base_df = pd.concat(base_dfs, ignore_index=True)
+            join_dfs = [pd.read_csv(f) for f in join_files]
+            join_df = pd.concat(join_dfs, ignore_index=True)
+            keys = req.stitch_join_keys or ["game_id", "play_id", "nfl_id", "frame_id"]
+            merged = base_df.merge(join_df, on=keys, how="inner", suffixes=("", "_input"))
+            out_p = os.path.join(case_dir, "train_all_weeks_merged.csv")
+            merged.to_csv(out_p, index=False)
+            case_data["train_path"] = os.path.relpath(out_p, ROOT_DIR).replace("\\", "/")
     
     with open(os.path.join(case_dir, "case.json"), "w") as f:
         json.dump(case_data, f, indent=4)
@@ -617,7 +640,20 @@ def create_case(req: CreateCaseRequest):
         with open(os.path.join(case_dir, "feature_hook.py"), "w") as f:
             f.write(req.hook_code)
 
+    if req.id in eda_cache:
+        del eda_cache[req.id]
+
     return {"status": "created", "case_id": req.id}
+
+@app.delete("/api/cases/{case_id}")
+def delete_case(case_id: str):
+    case_dir = os.path.join(CASES_DIR, case_id)
+    if not os.path.exists(case_dir):
+        raise HTTPException(status_code=404, detail="Case not found")
+    shutil.rmtree(case_dir, ignore_errors=True)
+    if case_id in eda_cache:
+        del eda_cache[case_id]
+    return {"status": "deleted", "case_id": case_id}
 
 @app.post("/api/cases/{case_id}/paths")
 def update_case_paths(case_id: str, req: UpdateCasePathsRequest):
@@ -792,7 +828,7 @@ def preview_merge_datasets(req: PreviewMergeRequest):
         group_keys = req.group_by_keys or req.join_keys
         join_df = _prepare_join_df(join_df, req.filter_col, req.filter_val, req.aggregation, group_keys)
 
-        merged = base_df.merge(join_df, on=req.join_keys, how=req.how, suffixes=("_base", "_join"))
+        merged = base_df.merge(join_df, on=req.join_keys, how=req.how, suffixes=("", "_input"))
         return {
             "status": "ok",
             "columns": list(merged.columns),
@@ -822,7 +858,7 @@ def execute_merge_datasets(req: MergeDatasetsRequest):
         group_keys = req.group_by_keys or req.join_keys
         join_df = _prepare_join_df(join_df, req.filter_col, req.filter_val, req.aggregation, group_keys)
 
-        merged = base_df.merge(join_df, on=req.join_keys, how=req.how, suffixes=("_base", "_join"))
+        merged = base_df.merge(join_df, on=req.join_keys, how=req.how, suffixes=("", "_input"))
 
         out_fname = req.output_filename.strip() if req.output_filename.strip() else "train_merged.csv"
         if not out_fname.endswith(".csv"):
@@ -935,7 +971,7 @@ def execute_smart_stitch(req: SmartStitchRequest):
         join_dfs = [pd.read_csv(f) for f in join_files]
         join_df = pd.concat(join_dfs, ignore_index=True)
 
-        merged = base_df.merge(join_df, on=req.join_keys, how=req.how, suffixes=("_base", "_join"))
+        merged = base_df.merge(join_df, on=req.join_keys, how=req.how, suffixes=("", "_input"))
 
         out_fname = req.output_filename.strip() if req.output_filename.strip() else "train_merged.csv"
         if not out_fname.endswith(".csv"):

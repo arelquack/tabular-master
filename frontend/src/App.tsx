@@ -29,7 +29,8 @@ import {
   ArrowDownRight,
   Layers,
   GitMerge,
-  Sparkles
+  Sparkles,
+  Trash2
 } from 'lucide-react';
 
 interface CaseMeta {
@@ -257,6 +258,7 @@ export default function App() {
   const [stitcherError, setStitcherError] = useState<string | null>(null);
   const [stitcherSuccess, setStitcherSuccess] = useState<string | null>(null);
 
+  const [isCreatingCase, setIsCreatingCase] = useState<boolean>(false);
   const [newCase, setNewCase] = useState({
     id: '',
     name: '',
@@ -273,7 +275,11 @@ export default function App() {
     n_splits: 5,
     seed: 2026,
     models: ['lgbm', 'xgb', 'catboost'],
-    hook_code: ''
+    hook_code: '',
+    auto_stitch: false,
+    stitch_base_pattern: '',
+    stitch_join_pattern: '',
+    stitch_join_keys: [] as string[]
   });
 
   // Fetch all cases
@@ -1148,6 +1154,7 @@ class CustomFeatureHook(BaseFeatureHook):
   // Create Case
   const handleCreateCase = async (e: React.FormEvent) => {
     e.preventDefault();
+    setIsCreatingCase(true);
     try {
       const res = await fetch('/api/cases', {
         method: 'POST',
@@ -1160,6 +1167,21 @@ class CustomFeatureHook(BaseFeatureHook):
       setSelectedCaseId(data.case_id);
     } catch (err) {
       console.error(err);
+    } finally {
+      setIsCreatingCase(false);
+    }
+  };
+
+  const handleDeleteCase = async (caseId: string) => {
+    if (!caseId) return;
+    if (!window.confirm(`Are you sure you want to delete case "${caseId}"? This will permanently remove its directory and data.`)) return;
+    try {
+      const res = await fetch(`/api/cases/${caseId}`, { method: 'DELETE' });
+      if (res.ok) {
+        await fetchCases();
+      }
+    } catch (err) {
+      console.error('Delete case failed:', err);
     }
   };
 
@@ -1212,6 +1234,17 @@ class CustomFeatureHook(BaseFeatureHook):
                 <Plus size={13} />
                 <span>New Case</span>
               </button>
+
+              {cases.length > 0 && selectedCaseId && (
+                <button
+                  type="button"
+                  onClick={() => handleDeleteCase(selectedCaseId)}
+                  className="flex items-center space-x-1 border border-[#E5E9E6] hover:border-rose-400 hover:bg-rose-50 text-zinc-400 hover:text-rose-600 text-xs font-medium px-2 py-1.5 rounded-xl transition"
+                  title={`Delete active case "${selectedCaseId}"`}
+                >
+                  <Trash2 size={13} />
+                </button>
+              )}
             </div>
           </div>
 
@@ -3597,6 +3630,61 @@ class CustomFeatureHook(BaseFeatureHook):
             </div>
 
             <form onSubmit={handleCreateCase} className="mt-5 space-y-4">
+              {/* 1-Click Preset Banner */}
+              <div className="p-3 bg-[#E8F3ED] border border-[#D2E7DC] rounded-xl flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <span className="text-xs font-bold text-[#164E33] flex items-center space-x-1">
+                    <Sparkles size={13} />
+                    <span>Competition Preset Available</span>
+                  </span>
+                  <p className="text-[11px] text-[#121816]/80">
+                    NFL Big Data Bowl 2026: Auto-configures GroupKFold on play_id, RMSE metric, and auto-stitches all 18-week partitions in 1 click.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNewCase({
+                      id: 'nfl_big_data_bowl_2026',
+                      name: 'NFL Big Data Bowl 2026',
+                      description: 'Spatio-temporal tracking across 18 weeks with GroupKFold on play_id.',
+                      train_path: 'cases/nfl_big_data_bowl_2026/train_all_weeks_merged.csv',
+                      test_path: 'nfl-big-data-bowl-2026-prediction/test.csv',
+                      target_col: 'x',
+                      id_col: 'frame_id',
+                      task_type: 'regression',
+                      eval_metric: 'rmse',
+                      cv_strategy: 'group_kfold',
+                      group_col: 'play_id',
+                      time_col: '',
+                      n_splits: 5,
+                      seed: 2026,
+                      models: ['lgbm', 'xgb', 'catboost'],
+                      hook_code: '',
+                      auto_stitch: true,
+                      stitch_base_pattern: 'nfl-big-data-bowl-2026-prediction/train/output_2023_*.csv',
+                      stitch_join_pattern: 'nfl-big-data-bowl-2026-prediction/train/input_2023_*.csv',
+                      stitch_join_keys: ['game_id', 'play_id', 'nfl_id', 'frame_id']
+                    });
+                  }}
+                  className="px-3 py-1.5 bg-[#164E33] hover:bg-[#113d28] text-white text-xs font-semibold rounded-lg shadow-sm transition whitespace-nowrap"
+                >
+                  Load NFL 2026 Preset
+                </button>
+              </div>
+
+              {newCase.auto_stitch && (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs space-y-1">
+                  <div className="font-semibold text-emerald-900 flex items-center space-x-1">
+                    <Layers size={13} />
+                    <span>Automatic 1-Click Multi-Week Stitching Enabled</span>
+                  </div>
+                  <p className="text-[11px] text-emerald-800">
+                    When you click Register, the engine will batch-concatenate all 18 output files and 18 input files, inner-join them on (game_id, play_id, nfl_id, frame_id), preserve target "x", and generate the complete unified dataset.
+                  </p>
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="text-xs font-semibold text-zinc-700">Case Unique ID</label>
@@ -3900,9 +3988,17 @@ class CustomFeatureHook(BaseFeatureHook):
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 bg-zinc-950 hover:bg-zinc-800 text-white text-xs font-semibold rounded"
+                  disabled={isCreatingCase}
+                  className="px-5 py-2 bg-zinc-950 hover:bg-zinc-800 text-white text-xs font-semibold rounded disabled:opacity-50 flex items-center space-x-1.5"
                 >
-                  Save & Open Case
+                  {isCreatingCase ? (
+                    <>
+                      <Loader2 size={13} className="animate-spin" />
+                      <span>{newCase.auto_stitch ? 'Stitching All Weeks & Building Case...' : 'Creating Case...'}</span>
+                    </>
+                  ) : (
+                    <span>Register & Open Case</span>
+                  )}
                 </button>
               </div>
             </form>
