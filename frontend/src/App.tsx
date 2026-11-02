@@ -48,6 +48,7 @@ interface CaseDetail {
   summary: any;
   feature_importances: Array<{ feature: string; importance: number }>;
   hook_code: string;
+  has_hook?: boolean;
   available_cached: string[];
   job_state: {
     status: string;
@@ -120,6 +121,8 @@ export default function App() {
   const [savingHook, setSavingHook] = useState<boolean>(false);
   const [hookSaved, setHookSaved] = useState<boolean>(false);
   const [hookHistory, setHookHistory] = useState<string[]>([]);
+  const [hookValidation, setHookValidation] = useState<any>(null);
+  const [hookTesting, setHookTesting] = useState<boolean>(false);
 
   // Quick Visual Feature Engineering Builder
   const [feColA, setFeColA] = useState<string>('');
@@ -232,7 +235,9 @@ export default function App() {
 
       if (data.hook_code) {
         setEditableHookCode(data.hook_code);
+        handleTestHook(id);
       } else {
+        setHookValidation(null);
         setEditableHookCode(`import pandas as pd
 import numpy as np
 from tabular_pipeline import BaseFeatureHook
@@ -242,9 +247,6 @@ class CustomFeatures(BaseFeatureHook):
     User-definable domain feature engineering hook.
     """
     def transform(self, train_df: pd.DataFrame, test_df: pd.DataFrame = None):
-        dfs = [train_df] if test_df is None else [train_df, test_df]
-        for df in dfs:
-            pass # Write manual domain features here
         return train_df, test_df
 `);
       }
@@ -352,6 +354,22 @@ class CustomFeatures(BaseFeatureHook):
     }
   };
 
+  const handleTestHook = async (targetCaseId?: string) => {
+    const cId = targetCaseId || selectedCaseId;
+    if (!cId) return;
+    setHookTesting(true);
+    try {
+      const res = await fetch(`/api/cases/${cId}/hook/test`, { method: 'POST' });
+      const data = await res.json();
+      setHookValidation(data);
+    } catch (err) {
+      console.error('Failed to test hook:', err);
+      setHookValidation({ status: 'error', message: String(err) });
+    } finally {
+      setHookTesting(false);
+    }
+  };
+
   const handleSaveHook = async () => {
     if (!selectedCaseId) return;
     setSavingHook(true);
@@ -366,6 +384,7 @@ class CustomFeatures(BaseFeatureHook):
         setHookSaved(true);
         setTimeout(() => setHookSaved(false), 3000);
         fetchCaseDetail(selectedCaseId);
+        handleTestHook(selectedCaseId);
       }
     } catch (e) {
       console.error('Failed to save hook:', e);
@@ -1616,6 +1635,17 @@ class CustomFeatureHook(BaseFeatureHook):
                       </button>
 
                       <button
+                        type="button"
+                        onClick={() => handleTestHook()}
+                        disabled={hookTesting}
+                        title="Dry-run and validate feature hook on a 1k sample"
+                        className="flex items-center space-x-1 border border-[#E5E9E6] hover:border-[#164E33] text-[#121816] hover:bg-[#F8FAF9] px-3 py-2 rounded-xl text-xs font-medium transition shadow-2xs"
+                      >
+                        {hookTesting ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}
+                        <span>Dry-Run Test</span>
+                      </button>
+
+                      <button
                         onClick={handleSaveHook}
                         disabled={savingHook}
                         className="flex items-center space-x-1.5 bg-[#164E33] hover:bg-[#113C27] text-white text-xs font-semibold px-4 py-2 rounded-xl transition shadow-2xs"
@@ -1625,6 +1655,67 @@ class CustomFeatureHook(BaseFeatureHook):
                       </button>
                     </div>
                   </div>
+
+                  {/* Hook Validation Status Card */}
+                  {hookValidation && (
+                    <div className={`border rounded-xl p-4 transition ${
+                      hookValidation.status === 'valid'
+                        ? 'border-[#D2E7DC] bg-[#F8FAF9]'
+                        : hookValidation.status === 'error'
+                        ? 'border-red-200 bg-red-50/40 text-red-900'
+                        : 'border-[#E5E9E6] bg-white'
+                    }`}>
+                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 border-b border-[#E5E9E6] pb-3">
+                        <div className="flex items-center space-x-2">
+                          <span className={`text-[10px] font-mono uppercase px-2 py-0.5 rounded font-bold border ${
+                            hookValidation.status === 'valid'
+                              ? 'bg-[#E8F3ED] text-[#164E33] border-[#D2E7DC]'
+                              : 'bg-red-100 text-red-700 border-red-200'
+                          }`}>
+                            {hookValidation.status === 'valid' ? 'Active & Validated' : 'Validation Error'}
+                          </span>
+                          <span className="text-xs font-bold text-[#121816]">
+                            {hookValidation.status === 'valid' 
+                              ? `+${hookValidation.added_features_count} New Features Verified (${hookValidation.transformed_cols_count} Total Columns)`
+                              : 'Feature Hook Failed Execution'}
+                          </span>
+                        </div>
+                        <div className="flex items-center space-x-3 text-[11px] font-mono text-[#76807B]">
+                          {hookValidation.duration_ms !== undefined && (
+                            <span>Dry-run: {hookValidation.duration_ms}ms (1k sample)</span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => handleTestHook()}
+                            disabled={hookTesting}
+                            className="text-xs text-[#164E33] hover:underline font-semibold flex items-center space-x-1"
+                          >
+                            {hookTesting && <Loader2 size={11} className="animate-spin" />}
+                            <span>Re-test Hook</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {hookValidation.status === 'error' ? (
+                        <div className="mt-3 p-3 bg-white rounded-lg border border-red-200 text-xs font-mono text-red-600">
+                          {hookValidation.message}
+                        </div>
+                      ) : (
+                        <div className="mt-3 space-y-2">
+                          <div className="text-[10px] font-bold uppercase tracking-wider text-[#76807B] font-mono">
+                            Generated Feature Columns ({hookValidation.added_features?.length || 0}):
+                          </div>
+                          <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
+                            {hookValidation.added_features?.map((col: string) => (
+                              <span key={col} className="text-[11px] font-mono bg-white text-[#164E33] border border-[#D2E7DC] px-2 py-0.5 rounded-md shadow-2xs">
+                                + {col}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {/* 1-Click Universal Feature Primitives */}
                   <div className="space-y-2">
@@ -1832,6 +1923,40 @@ class CustomFeatureHook(BaseFeatureHook):
                     </div>
                     <div className="text-xs text-[#76807B] mt-1 font-mono truncate">{championModel || 'None'}</div>
                   </div>
+                </div>
+
+                {/* Feature Hook Active Banner */}
+                <div className="bg-white border border-[#E5E9E6] rounded-2xl p-4 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3">
+                  <div className="flex items-center space-x-3">
+                    <span className={`w-2.5 h-2.5 rounded-full ${caseDetail?.has_hook ? 'bg-[#164E33]' : 'bg-[#98A29D]'}`} />
+                    <div>
+                      <div className="flex items-center space-x-2">
+                        <span className="text-xs font-bold text-[#121816]">Feature Engineering Hook:</span>
+                        <span className={`text-[10px] font-mono uppercase px-2 py-0.5 rounded font-bold border ${
+                          caseDetail?.has_hook 
+                            ? 'bg-[#E8F3ED] text-[#164E33] border-[#D2E7DC]' 
+                            : 'bg-[#F8FAF9] text-[#76807B] border-[#E5E9E6]'
+                        }`}>
+                          {caseDetail?.has_hook ? 'Active & Ready for CV' : 'No Custom Hook (Using Raw Dataset)'}
+                        </span>
+                      </div>
+                      <p className="text-xs text-[#76807B] mt-0.5 font-mono">
+                        {caseDetail?.has_hook 
+                          ? 'Applied automatically to train and test splits during 5-Fold Cross Validation'
+                          : 'Configure domain transformations in Step 2 to generate specialized interaction features'}
+                      </p>
+                    </div>
+                  </div>
+
+                  {caseDetail?.has_hook && (
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('fe')}
+                      className="text-xs font-semibold text-[#164E33] hover:underline whitespace-nowrap self-start md:self-auto"
+                    >
+                      Inspect in Step 2 &rarr;
+                    </button>
+                  )}
                 </div>
 
                 {/* Active Model Selector for Distributed Team Training */}

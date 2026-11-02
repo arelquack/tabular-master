@@ -157,7 +157,9 @@ def get_case(case_id: str):
     # Hook code
     hook_file = os.path.join(case_dir, "feature_hook.py")
     hook_code = ""
+    has_hook = False
     if os.path.exists(hook_file):
+        has_hook = True
         with open(hook_file, "r") as hf:
             hook_code = hf.read()
 
@@ -171,6 +173,7 @@ def get_case(case_id: str):
         "summary": summary_data,
         "feature_importances": feature_importances,
         "hook_code": hook_code,
+        "has_hook": has_hook,
         "available_cached": available_cached,
         "job_state": job_state.get(case_id, {"status": "completed" if summary_data else "ready", "progress": 0, "logs": []})
     }
@@ -599,6 +602,54 @@ def save_case_hook(case_id: str, req: SaveHookRequest):
     with open(hook_file, "w", encoding="utf-8") as f:
         f.write(req.hook_code)
     return {"status": "saved", "path": hook_file}
+
+@app.post("/api/cases/{case_id}/hook/test")
+def test_case_hook(case_id: str):
+    case_dir = os.path.join(CASES_DIR, case_id)
+    case_json = os.path.join(case_dir, "case.json")
+    if not os.path.exists(case_json):
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    with open(case_json, "r") as f:
+        meta = json.load(f)
+
+    hook_file = os.path.join(case_dir, "feature_hook.py")
+    if not os.path.exists(hook_file):
+        return {"status": "none", "message": "No feature_hook.py found"}
+
+    try:
+        hook = load_hook_class(case_dir)
+        if not hook:
+            return {"status": "error", "message": "Failed to load BaseFeatureHook subclass in feature_hook.py"}
+
+        train_path = os.path.join(ROOT_DIR, meta["train_path"])
+        sample_df = pd.read_csv(train_path, nrows=1000)
+        orig_cols = list(sample_df.columns)
+        orig_count = len(orig_cols)
+
+        t0 = time.time()
+        res_train, _ = hook.transform(sample_df.copy(), None)
+        duration_ms = round((time.time() - t0) * 1000, 1)
+
+        new_cols = list(res_train.columns)
+        added_cols = [c for c in new_cols if c not in orig_cols]
+        new_nulls = int(res_train[added_cols].isnull().sum().sum()) if added_cols else 0
+
+        return {
+            "status": "valid",
+            "original_cols_count": orig_count,
+            "transformed_cols_count": len(new_cols),
+            "added_features_count": len(added_cols),
+            "added_features": added_cols,
+            "new_nulls_created": new_nulls,
+            "duration_ms": duration_ms,
+            "message": f"Successfully validated: {len(added_cols)} new features generated in {duration_ms}ms"
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
 
 @app.get("/api/cases/{case_id}/status")
 def get_case_status(case_id: str):
