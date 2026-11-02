@@ -1,0 +1,43 @@
+{
+    "case_id": "credit_card_fraud",
+    "runs": [
+        {
+            "run_id": "run_001",
+            "run_number": 1,
+            "timestamp": "2026-11-02 09:47:00",
+            "name": "Pure Baseline",
+            "tag": "baseline",
+            "has_hook": false,
+            "features_count": 26,
+            "models": [
+                "lgbm"
+            ],
+            "cv_score": 0.94576,
+            "metric": "roc_auc",
+            "cv_delta": 0.0,
+            "lb_score": 0.9464,
+            "champion_model": "lgbm",
+            "submission_filename": "submission_run_001.csv",
+            "notes": "Pure Baseline LightGBM on 26 raw features without feature engineering hook."
+        },
+        {
+            "run_id": "run_002",
+            "run_number": 2,
+            "timestamp": "2026-11-02 10:45:00",
+            "name": "Universal Primitives FE",
+            "tag": "feature_engineering",
+            "has_hook": true,
+            "features_count": 50,
+            "models": [
+                "lgbm"
+            ],
+            "cv_score": 0.94566,
+            "metric": "roc_auc",
+            "cv_delta": -0.0001,
+            "lb_score": 0.94629,
+            "champion_model": "lgbm",
+            "submission_filename": "submission_run_002.csv",
+            "notes": "Universal primitives dropped score slightly due to noisy row stats"
+        }
+    ]
+}

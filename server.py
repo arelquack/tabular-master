@@ -3,6 +3,7 @@ import sys
 import json
 import glob
 import re
+import shutil
 import importlib.util
 import threading
 import time
@@ -89,6 +90,10 @@ class InspectDatasetRequest(BaseModel):
 class UpdateCasePathsRequest(BaseModel):
     train_path: str
     test_path: Optional[str] = None
+
+class UpdateRunLBRequest(BaseModel):
+    lb_score: Optional[float] = None
+    notes: Optional[str] = None
 
 def resolve_dataset_path(raw_path: str, case_id: Optional[str] = None) -> Optional[str]:
     if not raw_path:
@@ -256,6 +261,16 @@ def get_case(case_id: str):
     train_exists = bool(resolved_train and os.path.exists(resolved_train))
     test_exists = bool(resolved_test and os.path.exists(resolved_test)) if resolved_test else True
 
+    # History
+    history_file = os.path.join(case_dir, "history.json")
+    history_runs = []
+    if os.path.exists(history_file):
+        try:
+            with open(history_file, "r") as hf:
+                history_runs = json.load(hf).get("runs", [])
+        except Exception:
+            pass
+
     return {
         "meta": meta,
         "summary": summary_data,
@@ -267,6 +282,7 @@ def get_case(case_id: str):
         "resolved_train_path": resolved_train,
         "resolved_test_path": resolved_test,
         "available_cached": available_cached,
+        "history": history_runs,
         "job_state": job_state.get(case_id, {"status": "completed" if summary_data else "ready", "progress": 0, "logs": []})
     }
 
@@ -571,6 +587,90 @@ def inspect_dataset(req: InspectDatasetRequest):
     except Exception as e:
         return {"exists": False, "error": str(e)}
 
+def record_run_history(case_id: str, meta: dict, results: dict, hook_present: bool, case_dir: str):
+    history_file = os.path.join(case_dir, "history.json")
+    history_data = {"case_id": case_id, "runs": []}
+    if os.path.exists(history_file):
+        try:
+            with open(history_file, "r") as f:
+                history_data = json.load(f)
+        except Exception:
+            pass
+
+    existing_runs = history_data.get("runs", [])
+    run_num = len(existing_runs) + 1
+    run_id = f"run_{run_num:03d}"
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+
+    out_dir = os.path.join(ROOT_DIR, meta.get("output_dir", f"experiments/{case_id}_run"))
+    fi_file = os.path.join(out_dir, "feature_importances.csv")
+    feat_count = 0
+    if os.path.exists(fi_file):
+        try:
+            fi_df = pd.read_csv(fi_file)
+            feat_count = int(fi_df["feature"].nunique())
+        except Exception:
+            pass
+
+    # Archive submission
+    sub_source = os.path.join(out_dir, "submission.csv")
+    sub_archive_dir = os.path.join(out_dir, "submissions")
+    os.makedirs(sub_archive_dir, exist_ok=True)
+    archive_name = f"submission_{run_id}.csv"
+    sub_dest = os.path.join(sub_archive_dir, archive_name)
+    has_sub = False
+    if os.path.exists(sub_source):
+        shutil.copyfile(sub_source, sub_dest)
+        has_sub = True
+
+    champ_score = float(results.get("champion_score", 0.0))
+    metric = results.get("metric", meta.get("eval_metric", "roc_auc"))
+    higher_better = MetricEvaluator.is_higher_better(metric)
+
+    # Baseline comparison (run 1 is baseline reference)
+    if existing_runs:
+        baseline_score = existing_runs[0].get("cv_score", champ_score)
+        delta_vs_baseline = round(champ_score - baseline_score, 5) if higher_better else round(baseline_score - champ_score, 5)
+    else:
+        delta_vs_baseline = 0.0
+
+    # Tag & name
+    is_ensemble = len(results.get("all_scores", {})) > len(meta.get("models", []))
+    if is_ensemble:
+        tag = "ensemble"
+        name = f"Ensemble ({results.get('champion_model', 'Blend')})"
+    elif hook_present:
+        tag = "feature_engineering"
+        name = f"Feature Engineering ({feat_count} features)"
+    else:
+        tag = "baseline"
+        name = f"Pure Baseline ({feat_count} features)"
+
+    run_entry = {
+        "run_id": run_id,
+        "run_number": run_num,
+        "timestamp": timestamp,
+        "name": name,
+        "tag": tag,
+        "has_hook": hook_present,
+        "features_count": feat_count,
+        "models": meta.get("models", []),
+        "cv_score": round(champ_score, 5),
+        "all_scores": {k: round(v, 5) for k, v in results.get("all_scores", {}).items()},
+        "metric": metric,
+        "cv_delta": delta_vs_baseline,
+        "lb_score": None,
+        "champion_model": results.get("champion_model", ""),
+        "submission_filename": archive_name if has_sub else None,
+        "notes": ""
+    }
+
+    existing_runs.append(run_entry)
+    history_data["runs"] = existing_runs
+
+    with open(history_file, "w") as f:
+        json.dump(history_data, f, indent=4)
+
 def run_pipeline_thread(case_id: str, meta: dict, case_dir: str):
     stop_event = threading.Event()
     stop_events[case_id] = stop_event
@@ -680,6 +780,12 @@ def run_pipeline_thread(case_id: str, meta: dict, case_dir: str):
         champ_name = results.get('champion_model', 'N/A')
         champ_score = results.get('champion_score', 0.0)
         log(f"All stages finished! Champion: {champ_name} (Score: {champ_score:.5f})")
+
+        # Record run in experiment history ledger
+        try:
+            record_run_history(case_id, meta, results, hook_present=bool(hook), case_dir=case_dir)
+        except Exception as he:
+            log(f"Warning: Failed to log run history: {he}")
 
     except InterruptedError:
         job_state[case_id]["status"] = "stopped"
@@ -1092,6 +1198,124 @@ def download_oof(case_id: str):
         raise HTTPException(status_code=404, detail="OOF predictions file not found. Run pipeline first.")
 
     return FileResponse(oof_path, media_type="text/csv", filename=f"{case_id}_oof_champion.csv")
+
+@app.get("/api/cases/{case_id}/history")
+def get_case_history_api(case_id: str):
+    case_dir = os.path.join(CASES_DIR, case_id)
+    case_json = os.path.join(case_dir, "case.json")
+    if not os.path.exists(case_json):
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    with open(case_json, "r") as f:
+        meta = json.load(f)
+
+    history_file = os.path.join(case_dir, "history.json")
+    if os.path.exists(history_file):
+        try:
+            with open(history_file, "r") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Error reading history.json for {case_id}: {e}")
+
+    # Fallback / Seed initial run if summary.json exists
+    out_dir = os.path.join(ROOT_DIR, meta.get("output_dir", f"experiments/{case_id}_run"))
+    summary_file = os.path.join(out_dir, "summary.json")
+    runs = []
+    if os.path.exists(summary_file):
+        try:
+            with open(summary_file, "r") as sf:
+                smry = json.load(sf)
+            fi_file = os.path.join(out_dir, "feature_importances.csv")
+            feat_cnt = 0
+            if os.path.exists(fi_file):
+                fi_df = pd.read_csv(fi_file)
+                feat_cnt = int(fi_df["feature"].nunique())
+
+            hook_file = os.path.join(case_dir, "feature_hook.py")
+            has_hook = os.path.exists(hook_file)
+
+            sub_source = os.path.join(out_dir, "submission.csv")
+            sub_archive_dir = os.path.join(out_dir, "submissions")
+            os.makedirs(sub_archive_dir, exist_ok=True)
+            archive_name = "submission_run_001.csv"
+            sub_dest = os.path.join(sub_archive_dir, archive_name)
+            if os.path.exists(sub_source) and not os.path.exists(sub_dest):
+                shutil.copyfile(sub_source, sub_dest)
+
+            runs.append({
+                "run_id": "run_001",
+                "run_number": 1,
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(os.path.getmtime(summary_file))),
+                "name": "Current Baseline / Champion",
+                "tag": "feature_engineering" if has_hook else "baseline",
+                "has_hook": has_hook,
+                "features_count": feat_cnt,
+                "models": meta.get("models", []),
+                "cv_score": round(smry.get("champion_score", 0.0), 5),
+                "all_scores": {k: round(v, 5) for k, v in smry.get("all_scores", {}).items()},
+                "metric": smry.get("metric", meta.get("eval_metric", "roc_auc")),
+                "cv_delta": 0.0,
+                "lb_score": None,
+                "champion_model": smry.get("champion_model", ""),
+                "submission_filename": archive_name if os.path.exists(sub_dest) else None,
+                "notes": "Initial benchmark run"
+            })
+            history_data = {"case_id": case_id, "runs": runs}
+            with open(history_file, "w") as f:
+                json.dump(history_data, f, indent=4)
+        except Exception as e:
+            print(f"Error seeding history: {e}")
+
+    return {"case_id": case_id, "runs": runs}
+
+@app.post("/api/cases/{case_id}/history/{run_id}/lb")
+def update_case_history_lb(case_id: str, run_id: str, req: UpdateRunLBRequest):
+    case_dir = os.path.join(CASES_DIR, case_id)
+    history_file = os.path.join(case_dir, "history.json")
+    if not os.path.exists(history_file):
+        raise HTTPException(status_code=404, detail="No history found for case")
+
+    with open(history_file, "r") as f:
+        history_data = json.load(f)
+
+    updated = False
+    for r in history_data.get("runs", []):
+        if r.get("run_id") == run_id:
+            if req.lb_score is not None:
+                r["lb_score"] = req.lb_score
+            if req.notes is not None:
+                r["notes"] = req.notes
+            updated = True
+            break
+
+    if not updated:
+        raise HTTPException(status_code=404, detail=f"Run {run_id} not found in history")
+
+    with open(history_file, "w") as f:
+        json.dump(history_data, f, indent=4)
+
+    return {"status": "updated", "history": history_data}
+
+@app.get("/api/cases/{case_id}/download/submission/run/{run_id}")
+def download_submission_run(case_id: str, run_id: str):
+    case_dir = os.path.join(CASES_DIR, case_id)
+    case_json = os.path.join(case_dir, "case.json")
+    if not os.path.exists(case_json):
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    with open(case_json, "r") as f:
+        meta = json.load(f)
+
+    out_dir = os.path.join(ROOT_DIR, meta.get("output_dir", f"experiments/{case_id}_run"))
+    sub_dir = os.path.join(out_dir, "submissions")
+    run_file = os.path.join(sub_dir, f"submission_{run_id}.csv")
+
+    if not os.path.exists(run_file):
+        run_file = os.path.join(out_dir, "submission.csv")
+        if not os.path.exists(run_file):
+            raise HTTPException(status_code=404, detail=f"Submission file for {run_id} not found")
+
+    return FileResponse(run_file, media_type="text/csv", filename=f"{case_id}_{run_id}_submission.csv")
 
 @app.get("/api/cases/{case_id}/export-script")
 def export_standalone_script(case_id: str):

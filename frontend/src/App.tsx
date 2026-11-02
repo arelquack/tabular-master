@@ -21,7 +21,12 @@ import {
   Square,
   RotateCcw,
   RefreshCw,
-  AlertTriangle
+  AlertTriangle,
+  History,
+  Edit3,
+  Clock,
+  ArrowUpRight,
+  ArrowDownRight
 } from 'lucide-react';
 
 interface CaseMeta {
@@ -44,6 +49,25 @@ interface CaseMeta {
   summary?: any;
 }
 
+interface ExperimentRun {
+  run_id: string;
+  run_number: number;
+  timestamp: string;
+  name: string;
+  tag: string;
+  has_hook: boolean;
+  features_count: number;
+  models: string[];
+  cv_score: number;
+  all_scores?: Record<string, number>;
+  metric: string;
+  cv_delta: number;
+  lb_score?: number | null;
+  champion_model: string;
+  submission_filename?: string | null;
+  notes?: string;
+}
+
 interface CaseDetail {
   meta: CaseMeta;
   summary: any;
@@ -55,6 +79,7 @@ interface CaseDetail {
   resolved_train_path?: string;
   resolved_test_path?: string;
   available_cached: string[];
+  history?: ExperimentRun[];
   job_state: {
     status: string;
     progress: number;
@@ -167,6 +192,12 @@ export default function App() {
   const [showRelocateCard, setShowRelocateCard] = useState<boolean>(false);
   const [pathUpdateSuccess, setPathUpdateSuccess] = useState<string | null>(null);
   const [pathUpdateError, setPathUpdateError] = useState<string | null>(null);
+
+  // Experiment History LB editing state
+  const [editingLbRunId, setEditingLbRunId] = useState<string | null>(null);
+  const [tempLbScore, setTempLbScore] = useState<string>('');
+  const [tempNotes, setTempNotes] = useState<string>('');
+  const [isSavingLb, setIsSavingLb] = useState<boolean>(false);
 
   const [newCase, setNewCase] = useState({
     id: '',
@@ -346,6 +377,25 @@ class CustomFeatures(BaseFeatureHook):
       }
     } catch (err) {
       console.error('File dialog error:', err);
+    }
+  };
+
+  const handleSaveLb = async (runId: string) => {
+    if (!selectedCaseId) return;
+    setIsSavingLb(true);
+    try {
+      const val = tempLbScore.trim() ? parseFloat(tempLbScore.trim()) : null;
+      await fetch(`/api/cases/${selectedCaseId}/history/${runId}/lb`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lb_score: val, notes: tempNotes.trim() || undefined })
+      });
+      setEditingLbRunId(null);
+      await fetchCaseDetail(selectedCaseId);
+    } catch (e) {
+      console.error('Failed to update LB score:', e);
+    } finally {
+      setIsSavingLb(false);
     }
   };
 
@@ -2530,6 +2580,224 @@ class CustomFeatureHook(BaseFeatureHook):
                           })}
                       </tbody>
                     </table>
+                  )}
+                </div>
+
+                {/* EXPERIMENT HISTORY & BENCHMARK LEDGER */}
+                <div className="bg-white border border-[#E5E9E6] rounded-2xl overflow-hidden shadow-sm">
+                  <div className="px-6 py-4 border-b border-[#E5E9E6] bg-[#F8FAF9] flex items-center justify-between">
+                    <div>
+                      <div className="flex items-center space-x-2">
+                        <History size={16} className="text-[#164E33]" />
+                        <span className="font-semibold text-sm text-[#121816]">Experiment History & Benchmark Ledger</span>
+                      </div>
+                      <p className="text-xs text-[#76807B] mt-0.5">
+                        Track CV scores across Pure Baseline, Feature Engineering, Optuna, and Ensembles against Kaggle Public Leaderboard.
+                      </p>
+                    </div>
+                    <span className="text-xs font-mono px-2.5 py-1 bg-white border border-[#E5E9E6] rounded-lg text-[#121816] font-medium">
+                      {(caseDetail.history || []).length} Runs Logged
+                    </span>
+                  </div>
+
+                  {!caseDetail.history || caseDetail.history.length === 0 ? (
+                    <div className="p-8 text-center text-xs text-zinc-500">
+                      No experiment runs recorded yet. Execute a pipeline run to log your first benchmark.
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-[#F8FAF9]/60 border-b border-[#E5E9E6] text-[11px] uppercase tracking-wider text-[#76807B] font-mono">
+                          <tr>
+                            <th className="px-5 py-3">Run & Time</th>
+                            <th className="px-5 py-3">Experiment Strategy</th>
+                            <th className="px-5 py-3">Features</th>
+                            <th className="px-5 py-3 font-mono">OOF {meta?.eval_metric.toUpperCase()}</th>
+                            <th className="px-5 py-3 font-mono">Gain vs Base</th>
+                            <th className="px-5 py-3 font-mono">Kaggle Public LB</th>
+                            <th className="px-5 py-3 text-right">Submission</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[#E5E9E6]">
+                          {caseDetail.history.map((run, rIdx) => {
+                            const isChampion = run.cv_score === Math.max(...caseDetail.history!.map(h => h.cv_score));
+                            const isEditingThis = editingLbRunId === run.run_id;
+
+                            // Correlation calculation if LB score exists
+                            const baseLb = caseDetail.history![0]?.lb_score;
+                            const lbDelta = (run.lb_score != null && baseLb != null && rIdx > 0) ? run.lb_score - baseLb : null;
+                            const isAligned = (run.cv_delta < 0 && lbDelta != null && lbDelta < 0) || (run.cv_delta > 0 && lbDelta != null && lbDelta > 0);
+
+                            return (
+                              <tr key={run.run_id} className={`hover:bg-[#F8FAF9]/50 transition-colors ${isChampion ? 'bg-emerald-50/20' : ''}`}>
+                                <td className="px-5 py-3.5 whitespace-nowrap">
+                                  <div className="font-mono font-semibold text-[#121816] flex items-center space-x-1.5">
+                                    <span>#{String(run.run_number).padStart(2, '0')}</span>
+                                    {isChampion && (
+                                      <span className="text-[10px] font-sans font-bold bg-[#164E33] text-white px-1.5 py-0.2 rounded">
+                                        Best CV
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="text-[11px] text-[#76807B] flex items-center space-x-1 mt-0.5">
+                                    <Clock size={11} />
+                                    <span>{run.timestamp}</span>
+                                  </div>
+                                </td>
+
+                                <td className="px-5 py-3.5">
+                                  <div className="flex items-center space-x-2">
+                                    <span className={`px-2 py-0.5 rounded text-[11px] font-medium border ${
+                                      run.tag === 'baseline' 
+                                        ? 'bg-zinc-100 text-zinc-800 border-zinc-200' 
+                                        : run.tag === 'feature_engineering'
+                                        ? 'bg-blue-50 text-blue-800 border-blue-200'
+                                        : run.tag === 'ensemble'
+                                        ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                        : 'bg-purple-50 text-purple-800 border-purple-200'
+                                    }`}>
+                                      {run.tag === 'baseline' ? 'Pure Baseline' : run.tag === 'feature_engineering' ? 'Feature Engineering' : run.tag === 'ensemble' ? 'Ensemble Blend' : 'Optuna Tuned'}
+                                    </span>
+                                    <span className="font-medium text-[#121816] text-xs truncate max-w-xs">{run.name}</span>
+                                  </div>
+                                  {run.notes && (
+                                    <p className="text-[11px] text-[#76807B] mt-1 line-clamp-1 italic">{run.notes}</p>
+                                  )}
+                                </td>
+
+                                <td className="px-5 py-3.5 font-mono text-xs">
+                                  <span className="text-[#121816] font-medium">{run.features_count}</span>
+                                  <span className="text-[#76807B] ml-1">cols</span>
+                                  {rIdx > 0 && run.features_count !== caseDetail.history![0].features_count && (
+                                    <span className="text-[10px] ml-1 text-blue-600 font-semibold">
+                                      (+{run.features_count - caseDetail.history![0].features_count})
+                                    </span>
+                                  )}
+                                </td>
+
+                                <td className="px-5 py-3.5 font-mono font-semibold text-xs text-[#121816]">
+                                  {run.cv_score.toFixed(5)}
+                                </td>
+
+                                <td className="px-5 py-3.5 font-mono text-xs">
+                                  {run.cv_delta > 0 ? (
+                                    <span className="inline-flex items-center text-emerald-700 font-semibold bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                                      <ArrowUpRight size={12} className="mr-0.5" />
+                                      +{run.cv_delta.toFixed(5)}
+                                    </span>
+                                  ) : run.cv_delta < 0 ? (
+                                    <span className="inline-flex items-center text-rose-700 font-semibold bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200">
+                                      <ArrowDownRight size={12} className="mr-0.5" />
+                                      {run.cv_delta.toFixed(5)}
+                                    </span>
+                                  ) : (
+                                    <span className="text-[#76807B] font-mono">0.00000 (Base)</span>
+                                  )}
+                                </td>
+
+                                <td className="px-5 py-3.5">
+                                  {isEditingThis ? (
+                                    <div className="flex items-center space-x-1.5">
+                                      <input
+                                        type="number"
+                                        step="0.00001"
+                                        value={tempLbScore}
+                                        onChange={e => setTempLbScore(e.target.value)}
+                                        placeholder="0.94640"
+                                        className="w-24 px-2 py-1 text-xs font-mono bg-white border border-[#164E33] rounded focus:outline-none"
+                                        autoFocus
+                                      />
+                                      <button
+                                        type="button"
+                                        disabled={isSavingLb}
+                                        onClick={() => handleSaveLb(run.run_id)}
+                                        className="px-2 py-1 bg-[#164E33] text-white text-[11px] font-medium rounded hover:bg-[#113d28]"
+                                      >
+                                        Save
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setEditingLbRunId(null)}
+                                        className="px-1.5 py-1 text-zinc-400 hover:text-zinc-600 text-xs"
+                                      >
+                                        <X size={12} />
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <div className="flex items-center space-x-2">
+                                      {run.lb_score != null ? (
+                                        <div className="flex items-center space-x-1.5 font-mono">
+                                          <span className="font-bold text-[#121816] text-xs">
+                                            {Number(run.lb_score).toFixed(5)}
+                                          </span>
+                                          {lbDelta != null && (
+                                            <span className={`text-[10px] font-semibold px-1 py-0.2 rounded ${
+                                              lbDelta > 0 
+                                                ? 'text-emerald-700 bg-emerald-50' 
+                                                : lbDelta < 0 
+                                                ? 'text-rose-700 bg-rose-50' 
+                                                : 'text-zinc-600'
+                                            }`}>
+                                              {lbDelta > 0 ? `+${lbDelta.toFixed(5)}` : lbDelta.toFixed(5)}
+                                            </span>
+                                          )}
+                                          {isAligned && (
+                                            <span className="text-[10px] text-[#164E33] bg-[#164E33]/10 px-1 py-0.2 rounded font-sans font-medium" title="CV and Public LB moved in the same direction!">
+                                              Aligned
+                                            </span>
+                                          )}
+                                        </div>
+                                      ) : (
+                                        <span className="text-[11px] text-zinc-400 italic">Not entered</span>
+                                      )}
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setEditingLbRunId(run.run_id);
+                                          setTempLbScore(run.lb_score != null ? String(run.lb_score) : '');
+                                          setTempNotes(run.notes || '');
+                                        }}
+                                        className="text-zinc-400 hover:text-[#164E33] p-1 rounded transition-colors"
+                                        title="Edit Kaggle Public Score"
+                                      >
+                                        <Edit3 size={12} />
+                                      </button>
+                                    </div>
+                                  )}
+                                </td>
+
+                                <td className="px-5 py-3.5 text-right whitespace-nowrap">
+                                  <a
+                                    href={`/api/cases/${selectedCaseId}/download/submission/run/${run.run_id}`}
+                                    className="inline-flex items-center space-x-1 px-2.5 py-1 bg-white hover:bg-[#F4F5F6] text-[#121816] text-[11px] font-medium border border-[#E5E9E6] rounded-lg transition-colors"
+                                    title={`Download ${run.submission_filename || 'submission.csv'}`}
+                                  >
+                                    <Download size={12} className="text-[#164E33]" />
+                                    <span>Download CSV</span>
+                                  </a>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {/* Diagnostic Banner if score dropped */}
+                  {caseDetail.history && caseDetail.history.length >= 2 && caseDetail.history[caseDetail.history.length - 1].cv_delta < 0 && (
+                    <div className="p-4 bg-amber-50/60 border-t border-amber-200/80 flex items-start space-x-3 text-xs">
+                      <AlertTriangle size={16} className="text-amber-700 flex-shrink-0 mt-0.5" />
+                      <div className="space-y-1 text-amber-900 leading-relaxed">
+                        <span className="font-semibold">Diagnostic Insight on Score Drop:</span>
+                        <p className="text-[11px] text-amber-800">
+                          Adding the universal primitives dropped both local CV ({caseDetail.history[caseDetail.history.length - 1].cv_delta.toFixed(5)}) and Kaggle Public LB ({((caseDetail.history[caseDetail.history.length - 1].lb_score || 0) - (caseDetail.history[0].lb_score || 0)).toFixed(5)}). Notice in the Feature Importances below that <code className="bg-amber-100/80 px-1 rounded font-mono font-medium">row_stat_min</code> received huge importance (105k) by computing min across non-comparable units (age, USD, hours, km). Tree models greedily split on this noise, causing slight generalization loss.
+                        </p>
+                        <p className="text-[11px] text-[#164E33] font-medium">
+                          Next step recommendation: In Step 2, prune arbitrary row-wise aggregates (<code className="bg-emerald-50 px-1 rounded font-mono">row_stat_*</code>) and preserve domain-meaningful financial ratios (<code className="bg-emerald-50 px-1 rounded font-mono">amount_usd / account_balance_usd</code>) to restore baseline score!
+                        </p>
+                      </div>
+                    </div>
                   )}
                 </div>
 
