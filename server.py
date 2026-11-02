@@ -716,6 +716,12 @@ def run_pipeline_thread(case_id: str, meta: dict, case_dir: str):
         job_state[case_id]["progress"] = 20
         log(f"Final training matrix: {len(train_df):,} rows, {len(train_df.columns)} columns.")
 
+        hook = load_hook_class(case_dir)
+        if hook:
+            log("Loaded custom feature engineering hook.")
+
+        auto_fe_preset = meta.get("auto_fe_preset", "off" if hook else "conservative")
+
         cfg = PipelineConfig(
             project_name=meta.get("name", case_id),
             output_dir=meta.get("output_dir", f"experiments/{case_id}_run"),
@@ -728,15 +734,13 @@ def run_pipeline_thread(case_id: str, meta: dict, case_dir: str):
             n_splits=meta.get("n_splits", 5),
             models=meta.get("models", ["lgbm", "xgb", "catboost"]),
             model_params=meta.get("model_params", {}),
+            auto_fe_preset=auto_fe_preset,
+            run_generic_features=(auto_fe_preset != "off"),
             ensemble_methods=["mean", "rank", "opt_weights", "hill_climbing", "stacking"] if len(meta.get("models", [])) > 1 else [],
             run_adversarial_validation=True,
             save_oof_predictions=True,
             save_test_predictions=True
         )
-
-        hook = load_hook_class(case_dir)
-        if hook:
-            log("Loaded custom feature engineering hook.")
 
         total_models = len(cfg.models)
         total_folds = cfg.n_splits

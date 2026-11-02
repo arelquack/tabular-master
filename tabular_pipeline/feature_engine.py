@@ -88,14 +88,11 @@ class UniversalAutoFeatureEngine:
                     df[col_name] = df[col].isnull().astype(int)
 
         # -------------------------------------------------------------
-        # 3. Row-wise Numerical Summary Statistics (Universal Matrix Primitives)
-        # Calculates profile mean, std, min, max, and zero-count across numerical features.
-        # Works on survey items, test grades, financial metrics, sensor signals, etc.
+        # 3. Row-wise Numerical Aggregations (Strictly for Homogeneous subsets)
         # -------------------------------------------------------------
         num_cols = detected_types.get("numeric", [])
-        # Find homogenous subsets (e.g. bounded ratings 0-5, 0-10 or all numeric)
         if len(num_cols) >= 3:
-            # Check for bounded rating / score columns (e.g., surveys, Likert scales, rubric grades)
+            # Check for bounded rating / score columns (e.g., surveys, Likert scales 0-5 or 0-10)
             bounded_cols = []
             for c in num_cols:
                 c_min = train_out[c].min()
@@ -104,30 +101,32 @@ class UniversalAutoFeatureEngine:
                     if 0 <= c_min and c_max <= 10:
                         bounded_cols.append(c)
 
-            target_row_cols = bounded_cols if len(bounded_cols) >= 3 else num_cols[:15]
+            # ONLY generate row-stats if columns are truly homogeneous (e.g. Likert ratings)!
+            # NEVER compute row-wise min/mean across arbitrary mixed units (age, USD, km, hours).
+            if len(bounded_cols) >= 3:
+                for df in dfs:
+                    row_mat = df[bounded_cols].values
+                    df["row_num_mean"] = np.nanmean(row_mat, axis=1)
+                    df["row_num_std"] = np.nanstd(row_mat, axis=1)
+                    df["row_num_min"] = np.nanmin(row_mat, axis=1)
+                    df["row_num_max"] = np.nanmax(row_mat, axis=1)
+                    df["row_num_zeros"] = (row_mat == 0).sum(axis=1)
 
-            for df in dfs:
-                row_mat = df[target_row_cols].values
-                df["row_num_mean"] = np.nanmean(row_mat, axis=1)
-                df["row_num_std"] = np.nanstd(row_mat, axis=1)
-                df["row_num_min"] = np.nanmin(row_mat, axis=1)
-                df["row_num_max"] = np.nanmax(row_mat, axis=1)
-                df["row_num_zeros"] = (row_mat == 0).sum(axis=1)
-
-            new_feature_names.extend(["row_num_mean", "row_num_std", "row_num_min", "row_num_max", "row_num_zeros"])
+                new_feature_names.extend(["row_num_mean", "row_num_std", "row_num_min", "row_num_max", "row_num_zeros"])
 
         # -------------------------------------------------------------
-        # 4. Pairwise Categorical Interaction & Frequency Encoding
+        # 4. High-Cardinality Frequency Encoding & Categorical Interactions
         # -------------------------------------------------------------
         cat_cols = detected_types.get("all_cat", [])
-        # Frequency encoding of raw categoricals
+        # Frequency encoding strictly for high-cardinality categoricals (> 15 unique values)
         for col in cat_cols:
-            freq_map = train_out[col].value_counts(normalize=True).to_dict()
-            col_name = f"{col}_freq"
-            new_feature_names.append(col_name)
-            for df in dfs:
-                if col in df.columns:
-                    df[col_name] = df[col].map(freq_map).fillna(0.0)
+            if train_out[col].nunique() > 15:
+                freq_map = train_out[col].value_counts(normalize=True).to_dict()
+                col_name = f"{col}_freq"
+                new_feature_names.append(col_name)
+                for df in dfs:
+                    if col in df.columns:
+                        df[col_name] = df[col].map(freq_map).fillna(0.0)
 
         # Pairwise interaction across top categoricals (cardinality 2-25)
         informative_cats = [c for c in cat_cols if 2 <= train_out[c].nunique() <= 25]
