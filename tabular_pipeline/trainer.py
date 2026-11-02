@@ -18,6 +18,7 @@ class CrossValidatorTrainer:
         n_splits: int = 5,
         categorical_encoder: str = "ordinal",
         seed: int = 42,
+        use_gpu: bool = False,
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
         is_aborted: Optional[Callable[[], bool]] = None,
     ):
@@ -27,6 +28,7 @@ class CrossValidatorTrainer:
         self.n_splits = n_splits
         self.categorical_encoder = categorical_encoder
         self.seed = seed
+        self.use_gpu = use_gpu
         self.progress_callback = progress_callback
         self.is_aborted = is_aborted
 
@@ -117,6 +119,7 @@ class CrossValidatorTrainer:
                 eval_metric=self.eval_metric,
                 random_state=self.seed + fold,
                 params=model_params,
+                use_gpu=self.use_gpu,
             )
 
             model.fit(

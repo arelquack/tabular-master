@@ -33,9 +33,15 @@ class AdversarialValidator:
         y = combined["__is_test__"].values
 
         # Simple categorical encoding for adversarial check
+        # Handles pandas 2.x StringDtype, object, and CategoricalDtype
         for col in X.columns:
-            if X[col].dtype == "object" or isinstance(X[col].dtype, pd.CategoricalDtype):
-                X[col] = X[col].astype("category").cat.codes
+            if (
+                X[col].dtype == "object"
+                or isinstance(X[col].dtype, pd.CategoricalDtype)
+                or pd.api.types.is_string_dtype(X[col])
+                or not pd.api.types.is_numeric_dtype(X[col])
+            ):
+                X[col] = X[col].astype(str).astype("category").cat.codes
 
         skf = StratifiedKFold(n_splits=self.n_splits, shuffle=True, random_state=self.seed)
         oof_preds = np.zeros(len(combined))

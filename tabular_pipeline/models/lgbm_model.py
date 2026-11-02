@@ -7,8 +7,9 @@ class LightGBMModel(BaseTabularModel):
     """
     Unified high-performance wrapper for LightGBM Classifier & Regressor.
     """
-    def __init__(self, task_type: str = "binary", eval_metric: str = "roc_auc", random_state: int = 42, params: Optional[Dict[str, Any]] = None):
+    def __init__(self, task_type: str = "binary", eval_metric: str = "roc_auc", random_state: int = 42, params: Optional[Dict[str, Any]] = None, use_gpu: bool = False):
         super().__init__(task_type, eval_metric, random_state, params)
+        self.use_gpu = use_gpu
 
     def _get_metric_name(self) -> str:
         m = self.eval_metric.lower()
@@ -38,6 +39,9 @@ class LightGBMModel(BaseTabularModel):
             "verbose": -1,
             "n_jobs": -1,
         }
+        if self.use_gpu:
+            defaults["device"] = "gpu"
+            defaults.pop("n_jobs", None)  # n_jobs tidak kompatibel dengan GPU mode
         if self.task_type == "binary":
             defaults["objective"] = "binary"
             defaults["metric"] = metric_str

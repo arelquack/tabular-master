@@ -54,6 +54,11 @@ class PipelineConfig:
     models: List[str] = field(default_factory=lambda: ["lgbm", "xgb", "catboost"])
     model_params: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
+    # --- GPU Acceleration ---
+    # Set True untuk mengaktifkan GPU pada LightGBM, XGBoost, dan CatBoost
+    # LightGBM: device="gpu" | XGBoost: device="cuda" | CatBoost: task_type="GPU"
+    use_gpu: bool = False
+
     # --- Ensembling ---
     ensemble_methods: List[str] = field(default_factory=lambda: ["mean", "rank", "optimal_weights", "stacking", "hill_climbing"])
     save_oof_predictions: bool = True

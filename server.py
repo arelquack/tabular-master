@@ -68,6 +68,7 @@ class CreateCaseRequest(BaseModel):
     seed: int = 2026
     models: List[str] = ["lgbm", "xgb", "catboost"]
     hook_code: Optional[str] = None
+    use_gpu: bool = False
 
 class TuneRequest(BaseModel):
     model: str = "lgbm"
@@ -174,6 +175,30 @@ def get_case(case_id: str):
         "available_cached": available_cached,
         "job_state": job_state.get(case_id, {"status": "completed" if summary_data else "ready", "progress": 0, "logs": []})
     }
+
+@app.patch("/api/cases/{case_id}/settings")
+def update_case_settings(case_id: str, settings: Dict[str, Any]):
+    """Update configurable settings on an existing case (e.g. use_gpu, models, n_splits)."""
+    allowed_keys = {"use_gpu", "models", "model_params", "n_splits", "seed",
+                    "cv_strategy", "eval_metric", "task_type"}
+    case_dir = os.path.join(CASES_DIR, case_id)
+    case_json = os.path.join(case_dir, "case.json")
+    if not os.path.exists(case_json):
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    with open(case_json, "r") as f:
+        meta = json.load(f)
+
+    updated = {}
+    for k, v in settings.items():
+        if k in allowed_keys:
+            meta[k] = v
+            updated[k] = v
+
+    with open(case_json, "w") as f:
+        json.dump(meta, f, indent=4)
+
+    return {"status": "updated", "case_id": case_id, "updated_fields": updated}
 
 @app.get("/api/cases/{case_id}/eda")
 def get_case_eda(case_id: str):
@@ -498,7 +523,8 @@ def run_pipeline_thread(case_id: str, meta: dict, case_dir: str):
             ensemble_methods=["mean", "rank", "opt_weights", "hill_climbing", "stacking"] if len(meta.get("models", [])) > 1 else [],
             run_adversarial_validation=True,
             save_oof_predictions=True,
-            save_test_predictions=True
+            save_test_predictions=True,
+            use_gpu=meta.get("use_gpu", False),
         )
 
         hook = load_hook_class(case_dir)

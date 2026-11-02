@@ -206,8 +206,8 @@ class UniversalAutoFeatureEngine:
         if all_created:
             # 1. Filter out near-constant features (variance < 1e-7)
             # Only check numeric columns for variance
-            numeric_created = [c for c in all_created if np.issubdtype(train_out[c].dtype, np.number)]
-            non_numeric_created = [c for c in all_created if not np.issubdtype(train_out[c].dtype, np.number)]
+            numeric_created = [c for c in all_created if pd.api.types.is_numeric_dtype(train_out[c])]
+            non_numeric_created = [c for c in all_created if not pd.api.types.is_numeric_dtype(train_out[c])]
 
             valid_feats = []
             if numeric_created:
