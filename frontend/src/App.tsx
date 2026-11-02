@@ -18,7 +18,9 @@ import {
   BarChart2,
   Activity,
   FolderOpen,
-  Square
+  Square,
+  RotateCcw,
+  RefreshCw
 } from 'lucide-react';
 
 interface CaseMeta {
@@ -117,6 +119,7 @@ export default function App() {
   const [editableHookCode, setEditableHookCode] = useState<string>('');
   const [savingHook, setSavingHook] = useState<boolean>(false);
   const [hookSaved, setHookSaved] = useState<boolean>(false);
+  const [hookHistory, setHookHistory] = useState<string[]>([]);
 
   // Quick Visual Feature Engineering Builder
   const [feColA, setFeColA] = useState<string>('');
@@ -371,7 +374,45 @@ class CustomFeatures(BaseFeatureHook):
     }
   };
 
-  const insertCodeIntoHook = (codeSnippet: string) => {
+  const handleUndoHook = () => {
+    if (hookHistory.length === 0) {
+      alert('No previous actions to undo.');
+      return;
+    }
+    const previousCode = hookHistory[hookHistory.length - 1];
+    setHookHistory(prev => prev.slice(0, -1));
+    setEditableHookCode(previousCode);
+  };
+
+  const handleResetHook = () => {
+    if (window.confirm('Reset feature hook to clean default template? All custom additions will be cleared.')) {
+      setHookHistory(prev => [...prev.slice(-20), editableHookCode]);
+      const cleanTemplate = `from tabular_pipeline import BaseFeatureHook
+import pandas as pd
+import numpy as np
+
+class CustomFeatureHook(BaseFeatureHook):
+    """
+    Universal Leak-Free Feature Hook.
+    Executes fold-by-fold before machine learning models.
+    """
+    def transform(self, train_df: pd.DataFrame, test_df: pd.DataFrame = None):
+        # Write custom feature transformations below
+
+        return train_df, test_df
+`;
+      setEditableHookCode(cleanTemplate);
+    }
+  };
+
+  const insertCodeIntoHook = (codeSnippet: string, duplicateCheckKey?: string) => {
+    if (duplicateCheckKey && editableHookCode.includes(duplicateCheckKey)) {
+      alert(`Notice: Feature or logic containing "${duplicateCheckKey}" is already present in your code. Insertion skipped to prevent redundant duplication.`);
+      return;
+    }
+
+    setHookHistory(prev => [...prev.slice(-20), editableHookCode]);
+
     if (!editableHookCode || editableHookCode.trim().length === 0) {
       const boilerplate = `from tabular_pipeline import BaseFeatureHook
 import pandas as pd
@@ -418,7 +459,7 @@ class CustomFeatureHook(BaseFeatureHook):
       expr = `# Visual Formula: ${newColName}\n        for df in ([train_df, test_df] if test_df is not None else [train_df]):\n            df['${newColName}'] = df['${feColA}'] + df['${feColB}']`;
     }
 
-    insertCodeIntoHook(expr);
+    insertCodeIntoHook(expr, newColName);
   };
 
   const handleInsertGroupFormula = () => {
@@ -429,22 +470,23 @@ class CustomFeatureHook(BaseFeatureHook):
     const cleanCat = feGroupCat.replace(/[^a-zA-Z0-9_]/g, '_');
     const cleanNum = feGroupNum.replace(/[^a-zA-Z0-9_]/g, '_');
 
+    let colName = '';
     let expr = '';
     if (feGroupStat === 'diff') {
-      const colName = `${cleanNum}_diff_from_${cleanCat}_mean`;
+      colName = `${cleanNum}_diff_from_${cleanCat}_mean`;
       expr = `# Visual Group Deviation: ${colName}\n        grp_map = train_df.groupby('${feGroupCat}')['${feGroupNum}'].mean().to_dict()\n        for df in ([train_df, test_df] if test_df is not None else [train_df]):\n            df['${colName}'] = df['${feGroupNum}'] - df['${feGroupCat}'].map(grp_map)`;
     } else if (feGroupStat === 'mean') {
-      const colName = `${cleanNum}_by_${cleanCat}_mean`;
+      colName = `${cleanNum}_by_${cleanCat}_mean`;
       expr = `# Visual Group Mean: ${colName}\n        grp_map = train_df.groupby('${feGroupCat}')['${feGroupNum}'].mean().to_dict()\n        for df in ([train_df, test_df] if test_df is not None else [train_df]):\n            df['${colName}'] = df['${feGroupCat}'].map(grp_map)`;
     } else if (feGroupStat === 'std') {
-      const colName = `${cleanNum}_by_${cleanCat}_std`;
+      colName = `${cleanNum}_by_${cleanCat}_std`;
       expr = `# Visual Group Std: ${colName}\n        grp_map = train_df.groupby('${feGroupCat}')['${feGroupNum}'].std().fillna(0).to_dict()\n        for df in ([train_df, test_df] if test_df is not None else [train_df]):\n            df['${colName}'] = df['${feGroupCat}'].map(grp_map)`;
     } else {
-      const colName = `${cleanNum}_zscore_by_${cleanCat}`;
+      colName = `${cleanNum}_zscore_by_${cleanCat}`;
       expr = `# Visual Group Z-Score: ${colName}\n        g_mean = train_df.groupby('${feGroupCat}')['${feGroupNum}'].mean().to_dict()\n        g_std = train_df.groupby('${feGroupCat}')['${feGroupNum}'].std().fillna(1.0).to_dict()\n        for df in ([train_df, test_df] if test_df is not None else [train_df]):\n            mean_s = df['${feGroupCat}'].map(g_mean)\n            std_s = df['${feGroupCat}'].map(g_std).replace(0, 1.0)\n            df['${colName}'] = (df['${feGroupNum}'] - mean_s) / std_s`;
     }
 
-    insertCodeIntoHook(expr);
+    insertCodeIntoHook(expr, colName);
   };
 
   const handleInsertGroupStatsTemplate = () => {
@@ -460,7 +502,7 @@ class CustomFeatureHook(BaseFeatureHook):
                 for df in ([train_df, test_df] if test_df is not None else [train_df]):
                     df[f'{val_col}_by_{group_col}_mean'] = df[group_col].map(grp_mean)
                     df[f'{val_col}_diff_{group_col}_mean'] = df[val_col] - df[group_col].map(grp_mean)`;
-    insertCodeIntoHook(snippet);
+    insertCodeIntoHook(snippet, 'UNIVERSAL PRIMITIVE 1');
   };
 
   const handleInsertRowStatsTemplate = () => {
@@ -476,7 +518,7 @@ class CustomFeatureHook(BaseFeatureHook):
                 df['row_stat_min'] = df[numeric_cols].min(axis=1)
                 df['row_stat_max'] = df[numeric_cols].max(axis=1)
                 df['row_null_count'] = df[numeric_cols].isnull().sum(axis=1)`;
-    insertCodeIntoHook(snippet);
+    insertCodeIntoHook(snippet, 'UNIVERSAL PRIMITIVE 2');
   };
 
   const handleInsertFreqEncodingTemplate = () => {
@@ -489,7 +531,7 @@ class CustomFeatureHook(BaseFeatureHook):
             freq = train_df[c].value_counts(normalize=True).to_dict()
             for df in ([train_df, test_df] if test_df is not None else [train_df]):
                 df[f'{c}_freq'] = df[c].map(freq).fillna(0)`;
-    insertCodeIntoHook(snippet);
+    insertCodeIntoHook(snippet, 'UNIVERSAL PRIMITIVE 3');
   };
 
   const handleInsertLogTransformTemplate = () => {
@@ -502,7 +544,7 @@ class CustomFeatureHook(BaseFeatureHook):
             if (train_df[c] >= 0).all():
                 for df in ([train_df, test_df] if test_df is not None else [train_df]):
                     df[f'{c}_log1p'] = np.log1p(df[c].clip(lower=0))`;
-    insertCodeIntoHook(snippet);
+    insertCodeIntoHook(snippet, 'UNIVERSAL PRIMITIVE 4');
   };
 
   // Execute Pipeline
@@ -1540,13 +1582,39 @@ class CustomFeatureHook(BaseFeatureHook):
                       </p>
                     </div>
 
-                    <div className="flex items-center space-x-3">
+                    <div className="flex items-center space-x-2">
                       {hookSaved && (
-                        <span className="text-xs font-mono text-[#164E33] font-semibold flex items-center space-x-1">
+                        <span className="text-xs font-mono text-[#164E33] font-semibold flex items-center space-x-1 mr-2">
                           <Check size={14} />
                           <span>Saved & Ready</span>
                         </span>
                       )}
+
+                      <button
+                        type="button"
+                        onClick={handleUndoHook}
+                        disabled={hookHistory.length === 0}
+                        title="Undo last code modification"
+                        className={`flex items-center space-x-1 border px-3 py-2 rounded-xl text-xs font-medium transition shadow-2xs ${
+                          hookHistory.length === 0 
+                            ? 'border-[#E5E9E6] text-[#A0AAA5] cursor-not-allowed bg-[#F8FAF9]' 
+                            : 'border-[#E5E9E6] text-[#121816] hover:bg-[#F4F5F6]'
+                        }`}
+                      >
+                        <RotateCcw size={13} />
+                        <span>Undo</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleResetHook}
+                        title="Reset code hook to clean default template"
+                        className="flex items-center space-x-1 border border-[#E5E9E6] hover:border-red-300 text-[#76807B] hover:text-red-600 hover:bg-red-50/50 px-3 py-2 rounded-xl text-xs font-medium transition shadow-2xs"
+                      >
+                        <RefreshCw size={13} />
+                        <span>Reset</span>
+                      </button>
+
                       <button
                         onClick={handleSaveHook}
                         disabled={savingHook}
