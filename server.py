@@ -233,7 +233,7 @@ def get_case_eda(case_id: str):
     correlations = []
     if target_col and target_col in df_sample.columns:
         y_s = df_sample[target_col]
-        if y_s.dtype == bool or not np.issubdtype(y_s.dtype, np.number):
+        if y_s.dtype == bool or not pd.api.types.is_numeric_dtype(y_s):
             y_num = pd.Series(y_s).astype("category").cat.codes
         else:
             y_num = y_s
@@ -253,7 +253,7 @@ def get_case_eda(case_id: str):
     columns_profile = []
     for c in df_sample.columns:
         s = df_sample[c]
-        is_num = np.issubdtype(s.dtype, np.number)
+        is_num = pd.api.types.is_numeric_dtype(s)
         missing_count = int(s.isna().sum())
         missing_rate = round((missing_count / len(s)) * 100, 2)
         nunique = int(s.nunique())
@@ -632,8 +632,8 @@ def run_tune_thread(case_id: str, model_name: str, n_trials: int, meta: dict, ca
         id_col = meta.get("id_col")
         y_raw = train_df[target_col].values
         if meta["task_type"] == "binary":
-            y = (y_raw == 1) | (y_raw == True) | (y_raw == "True") if y_raw.dtype == bool or not np.issubdtype(y_raw.dtype, np.number) else y_raw
-            if not np.issubdtype(y.dtype, np.number):
+            y = (y_raw == 1) | (y_raw == True) | (y_raw == "True") if y_raw.dtype == bool or not pd.api.types.is_numeric_dtype(pd.Series(y_raw)) else y_raw
+            if not pd.api.types.is_numeric_dtype(pd.Series(y)):
                 y = pd.Series(y_raw).astype("category").cat.codes.values
             y = y.astype(int)
         else:
@@ -808,7 +808,7 @@ def run_hill_climb(case_id: str):
     else:
         train_df = pd.read_csv(os.path.join(ROOT_DIR, meta["train_path"]), usecols=[meta["target_col"]])
         y_true = train_df[meta["target_col"]].values
-        if y_true.dtype == bool or not np.issubdtype(y_true.dtype, np.number):
+        if y_true.dtype == bool or not pd.api.types.is_numeric_dtype(pd.Series(y_true)):
             y_true = pd.Series(y_true).astype("category").cat.codes.values
 
     opt = EnsembleOptimizer(task_type=meta["task_type"], eval_metric=meta["eval_metric"])
@@ -844,7 +844,7 @@ def run_custom_blend(case_id: str, req: BlendRequest):
     else:
         train_df = pd.read_csv(os.path.join(ROOT_DIR, meta["train_path"]), usecols=[meta["target_col"]])
         y_true = train_df[meta["target_col"]].values
-        if y_true.dtype == bool or not np.issubdtype(y_true.dtype, np.number):
+        if y_true.dtype == bool or not pd.api.types.is_numeric_dtype(pd.Series(y_true)):
             y_true = pd.Series(y_true).astype("category").cat.codes.values
 
     total_w = sum(req.weights.values())
