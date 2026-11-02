@@ -192,6 +192,8 @@ export default function App() {
   // Dataset Relocation State
   const [relocateTrainPath, setRelocateTrainPath] = useState<string>('');
   const [relocateTestPath, setRelocateTestPath] = useState<string>('');
+  const [relocateTargetCol, setRelocateTargetCol] = useState<string>('');
+  const [relocateIdCol, setRelocateIdCol] = useState<string>('');
   const [isUpdatingPaths, setIsUpdatingPaths] = useState<boolean>(false);
   const [showRelocateCard, setShowRelocateCard] = useState<boolean>(false);
   const [pathUpdateSuccess, setPathUpdateSuccess] = useState<string | null>(null);
@@ -305,6 +307,8 @@ export default function App() {
       setCaseDetail(data);
       setRelocateTrainPath(data.resolved_train_path || data.meta.train_path || '');
       setRelocateTestPath(data.resolved_test_path || data.meta.test_path || '');
+      setRelocateTargetCol(data.meta.target_col || '');
+      setRelocateIdCol(data.meta.id_col || '');
       setPathUpdateError(null);
       setPathUpdateSuccess(null);
 
@@ -399,7 +403,9 @@ class CustomFeatures(BaseFeatureHook):
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           train_path: relocateTrainPath.trim(),
-          test_path: relocateTestPath.trim() || undefined
+          test_path: relocateTestPath.trim() || undefined,
+          target_col: relocateTargetCol.trim() || undefined,
+          id_col: relocateIdCol.trim() || undefined
         })
       });
       const data = await res.json();
@@ -1535,6 +1541,28 @@ class CustomFeatureHook(BaseFeatureHook):
                                 <FolderOpen size={13} />
                                 <span>Browse</span>
                               </button>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-1">
+                              <label className="text-xs font-semibold text-[#121816]">Target Column</label>
+                              <input
+                                type="text"
+                                value={relocateTargetCol}
+                                onChange={e => setRelocateTargetCol(e.target.value)}
+                                placeholder="e.g. x_base, target"
+                                className="w-full px-3 py-1.5 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816] focus:outline-none focus:border-[#164E33]"
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-xs font-semibold text-[#121816]">ID Column (Optional)</label>
+                              <input
+                                type="text"
+                                value={relocateIdCol}
+                                onChange={e => setRelocateIdCol(e.target.value)}
+                                placeholder="e.g. frame_id, id"
+                                className="w-full px-3 py-1.5 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816] focus:outline-none focus:border-[#164E33]"
+                              />
                             </div>
                           </div>
                           <div className="flex justify-end pt-2">

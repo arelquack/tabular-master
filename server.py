@@ -92,6 +92,8 @@ class InspectDatasetRequest(BaseModel):
 class UpdateCasePathsRequest(BaseModel):
     train_path: str
     test_path: Optional[str] = None
+    target_col: Optional[str] = None
+    id_col: Optional[str] = None
 
 class UpdateRunLBRequest(BaseModel):
     lb_score: Optional[float] = None
@@ -574,6 +576,10 @@ def update_case_paths(case_id: str, req: UpdateCasePathsRequest):
     meta["train_path"] = req.train_path
     if req.test_path is not None:
         meta["test_path"] = req.test_path
+    if req.target_col:
+        meta["target_col"] = req.target_col
+    if req.id_col is not None:
+        meta["id_col"] = req.id_col
 
     with open(case_json, "w") as f:
         json.dump(meta, f, indent=4)
