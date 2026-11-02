@@ -28,7 +28,8 @@ import {
   ArrowUpRight,
   ArrowDownRight,
   Layers,
-  GitMerge
+  GitMerge,
+  Sparkles
 } from 'lucide-react';
 
 interface CaseMeta {
@@ -102,6 +103,16 @@ interface EdaData {
     missing_pct_sample: string;
     null_cols_note?: string;
     target_col: string;
+    task_type?: string;
+    is_regression?: boolean;
+    target_summary?: {
+      min?: number;
+      max?: number;
+      mean?: number;
+      median?: number;
+      std?: number;
+      nunique?: number;
+    };
   };
   target_distribution: Array<{ label: string; count: number; percentage: number }>;
   correlations: Array<{ feature: string; correlation: number }>;
@@ -215,7 +226,12 @@ export default function App() {
 
   // Dataset Stitcher & Multi-Table Joiner Studio State
   const [showStitcherModal, setShowStitcherModal] = useState<boolean>(false);
-  const [stitcherMode, setStitcherMode] = useState<'join' | 'concat'>('join');
+  const [stitcherMode, setStitcherMode] = useState<'wizard' | 'join' | 'concat'>('wizard');
+  const [wizardBasePattern, setWizardBasePattern] = useState<string>('nfl-big-data-bowl-2026-prediction/train/output_2023_*.csv');
+  const [wizardJoinPattern, setWizardJoinPattern] = useState<string>('nfl-big-data-bowl-2026-prediction/train/input_2023_*.csv');
+  const [wizardJoinKeys, setWizardJoinKeys] = useState<string>('game_id, play_id, nfl_id, frame_id');
+  const [wizardOutFile, setWizardOutFile] = useState<string>('train_all_weeks_merged.csv');
+  const [wizardMaxFiles, setWizardMaxFiles] = useState<string>('');
   const [stitcherBasePath, setStitcherBasePath] = useState<string>('');
   const [stitcherJoinPath, setStitcherJoinPath] = useState<string>('');
   const [baseColumns, setBaseColumns] = useState<string[]>([]);
@@ -733,6 +749,45 @@ class CustomFeatures(BaseFeatureHook):
       }
     } catch (err: any) {
       setStitcherError(err.message || 'Error executing concat');
+    } finally {
+      setStitcherExecuting(false);
+    }
+  };
+
+  const handleExecuteSmartStitch = async () => {
+    if (!selectedCaseId || !wizardBasePattern.trim() || !wizardJoinPattern.trim()) return;
+    setStitcherExecuting(true);
+    setStitcherError(null);
+    setStitcherSuccess(null);
+    try {
+      const keys = wizardJoinKeys.split(',').map(s => s.trim()).filter(Boolean);
+      const res = await fetch('/api/tools/smart-stitch-partitions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          case_id: selectedCaseId,
+          base_pattern: wizardBasePattern.trim(),
+          join_pattern: wizardJoinPattern.trim(),
+          join_keys: keys,
+          max_files: wizardMaxFiles.trim() ? Number(wizardMaxFiles) : undefined,
+          output_filename: wizardOutFile.trim() || 'train_all_weeks_merged.csv',
+          set_as_target: 'train'
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setStitcherSuccess(`Successfully stitched ${data.base_files_matched} base files and ${data.join_files_matched} join files into ${data.saved_path} (${data.total_rows.toLocaleString()} rows)!`);
+        await fetchCaseDetail(selectedCaseId);
+        await fetchCases();
+        setTimeout(() => {
+          setShowStitcherModal(false);
+          setStitcherSuccess(null);
+        }, 2200);
+      } else {
+        setStitcherError(data.detail || 'Smart stitch failed');
+      }
+    } catch (err: any) {
+      setStitcherError(err.message || 'Network error executing smart stitch');
     } finally {
       setStitcherExecuting(false);
     }
@@ -1623,27 +1678,40 @@ class CustomFeatureHook(BaseFeatureHook):
                       <div className="bg-white border border-[#E5E9E6] rounded-2xl p-5 shadow-sm flex flex-col justify-between">
                         <div>
                           <div className="text-[11px] font-bold uppercase tracking-wider text-[#76807B] font-mono">Target Variable</div>
-                          <div className="text-2xl font-bold mt-1 text-[#121816] font-mono truncate">
-                            {edaData.summary.target_col}
+                          <div className="text-2xl font-bold mt-1 text-[#121816] font-mono truncate" title={edaData.summary.target_col}>
+                            {edaData.summary.target_col || 'None'}
                           </div>
                         </div>
                         <div className="text-xs text-[#76807B] mt-2 pt-2 border-t border-[#E5E9E6]/60">
-                          <span className="font-semibold text-[#121816]">{edaData.target_distribution.length}</span> Distinct Classes
+                          {edaData.summary.is_regression ? (
+                            <span>Range: <span className="font-semibold text-[#121816]">{edaData.summary.target_summary?.min ?? 'N/A'} → {edaData.summary.target_summary?.max ?? 'N/A'}</span></span>
+                          ) : (
+                            <span><span className="font-semibold text-[#121816]">{edaData.target_distribution.length}</span> Distinct Classes</span>
+                          )}
                         </div>
                       </div>
                     </div>
 
                     {/* Target Distribution & Correlation Ranking */}
                     <div className="grid grid-cols-3 gap-6">
-                      {/* Target Class Balance */}
+                      {/* Target Distribution / Regression Histogram */}
                       <div className="bg-white border border-[#E5E9E6] rounded-2xl p-6 shadow-sm space-y-4">
-                        <h3 className="font-bold text-sm text-[#121816]">Target Class Balance</h3>
+                        <div className="flex justify-between items-center">
+                          <h3 className="font-bold text-sm text-[#121816]">
+                            {edaData.summary.is_regression ? 'Target Continuous Distribution' : 'Target Class Balance'}
+                          </h3>
+                          <span className="text-[10px] font-mono uppercase bg-[#164E33]/10 text-[#164E33] px-2 py-0.5 rounded font-semibold">
+                            {edaData.summary.is_regression ? 'Continuous' : 'Discrete'}
+                          </span>
+                        </div>
                         <p className="text-xs text-[#76807B] leading-relaxed">
-                          Class distribution in sample. Equal distribution indicates no class imbalance treatment needed.
+                          {edaData.summary.is_regression
+                            ? `Continuous numerical spread across 10 buckets (Mean: ${edaData.summary.target_summary?.mean ?? 'N/A'}, Std: ${edaData.summary.target_summary?.std ?? 'N/A'}).`
+                            : 'Class distribution in sample. Equal distribution indicates no class imbalance treatment needed.'}
                         </p>
 
-                        <div className="space-y-3.5 pt-2">
-                          {edaData.target_distribution.map(td => (
+                        <div className="space-y-3.5 pt-2 max-h-72 overflow-y-auto">
+                          {edaData.target_distribution.map((td: any) => (
                             <div key={td.label} className="space-y-1.5">
                               <div className="flex justify-between text-xs font-medium">
                                 <span className="font-mono font-semibold text-[#121816]">{td.label}</span>
@@ -3877,6 +3945,18 @@ class CustomFeatureHook(BaseFeatureHook):
             <div className="flex border-b border-[#E5E9E6] space-x-6 text-xs font-medium">
               <button
                 type="button"
+                onClick={() => { setStitcherMode('wizard'); setStitcherPreviewData(null); }}
+                className={`pb-2.5 transition flex items-center space-x-2 border-b-2 ${
+                  stitcherMode === 'wizard'
+                    ? 'border-[#164E33] text-[#164E33] font-bold'
+                    : 'border-transparent text-[#76807B] hover:text-[#121816]'
+                }`}
+              >
+                <Sparkles size={14} />
+                <span>1-Click Partition Wizard (All Weeks)</span>
+              </button>
+              <button
+                type="button"
                 onClick={() => { setStitcherMode('join'); setStitcherPreviewData(null); }}
                 className={`pb-2.5 transition flex items-center space-x-2 border-b-2 ${
                   stitcherMode === 'join'
@@ -3885,7 +3965,7 @@ class CustomFeatureHook(BaseFeatureHook):
                 }`}
               >
                 <GitMerge size={14} />
-                <span>Relational Join (Multi-Table Stitcher)</span>
+                <span>Relational Join (Two Tables)</span>
               </button>
               <button
                 type="button"
@@ -3897,7 +3977,7 @@ class CustomFeatureHook(BaseFeatureHook):
                 }`}
               >
                 <Layers size={14} />
-                <span>Partition Concatenator (Wildcard / Multi-File Batch)</span>
+                <span>Partition Concatenator (Single Pattern)</span>
               </button>
             </div>
 
@@ -3914,7 +3994,104 @@ class CustomFeatureHook(BaseFeatureHook):
               </div>
             )}
 
-            {/* TAB 1: RELATIONAL JOIN */}
+            {/* TAB 1: 1-CLICK PARTITION WIZARD */}
+            {stitcherMode === 'wizard' && (
+              <div className="space-y-5">
+                <div className="p-4 bg-[#E8F3ED]/40 border border-[#D2E7DC] rounded-xl flex items-start justify-between">
+                  <div className="space-y-1">
+                    <div className="text-xs font-bold text-[#164E33] flex items-center space-x-1.5">
+                      <Sparkles size={14} />
+                      <span>Automated 1-Click Multi-Week Stitching</span>
+                    </div>
+                    <p className="text-xs text-[#121816]/80 leading-relaxed">
+                      Concatenates all weekly output files + all weekly input files, merges them on join keys, auto-maps target coordinates, and attaches directly to your active case in a single run.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setWizardBasePattern('nfl-big-data-bowl-2026-prediction/train/output_2023_*.csv');
+                      setWizardJoinPattern('nfl-big-data-bowl-2026-prediction/train/input_2023_*.csv');
+                      setWizardJoinKeys('game_id, play_id, nfl_id, frame_id');
+                      setWizardOutFile('train_all_weeks_merged.csv');
+                      setWizardMaxFiles('');
+                    }}
+                    className="px-3 py-1.5 bg-[#164E33] hover:bg-[#113d28] text-white text-[11px] font-semibold rounded-lg shadow-sm whitespace-nowrap transition"
+                  >
+                    Reset NFL 2026 Preset
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-[#121816]">
+                      Base Partitions Wildcard (Ground Truth Outputs) *
+                    </label>
+                    <input
+                      type="text"
+                      value={wizardBasePattern}
+                      onChange={e => setWizardBasePattern(e.target.value)}
+                      placeholder="e.g. nfl-big-data-bowl-2026-prediction/train/output_2023_*.csv"
+                      className="w-full px-3 py-2 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816] focus:outline-none focus:border-[#164E33]"
+                    />
+                    <div className="text-[10px] text-[#76807B]">All matched files will be vertically concatenated</div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-[#121816]">
+                      Join Partitions Wildcard (Feature Store Inputs) *
+                    </label>
+                    <input
+                      type="text"
+                      value={wizardJoinPattern}
+                      onChange={e => setWizardJoinPattern(e.target.value)}
+                      placeholder="e.g. nfl-big-data-bowl-2026-prediction/train/input_2023_*.csv"
+                      className="w-full px-3 py-2 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816] focus:outline-none focus:border-[#164E33]"
+                    />
+                    <div className="text-[10px] text-[#76807B]">All matched files will be vertically concatenated</div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-[#121816]">Join Keys (Comma Separated) *</label>
+                    <input
+                      type="text"
+                      value={wizardJoinKeys}
+                      onChange={e => setWizardJoinKeys(e.target.value)}
+                      placeholder="game_id, play_id, nfl_id, frame_id"
+                      className="w-full px-3 py-2 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816] focus:outline-none focus:border-[#164E33]"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-[#121816]">Output Filename</label>
+                    <input
+                      type="text"
+                      value={wizardOutFile}
+                      onChange={e => setWizardOutFile(e.target.value)}
+                      placeholder="train_all_weeks_merged.csv"
+                      className="w-full px-3 py-2 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816] focus:outline-none focus:border-[#164E33]"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-[#121816]">Max Files (Optional Limit)</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={100}
+                      value={wizardMaxFiles}
+                      onChange={e => setWizardMaxFiles(e.target.value)}
+                      placeholder="All files (or e.g. 3 for quick test)"
+                      className="w-full px-3 py-2 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816] focus:outline-none focus:border-[#164E33]"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB 2: RELATIONAL JOIN */}
             {stitcherMode === 'join' && (
               <div className="space-y-5">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -4218,7 +4395,17 @@ class CustomFeatureHook(BaseFeatureHook):
                   Close
                 </button>
 
-                {stitcherMode === 'join' ? (
+                {stitcherMode === 'wizard' ? (
+                  <button
+                    type="button"
+                    onClick={handleExecuteSmartStitch}
+                    disabled={stitcherExecuting || !wizardBasePattern.trim() || !wizardJoinPattern.trim()}
+                    className="px-5 py-2 bg-[#164E33] hover:bg-[#113d28] text-white text-xs font-semibold rounded-xl transition flex items-center space-x-1.5 disabled:opacity-50 shadow-sm"
+                  >
+                    {stitcherExecuting ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                    <span>{stitcherExecuting ? 'Stitching All Weeks...' : 'Run 1-Click Multi-Week Stitch'}</span>
+                  </button>
+                ) : stitcherMode === 'join' ? (
                   <button
                     type="button"
                     onClick={handleExecuteMerge}

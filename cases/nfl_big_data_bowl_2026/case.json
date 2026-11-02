@@ -1,0 +1,23 @@
+{
+    "id": "nfl_big_data_bowl_2026",
+    "name": "NFL Big Data Bowl 2026",
+    "description": "",
+    "train_path": "D:\\POLBAN\\Semester 7\\gemastik-final\\cases\\nfl_big_data_bowl_2026\\train_all_weeks_merged.csv",
+    "test_path": "D:\\POLBAN\\Semester 7\\gemastik-final\\nfl-big-data-bowl-2026-prediction\\test.csv",
+    "auxiliary_paths": [],
+    "id_col": "frame_id",
+    "target_col": "x_base",
+    "task_type": "regression",
+    "eval_metric": "rmse",
+    "cv_strategy": "group_kfold",
+    "group_col": "play_id",
+    "time_col": "",
+    "n_splits": 5,
+    "seed": 2026,
+    "models": [
+        "lgbm",
+        "xgb",
+        "catboost"
+    ],
+    "output_dir": "experiments/nfl_big_data_bowl_2026_run"
+}

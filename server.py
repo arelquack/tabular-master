@@ -123,6 +123,16 @@ class ConcatPartitionsRequest(BaseModel):
     output_filename: str = "concatenated.csv"
     set_as_target: Optional[str] = None
 
+class SmartStitchRequest(BaseModel):
+    case_id: str
+    base_pattern: str
+    join_pattern: str
+    join_keys: List[str]
+    how: str = "inner"
+    max_files: Optional[int] = None
+    output_filename: str = "train_all_weeks_merged.csv"
+    set_as_target: Optional[str] = "train"
+
 class PreviewMergeRequest(BaseModel):
     base_path: str
     join_path: str
@@ -399,6 +409,27 @@ def get_case_eda(case_id: str):
     df_sample = pd.read_csv(train_path, nrows=50000)
     target_col = meta.get("target_col")
     id_col = meta.get("id_col")
+    task_type = meta.get("task_type", "binary")
+    is_regression = task_type == "regression"
+
+    # Auto-resolve target_col if merged with _base suffix
+    if target_col and target_col not in df_sample.columns:
+        if f"{target_col}_base" in df_sample.columns:
+            target_col = f"{target_col}_base"
+            meta["target_col"] = target_col
+            try:
+                with open(case_json, "w") as f:
+                    json.dump(meta, f, indent=4)
+            except Exception:
+                pass
+        elif f"{target_col}_join" in df_sample.columns:
+            target_col = f"{target_col}_join"
+            meta["target_col"] = target_col
+            try:
+                with open(case_json, "w") as f:
+                    json.dump(meta, f, indent=4)
+            except Exception:
+                pass
 
     # 3. Summary metrics
     total_cols = len(df_sample.columns)
@@ -416,17 +447,39 @@ def get_case_eda(case_id: str):
     else:
         null_cols_note = f"Across {len(null_cols)} columns (e.g. {', '.join(null_cols[:2])}, +{len(null_cols) - 2} more)"
 
-    # 4. Target Distribution
+    # 4. Target Distribution & Summary
     target_dist = []
+    target_summary = {}
     if target_col and target_col in df_sample.columns:
-        vc = df_sample[target_col].value_counts(dropna=False)
-        for val, count in vc.items():
-            pct = round((count / len(df_sample)) * 100, 1)
-            target_dist.append({
-                "label": str(val),
-                "count": int(count),
-                "percentage": pct
-            })
+        s_target = df_sample[target_col].dropna()
+        if is_regression:
+            target_summary = {
+                "min": round(float(s_target.min()), 2),
+                "max": round(float(s_target.max()), 2),
+                "mean": round(float(s_target.mean()), 2),
+                "median": round(float(s_target.median()), 2),
+                "std": round(float(s_target.std()), 2),
+                "nunique": int(s_target.nunique())
+            }
+            if not s_target.empty and s_target.nunique() > 1:
+                counts, bin_edges = np.histogram(s_target, bins=10)
+                for i in range(len(counts)):
+                    b_low = round(float(bin_edges[i]), 1)
+                    b_high = round(float(bin_edges[i+1]), 1)
+                    target_dist.append({
+                        "label": f"{b_low} - {b_high}",
+                        "count": int(counts[i]),
+                        "percentage": round((int(counts[i]) / len(s_target)) * 100, 1)
+                    })
+        else:
+            vc = df_sample[target_col].value_counts(dropna=False)
+            for val, count in vc.items():
+                pct = round((count / len(df_sample)) * 100, 1)
+                target_dist.append({
+                    "label": str(val),
+                    "count": int(count),
+                    "percentage": pct
+                })
 
     # 5. Correlations with Target
     correlations = []
@@ -536,7 +589,10 @@ def get_case_eda(case_id: str):
             "missing_cells_sample": total_missing_cells,
             "missing_pct_sample": missing_pct_display,
             "null_cols_note": null_cols_note,
-            "target_col": target_col
+            "target_col": target_col,
+            "task_type": task_type,
+            "is_regression": is_regression,
+            "target_summary": target_summary
         },
         "target_distribution": target_dist,
         "correlations": correlations[:12],
@@ -844,6 +900,79 @@ def execute_concat_partitions(req: ConcatPartitionsRequest):
             "total_rows": len(concatenated),
             "total_columns": len(concatenated.columns),
             "applied_target": req.set_as_target
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/api/tools/smart-stitch-partitions")
+def execute_smart_stitch(req: SmartStitchRequest):
+    case_dir = os.path.join(CASES_DIR, req.case_id)
+    if not os.path.exists(case_dir):
+        raise HTTPException(status_code=404, detail=f"Case not found: {req.case_id}")
+
+    base_p = req.base_pattern.strip().strip('"').strip("'")
+    join_p = req.join_pattern.strip().strip('"').strip("'")
+
+    base_full = os.path.join(ROOT_DIR, base_p) if not os.path.isabs(base_p) else base_p
+    join_full = os.path.join(ROOT_DIR, join_p) if not os.path.isabs(join_p) else join_p
+
+    base_files = sorted(glob.glob(base_full))
+    join_files = sorted(glob.glob(join_full))
+
+    if not base_files:
+        raise HTTPException(status_code=404, detail=f"No base files matched pattern: {base_p}")
+    if not join_files:
+        raise HTTPException(status_code=404, detail=f"No join files matched pattern: {join_p}")
+
+    if req.max_files and req.max_files > 0:
+        base_files = base_files[:req.max_files]
+        join_files = join_files[:req.max_files]
+
+    try:
+        base_dfs = [pd.read_csv(f) for f in base_files]
+        base_df = pd.concat(base_dfs, ignore_index=True)
+
+        join_dfs = [pd.read_csv(f) for f in join_files]
+        join_df = pd.concat(join_dfs, ignore_index=True)
+
+        merged = base_df.merge(join_df, on=req.join_keys, how=req.how, suffixes=("_base", "_join"))
+
+        out_fname = req.output_filename.strip() if req.output_filename.strip() else "train_merged.csv"
+        if not out_fname.endswith(".csv"):
+            out_fname += ".csv"
+        out_p = os.path.join(case_dir, out_fname)
+        merged.to_csv(out_p, index=False)
+
+        rel_saved_path = os.path.relpath(out_p, ROOT_DIR).replace("\\", "/")
+        case_json_p = os.path.join(case_dir, "case.json")
+        applied = False
+        if os.path.exists(case_json_p) and req.set_as_target in ["train", "test"]:
+            with open(case_json_p, "r") as f:
+                meta = json.load(f)
+            if req.set_as_target == "train":
+                meta["train_path"] = rel_saved_path
+                applied = True
+                tcol = meta.get("target_col", "")
+                if tcol and tcol not in merged.columns:
+                    if f"{tcol}_base" in merged.columns:
+                        meta["target_col"] = f"{tcol}_base"
+            elif req.set_as_target == "test":
+                meta["test_path"] = rel_saved_path
+                applied = True
+            with open(case_json_p, "w") as f:
+                json.dump(meta, f, indent=4)
+
+        if req.case_id in eda_cache:
+            del eda_cache[req.case_id]
+
+        return {
+            "status": "success",
+            "base_files_matched": len(base_files),
+            "join_files_matched": len(join_files),
+            "saved_path": rel_saved_path,
+            "total_rows": len(merged),
+            "total_columns": len(merged.columns),
+            "applied_target": req.set_as_target if applied else "none"
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
