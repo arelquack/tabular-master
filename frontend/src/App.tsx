@@ -43,6 +43,8 @@ interface CaseMeta {
   task_type: string;
   eval_metric: string;
   cv_strategy: string;
+  group_col?: string;
+  time_col?: string;
   n_splits: number;
   seed: number;
   models: string[];
@@ -248,6 +250,8 @@ export default function App() {
     task_type: 'binary',
     eval_metric: 'roc_auc',
     cv_strategy: 'stratified_kfold',
+    group_col: '',
+    time_col: '',
     n_splits: 5,
     seed: 2026,
     models: ['lgbm', 'xgb', 'catboost'],
@@ -2511,7 +2515,9 @@ class CustomFeatureHook(BaseFeatureHook):
                   <div className="bg-white border border-[#E5E9E6] rounded-2xl p-5 shadow-sm">
                     <div className="text-[11px] font-bold uppercase tracking-wider text-[#76807B] font-mono">Primary Metric</div>
                     <div className="text-xl font-bold mt-1 text-[#121816] font-mono">{meta?.eval_metric.toUpperCase()}</div>
-                    <div className="text-xs text-[#76807B] mt-1">{meta?.n_splits}-Fold {meta?.cv_strategy}</div>
+                    <div className="text-xs text-[#76807B] mt-1">
+                      {meta?.n_splits}-Fold {meta?.cv_strategy}{meta?.group_col ? ` (${meta.group_col})` : ''}
+                    </div>
                   </div>
 
                   <div className="bg-white border border-[#E5E9E6] rounded-2xl p-5 shadow-sm">
@@ -3674,7 +3680,21 @@ class CustomFeatureHook(BaseFeatureHook):
                   <label className="text-xs font-semibold text-zinc-700">Task Type</label>
                   <select
                     value={newCase.task_type}
-                    onChange={e => setNewCase({ ...newCase, task_type: e.target.value })}
+                    onChange={e => {
+                      const tt = e.target.value;
+                      let defaultMetric = newCase.eval_metric;
+                      let defaultCv = newCase.cv_strategy;
+                      if (tt === 'regression') {
+                        defaultMetric = 'rmse';
+                        if (defaultCv === 'stratified_kfold') defaultCv = 'kfold';
+                      } else if (tt === 'binary') {
+                        defaultMetric = 'roc_auc';
+                        if (defaultCv === 'kfold') defaultCv = 'stratified_kfold';
+                      } else {
+                        defaultMetric = 'f1_macro';
+                      }
+                      setNewCase({ ...newCase, task_type: tt, eval_metric: defaultMetric, cv_strategy: defaultCv });
+                    }}
                     className="mt-1 w-full text-xs border border-zinc-300 rounded p-2 text-zinc-900 focus:outline-none"
                   >
                     <option value="binary">Binary Classification</option>
@@ -3699,6 +3719,69 @@ class CustomFeatureHook(BaseFeatureHook):
                   </select>
                 </div>
               </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs font-semibold text-zinc-700">CV Validation Strategy</label>
+                  <select
+                    value={newCase.cv_strategy}
+                    onChange={e => setNewCase({ ...newCase, cv_strategy: e.target.value })}
+                    className="mt-1 w-full text-xs border border-zinc-300 rounded p-2 text-zinc-900 focus:outline-none focus:border-zinc-950 font-medium"
+                  >
+                    <option value="stratified_kfold">Stratified K-Fold (Classification)</option>
+                    <option value="kfold">Standard K-Fold (Regression / Unstratified)</option>
+                    <option value="group_kfold">Group K-Fold (Group non-overlap)</option>
+                    <option value="stratified_group_kfold">Stratified Group K-Fold</option>
+                    <option value="time_series">Time Series Split</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-zinc-700">Number of Folds (n_splits)</label>
+                  <input
+                    type="number"
+                    min={2}
+                    max={20}
+                    value={newCase.n_splits}
+                    onChange={e => setNewCase({ ...newCase, n_splits: parseInt(e.target.value) || 5 })}
+                    className="mt-1 w-full text-xs border border-zinc-300 rounded p-2 font-mono text-zinc-900 focus:outline-none focus:border-zinc-950"
+                  />
+                </div>
+              </div>
+
+              {(newCase.cv_strategy === 'group_kfold' || newCase.cv_strategy === 'stratified_group_kfold') && (
+                <div className="p-3 bg-zinc-50 border border-zinc-200 rounded text-xs space-y-1">
+                  <label className="text-xs font-semibold text-zinc-800">Group Column (Required for Group CV)</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. play_id, game_id, or client_id"
+                    value={newCase.group_col}
+                    onChange={e => setNewCase({ ...newCase, group_col: e.target.value })}
+                    className="w-full text-xs border border-zinc-300 rounded p-2 font-mono text-zinc-900 focus:outline-none focus:border-zinc-950 bg-white"
+                  />
+                  <p className="text-[11px] text-zinc-500">
+                    Samples with the same group value will strictly remain together in either train or validation split.
+                  </p>
+                </div>
+              )}
+
+              {newCase.cv_strategy === 'time_series' && (
+                <div className="p-3 bg-zinc-50 border border-zinc-200 rounded text-xs space-y-1">
+                  <label className="text-xs font-semibold text-zinc-800">Time Column (Required for Time Series)</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. timestamp, date, or step"
+                    value={newCase.time_col}
+                    onChange={e => setNewCase({ ...newCase, time_col: e.target.value })}
+                    className="w-full text-xs border border-zinc-300 rounded p-2 font-mono text-zinc-900 focus:outline-none focus:border-zinc-950 bg-white"
+                  />
+                  <p className="text-[11px] text-zinc-500">
+                    Chronological ordering column ensuring future observations are never used to predict the past.
+                  </p>
+                </div>
+              )}
 
               <div>
                 <label className="text-xs font-semibold text-zinc-700">Custom Feature Engineering Hook (Python)</label>

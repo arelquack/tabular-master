@@ -66,6 +66,8 @@ class CreateCaseRequest(BaseModel):
     task_type: str = "binary"
     eval_metric: str = "roc_auc"
     cv_strategy: str = "stratified_kfold"
+    group_col: Optional[str] = None
+    time_col: Optional[str] = None
     n_splits: int = 5
     seed: int = 2026
     models: List[str] = ["lgbm", "xgb", "catboost"]
@@ -979,8 +981,10 @@ def run_pipeline_thread(case_id: str, meta: dict, case_dir: str):
             project_name=meta.get("name", case_id),
             output_dir=meta.get("output_dir", f"experiments/{case_id}_run"),
             seed=meta.get("seed", 2026),
-            id_col=meta.get("id_col"),
+            id_col=meta.get("id_col") or None,
             target_col=meta.get("target_col"),
+            group_col=meta.get("group_col") or None,
+            time_col=meta.get("time_col") or None,
             task_type=meta.get("task_type", "binary"),
             eval_metric=meta.get("eval_metric", "roc_auc"),
             cv_strategy=meta.get("cv_strategy", "stratified_kfold"),
@@ -1656,8 +1660,10 @@ def main():
         project_name="{meta.get('name', case_id)}",
         output_dir="{meta.get('output_dir', f'experiments/{case_id}_run')}",
         seed={meta.get('seed', 2026)},
-        id_col="{meta.get('id_col')}",
+        id_col={repr(meta.get('id_col') or None)},
         target_col="{meta.get('target_col')}",
+        group_col={repr(meta.get('group_col') or None)},
+        time_col={repr(meta.get('time_col') or None)},
         task_type="{meta.get('task_type', 'binary')}",
         eval_metric="{meta.get('eval_metric', 'roc_auc')}",
         cv_strategy="{meta.get('cv_strategy', 'stratified_kfold')}",
@@ -1807,8 +1813,10 @@ def export_standalone_notebook(case_id: str):
                     f"    project_name='{meta.get('name', case_id)}',\n",
                     f"    output_dir='experiments/{case_id}_notebook_run',\n",
                     f"    seed={meta.get('seed', 2026)},\n",
-                    f"    id_col='{meta.get('id_col')}',\n",
+                    f"    id_col={repr(meta.get('id_col') or None)},\n",
                     f"    target_col='{meta.get('target_col')}',\n",
+                    f"    group_col={repr(meta.get('group_col') or None)},\n",
+                    f"    time_col={repr(meta.get('time_col') or None)},\n",
                     f"    task_type='{meta.get('task_type', 'binary')}',\n",
                     f"    eval_metric='{meta.get('eval_metric', 'roc_auc')}',\n",
                     f"    cv_strategy='{meta.get('cv_strategy', 'stratified_kfold')}',\n",
