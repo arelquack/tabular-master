@@ -1,0 +1,21 @@
+{
+    "id": "credit_card_fraud",
+    "name": "Credit Card Fraud",
+    "description": "",
+    "train_path": "playground-series-s6e11/train.csv",
+    "test_path": "playground-series-s6e11/test.csv",
+    "auxiliary_paths": [],
+    "id_col": "id",
+    "target_col": "is_fraud",
+    "task_type": "binary",
+    "eval_metric": "roc_auc",
+    "cv_strategy": "stratified_kfold",
+    "n_splits": 5,
+    "seed": 2026,
+    "models": [
+        "lgbm",
+        "xgb",
+        "catboost"
+    ],
+    "output_dir": "experiments/credit_card_fraud_run"
+}
