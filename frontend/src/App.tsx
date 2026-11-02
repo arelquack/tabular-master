@@ -228,10 +228,10 @@ export default function App() {
   // Dataset Stitcher & Multi-Table Joiner Studio State
   const [showStitcherModal, setShowStitcherModal] = useState<boolean>(false);
   const [stitcherMode, setStitcherMode] = useState<'wizard' | 'join' | 'concat'>('wizard');
-  const [wizardBasePattern, setWizardBasePattern] = useState<string>('nfl-big-data-bowl-2026-prediction/train/output_2023_*.csv');
-  const [wizardJoinPattern, setWizardJoinPattern] = useState<string>('nfl-big-data-bowl-2026-prediction/train/input_2023_*.csv');
-  const [wizardJoinKeys, setWizardJoinKeys] = useState<string>('game_id, play_id, nfl_id, frame_id');
-  const [wizardOutFile, setWizardOutFile] = useState<string>('train_all_weeks_merged.csv');
+  const [wizardBasePattern, setWizardBasePattern] = useState<string>('');
+  const [wizardJoinPattern, setWizardJoinPattern] = useState<string>('');
+  const [wizardJoinKeys, setWizardJoinKeys] = useState<string>('');
+  const [wizardOutFile, setWizardOutFile] = useState<string>('train_stitched.csv');
   const [wizardMaxFiles, setWizardMaxFiles] = useState<string>('');
   const [stitcherBasePath, setStitcherBasePath] = useState<string>('');
   const [stitcherJoinPath, setStitcherJoinPath] = useState<string>('');
@@ -3630,68 +3630,13 @@ class CustomFeatureHook(BaseFeatureHook):
             </div>
 
             <form onSubmit={handleCreateCase} className="mt-5 space-y-4">
-              {/* 1-Click Preset Banner */}
-              <div className="p-3 bg-[#E8F3ED] border border-[#D2E7DC] rounded-xl flex items-center justify-between">
-                <div className="space-y-0.5">
-                  <span className="text-xs font-bold text-[#164E33] flex items-center space-x-1">
-                    <Sparkles size={13} />
-                    <span>Competition Preset Available</span>
-                  </span>
-                  <p className="text-[11px] text-[#121816]/80">
-                    NFL Big Data Bowl 2026: Auto-configures GroupKFold on play_id, RMSE metric, and auto-stitches all 18-week partitions in 1 click.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setNewCase({
-                      id: 'nfl_big_data_bowl_2026',
-                      name: 'NFL Big Data Bowl 2026',
-                      description: 'Spatio-temporal tracking across 18 weeks with GroupKFold on play_id.',
-                      train_path: 'cases/nfl_big_data_bowl_2026/train_all_weeks_merged.csv',
-                      test_path: 'nfl-big-data-bowl-2026-prediction/test.csv',
-                      target_col: 'x',
-                      id_col: 'frame_id',
-                      task_type: 'regression',
-                      eval_metric: 'rmse',
-                      cv_strategy: 'group_kfold',
-                      group_col: 'play_id',
-                      time_col: '',
-                      n_splits: 5,
-                      seed: 2026,
-                      models: ['lgbm', 'xgb', 'catboost'],
-                      hook_code: '',
-                      auto_stitch: true,
-                      stitch_base_pattern: 'nfl-big-data-bowl-2026-prediction/train/output_2023_*.csv',
-                      stitch_join_pattern: 'nfl-big-data-bowl-2026-prediction/train/input_2023_*.csv',
-                      stitch_join_keys: ['game_id', 'play_id', 'nfl_id', 'frame_id']
-                    });
-                  }}
-                  className="px-3 py-1.5 bg-[#164E33] hover:bg-[#113d28] text-white text-xs font-semibold rounded-lg shadow-sm transition whitespace-nowrap"
-                >
-                  Load NFL 2026 Preset
-                </button>
-              </div>
-
-              {newCase.auto_stitch && (
-                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs space-y-1">
-                  <div className="font-semibold text-emerald-900 flex items-center space-x-1">
-                    <Layers size={13} />
-                    <span>Automatic 1-Click Multi-Week Stitching Enabled</span>
-                  </div>
-                  <p className="text-[11px] text-emerald-800">
-                    When you click Register, the engine will batch-concatenate all 18 output files and 18 input files, inner-join them on (game_id, play_id, nfl_id, frame_id), preserve target "x", and generate the complete unified dataset.
-                  </p>
-                </div>
-              )}
-
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="text-xs font-semibold text-zinc-700">Case Unique ID</label>
                   <input
                     type="text"
                     required
-                    placeholder="e.g. credit_risk_2026"
+                    placeholder="e.g. nfl_big_data_bowl_2026"
                     value={newCase.id}
                     onChange={e => setNewCase({ ...newCase, id: e.target.value })}
                     className="mt-1 w-full text-xs border border-zinc-300 rounded p-2 text-zinc-900 focus:outline-none focus:border-zinc-950"
@@ -3703,7 +3648,7 @@ class CustomFeatureHook(BaseFeatureHook):
                   <input
                     type="text"
                     required
-                    placeholder="e.g. Credit Default Risk v1"
+                    placeholder="e.g. NFL Big Data Bowl 2026"
                     value={newCase.name}
                     onChange={e => setNewCase({ ...newCase, name: e.target.value })}
                     className="mt-1 w-full text-xs border border-zinc-300 rounded p-2 text-zinc-900 focus:outline-none focus:border-zinc-950"
@@ -3711,68 +3656,151 @@ class CustomFeatureHook(BaseFeatureHook):
                 </div>
               </div>
 
-              <div>
+              {/* Dataset Source Type Segmented Switch */}
+              <div className="pt-2 border-t border-zinc-200 space-y-2">
                 <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold text-zinc-700">Train CSV File Path</label>
-                  {scannedCsvs.length > 0 && (
-                    <span className="text-[10px] text-zinc-500 font-mono">
-                      {scannedCsvs.length} workspace CSVs detected
-                    </span>
-                  )}
-                </div>
-                <div className="flex space-x-2 mt-1">
-                  <input
-                    type="text"
-                    required
-                    placeholder="e.g. playground-series/dataset/train.csv"
-                    value={newCase.train_path}
-                    onChange={e => {
-                      setNewCase({ ...newCase, train_path: e.target.value });
-                      setInspectPath(e.target.value);
-                    }}
-                    className="w-full text-xs border border-zinc-300 rounded p-2 font-mono text-zinc-900 focus:outline-none focus:border-zinc-950"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => handleBrowseFile('train')}
-                    disabled={isBrowsingTrain}
-                    className="px-3 py-2 border border-zinc-300 hover:border-zinc-950 bg-zinc-50 hover:bg-zinc-100 text-xs font-medium rounded whitespace-nowrap flex items-center space-x-1 text-zinc-900 transition"
-                    title="Open native Windows Explorer file picker"
-                  >
-                    {isBrowsingTrain ? <Loader2 size={12} className="animate-spin" /> : <FolderOpen size={12} />}
-                    <span>{isBrowsingTrain ? 'Picking...' : 'Browse...'}</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleInspect()}
-                    disabled={inspectLoading}
-                    className="px-3 py-2 border border-zinc-300 hover:border-zinc-900 text-xs font-medium rounded whitespace-nowrap flex items-center space-x-1"
-                  >
-                    {inspectLoading && <Loader2 size={12} className="animate-spin" />}
-                    <span>{inspectLoading ? 'Inspecting...' : 'Inspect'}</span>
-                  </button>
-                </div>
-                {scannedCsvs.length > 0 && (
-                  <div className="mt-1.5 flex items-center space-x-2">
-                    <span className="text-zinc-500 text-[11px] whitespace-nowrap">Quick Select:</span>
-                    <select
-                      onChange={e => {
-                        if (e.target.value) {
-                          setNewCase(prev => ({ ...prev, train_path: e.target.value }));
-                          setInspectPath(e.target.value);
-                          handleInspect(e.target.value);
-                        }
-                      }}
-                      className="w-full text-[11px] border border-zinc-200 rounded px-2 py-1 font-mono text-zinc-800 bg-zinc-50 focus:outline-none focus:border-zinc-950 truncate"
-                      value=""
+                  <label className="text-xs font-semibold text-zinc-900">Training Dataset Source</label>
+                  <div className="flex bg-zinc-100 p-0.5 rounded-lg text-[11px] font-medium border border-zinc-200">
+                    <button
+                      type="button"
+                      onClick={() => setNewCase(prev => ({ ...prev, auto_stitch: false }))}
+                      className={`px-3 py-1 rounded-md transition ${
+                        !newCase.auto_stitch ? 'bg-white text-zinc-950 font-bold shadow-xs' : 'text-zinc-500 hover:text-zinc-900'
+                      }`}
                     >
-                      <option value="" disabled>Choose detected CSV from project workspace...</option>
-                      {scannedCsvs.map(csv => (
-                        <option key={csv.path} value={csv.path}>
-                          {csv.path} ({csv.size_mb} MB)
-                        </option>
-                      ))}
-                    </select>
+                      Single CSV File
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setNewCase(prev => ({ ...prev, auto_stitch: true }))}
+                      className={`px-3 py-1 rounded-md transition ${
+                        newCase.auto_stitch ? 'bg-[#164E33] text-white font-bold shadow-xs' : 'text-zinc-500 hover:text-zinc-900'
+                      }`}
+                    >
+                      Multi-File / Partitioned Batch
+                    </button>
+                  </div>
+                </div>
+
+                {!newCase.auto_stitch ? (
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-semibold text-zinc-700">Train CSV File Path</label>
+                      {scannedCsvs.length > 0 && (
+                        <span className="text-[10px] text-zinc-500 font-mono">
+                          {scannedCsvs.length} workspace CSVs detected
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex space-x-2 mt-1">
+                      <input
+                        type="text"
+                        required={!newCase.auto_stitch}
+                        placeholder="e.g. playground-series/dataset/train.csv"
+                        value={newCase.train_path}
+                        onChange={e => {
+                          setNewCase({ ...newCase, train_path: e.target.value });
+                          setInspectPath(e.target.value);
+                        }}
+                        className="w-full text-xs border border-zinc-300 rounded p-2 font-mono text-zinc-900 focus:outline-none focus:border-zinc-950"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleBrowseFile('train')}
+                        disabled={isBrowsingTrain}
+                        className="px-3 py-2 border border-zinc-300 hover:border-zinc-950 bg-zinc-50 hover:bg-zinc-100 text-xs font-medium rounded whitespace-nowrap flex items-center space-x-1 text-zinc-900 transition"
+                        title="Open native Windows Explorer file picker"
+                      >
+                        {isBrowsingTrain ? <Loader2 size={12} className="animate-spin" /> : <FolderOpen size={12} />}
+                        <span>{isBrowsingTrain ? 'Picking...' : 'Browse...'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleInspect()}
+                        disabled={inspectLoading || !newCase.train_path}
+                        className="px-3 py-2 border border-zinc-300 hover:border-zinc-900 bg-zinc-50 hover:bg-zinc-100 text-xs font-medium rounded whitespace-nowrap flex items-center space-x-1"
+                      >
+                        {inspectLoading && <Loader2 size={12} className="animate-spin" />}
+                        <span>{inspectLoading ? 'Inspecting...' : 'Inspect'}</span>
+                      </button>
+                    </div>
+                    {scannedCsvs.length > 0 && (
+                      <div className="mt-1.5 flex items-center space-x-2">
+                        <span className="text-zinc-500 text-[11px] whitespace-nowrap">Quick Select:</span>
+                        <select
+                          onChange={e => {
+                            if (e.target.value) {
+                              setNewCase(prev => ({ ...prev, train_path: e.target.value }));
+                              setInspectPath(e.target.value);
+                              handleInspect(e.target.value);
+                            }
+                          }}
+                          className="w-full text-[11px] border border-zinc-200 rounded px-2 py-1 font-mono text-zinc-800 bg-zinc-50 focus:outline-none focus:border-zinc-950 truncate"
+                          value=""
+                        >
+                          <option value="" disabled>Choose detected CSV from project workspace...</option>
+                          {scannedCsvs.map(csv => (
+                            <option key={csv.path} value={csv.path}>
+                              {csv.path} ({csv.size_mb} MB)
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="p-3.5 bg-zinc-50 border border-zinc-200 rounded-xl space-y-3">
+                    <div className="space-y-1">
+                      <label className="text-xs font-semibold text-zinc-800">
+                        Primary / Target Partitions Wildcard *
+                      </label>
+                      <input
+                        type="text"
+                        required={newCase.auto_stitch}
+                        placeholder="e.g. nfl-big-data-bowl-2026-prediction/train/output_*.csv or data/part_*.csv"
+                        value={newCase.stitch_base_pattern}
+                        onChange={e => setNewCase({ ...newCase, stitch_base_pattern: e.target.value })}
+                        className="w-full text-xs border border-zinc-300 rounded p-2 font-mono text-zinc-900 bg-white focus:outline-none focus:border-zinc-950"
+                      />
+                      <p className="text-[10px] text-zinc-500">
+                        All matched files will be vertically stacked. Target column name in this table will be strictly preserved.
+                      </p>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-xs font-semibold text-zinc-800">
+                        Feature Store Partitions Wildcard (Optional)
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. nfl-big-data-bowl-2026-prediction/train/input_*.csv"
+                        value={newCase.stitch_join_pattern}
+                        onChange={e => setNewCase({ ...newCase, stitch_join_pattern: e.target.value })}
+                        className="w-full text-xs border border-zinc-300 rounded p-2 font-mono text-zinc-900 bg-white focus:outline-none focus:border-zinc-950"
+                      />
+                      <p className="text-[10px] text-zinc-500">
+                        Leave empty if dataset has only one partition pattern. If provided, both will be concatenated and merged on join keys.
+                      </p>
+                    </div>
+
+                    {newCase.stitch_join_pattern && (
+                      <div className="space-y-1">
+                        <label className="text-xs font-semibold text-zinc-800">
+                          Relational Join Keys (Comma Separated) *
+                        </label>
+                        <input
+                          type="text"
+                          required={!!newCase.stitch_join_pattern}
+                          placeholder="e.g. game_id, play_id, nfl_id, frame_id"
+                          value={newCase.stitch_join_keys?.join(', ') || ''}
+                          onChange={e => setNewCase({
+                            ...newCase,
+                            stitch_join_keys: e.target.value.split(',').map(s => s.trim()).filter(Boolean)
+                          })}
+                          className="w-full text-xs border border-zinc-300 rounded p-2 font-mono text-zinc-900 bg-white focus:outline-none focus:border-zinc-950"
+                        />
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -3994,7 +4022,7 @@ class CustomFeatureHook(BaseFeatureHook):
                   {isCreatingCase ? (
                     <>
                       <Loader2 size={13} className="animate-spin" />
-                      <span>{newCase.auto_stitch ? 'Stitching All Weeks & Building Case...' : 'Creating Case...'}</span>
+                      <span>{newCase.auto_stitch ? 'Stitching Partitions & Building Case...' : 'Creating Case...'}</span>
                     </>
                   ) : (
                     <span>Register & Open Case</span>
@@ -4048,8 +4076,8 @@ class CustomFeatureHook(BaseFeatureHook):
                     : 'border-transparent text-[#76807B] hover:text-[#121816]'
                 }`}
               >
-                <Sparkles size={14} />
-                <span>1-Click Partition Wizard (All Weeks)</span>
+                <Layers size={14} />
+                <span>Batch Multi-File Stitcher</span>
               </button>
               <button
                 type="button"
@@ -4090,44 +4118,31 @@ class CustomFeatureHook(BaseFeatureHook):
               </div>
             )}
 
-            {/* TAB 1: 1-CLICK PARTITION WIZARD */}
+            {/* TAB 1: BATCH MULTI-FILE STITCHER */}
             {stitcherMode === 'wizard' && (
               <div className="space-y-5">
-                <div className="p-4 bg-[#E8F3ED]/40 border border-[#D2E7DC] rounded-xl flex items-start justify-between">
+                <div className="p-4 bg-[#E8F3ED]/40 border border-[#D2E7DC] rounded-xl">
                   <div className="space-y-1">
                     <div className="text-xs font-bold text-[#164E33] flex items-center space-x-1.5">
-                      <Sparkles size={14} />
-                      <span>Automated 1-Click Multi-Week Stitching</span>
+                      <Layers size={14} />
+                      <span>Unified Batch Stacking & Relational Join</span>
                     </div>
                     <p className="text-xs text-[#121816]/80 leading-relaxed">
-                      Concatenates all weekly output files + all weekly input files, merges them on join keys, auto-maps target coordinates, and attaches directly to your active case in a single run.
+                      Concatenates all primary partition files matching a wildcard pattern + optional feature partitions, merges them on common join keys, preserves target column names without breaking suffixes, and updates your active case dataset.
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setWizardBasePattern('nfl-big-data-bowl-2026-prediction/train/output_2023_*.csv');
-                      setWizardJoinPattern('nfl-big-data-bowl-2026-prediction/train/input_2023_*.csv');
-                      setWizardJoinKeys('game_id, play_id, nfl_id, frame_id');
-                      setWizardOutFile('train_all_weeks_merged.csv');
-                      setWizardMaxFiles('');
-                    }}
-                    className="px-3 py-1.5 bg-[#164E33] hover:bg-[#113d28] text-white text-[11px] font-semibold rounded-lg shadow-sm whitespace-nowrap transition"
-                  >
-                    Reset NFL 2026 Preset
-                  </button>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-[#121816]">
-                      Base Partitions Wildcard (Ground Truth Outputs) *
+                      Base Partitions Wildcard (Primary / Target Tables) *
                     </label>
                     <input
                       type="text"
                       value={wizardBasePattern}
                       onChange={e => setWizardBasePattern(e.target.value)}
-                      placeholder="e.g. nfl-big-data-bowl-2026-prediction/train/output_2023_*.csv"
+                      placeholder="e.g. data/train/output_*.csv or train_part_*.csv"
                       className="w-full px-3 py-2 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816] focus:outline-none focus:border-[#164E33]"
                     />
                     <div className="text-[10px] text-[#76807B]">All matched files will be vertically concatenated</div>
@@ -4135,16 +4150,16 @@ class CustomFeatureHook(BaseFeatureHook):
 
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-[#121816]">
-                      Join Partitions Wildcard (Feature Store Inputs) *
+                      Feature Partitions Wildcard (Optional Auxiliary Inputs)
                     </label>
                     <input
                       type="text"
                       value={wizardJoinPattern}
                       onChange={e => setWizardJoinPattern(e.target.value)}
-                      placeholder="e.g. nfl-big-data-bowl-2026-prediction/train/input_2023_*.csv"
+                      placeholder="e.g. data/train/input_*.csv"
                       className="w-full px-3 py-2 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816] focus:outline-none focus:border-[#164E33]"
                     />
-                    <div className="text-[10px] text-[#76807B]">All matched files will be vertically concatenated</div>
+                    <div className="text-[10px] text-[#76807B]">Leave blank if your dataset is already in single partition files</div>
                   </div>
                 </div>
 

@@ -615,21 +615,30 @@ def create_case(req: CreateCaseRequest):
     case_data["output_dir"] = f"experiments/{req.id}_run"
 
     # Handle automatic partition stitching on creation if requested
-    if req.auto_stitch and req.stitch_base_pattern and req.stitch_join_pattern:
+    if req.auto_stitch and req.stitch_base_pattern:
         base_p = req.stitch_base_pattern.strip().strip('"').strip("'")
-        join_p = req.stitch_join_pattern.strip().strip('"').strip("'")
         base_full = os.path.join(ROOT_DIR, base_p) if not os.path.isabs(base_p) else base_p
-        join_full = os.path.join(ROOT_DIR, join_p) if not os.path.isabs(join_p) else join_p
         base_files = sorted(glob.glob(base_full))
-        join_files = sorted(glob.glob(join_full))
-        if base_files and join_files:
+        if base_files:
             base_dfs = [pd.read_csv(f) for f in base_files]
             base_df = pd.concat(base_dfs, ignore_index=True)
-            join_dfs = [pd.read_csv(f) for f in join_files]
-            join_df = pd.concat(join_dfs, ignore_index=True)
-            keys = req.stitch_join_keys or ["game_id", "play_id", "nfl_id", "frame_id"]
-            merged = base_df.merge(join_df, on=keys, how="inner", suffixes=("", "_input"))
-            out_p = os.path.join(case_dir, "train_all_weeks_merged.csv")
+
+            join_p = (req.stitch_join_pattern or "").strip().strip('"').strip("'")
+            if join_p:
+                join_full = os.path.join(ROOT_DIR, join_p) if not os.path.isabs(join_p) else join_p
+                join_files = sorted(glob.glob(join_full))
+                if join_files:
+                    join_dfs = [pd.read_csv(f) for f in join_files]
+                    join_df = pd.concat(join_dfs, ignore_index=True)
+                    keys = req.stitch_join_keys or [c for c in base_df.columns if c in join_df.columns]
+                    merged = base_df.merge(join_df, on=keys, how="inner", suffixes=("", "_feature"))
+                else:
+                    merged = base_df
+            else:
+                merged = base_df
+
+            out_fname = "train_stitched.csv"
+            out_p = os.path.join(case_dir, out_fname)
             merged.to_csv(out_p, index=False)
             case_data["train_path"] = os.path.relpath(out_p, ROOT_DIR).replace("\\", "/")
     
