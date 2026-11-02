@@ -20,7 +20,8 @@ import {
   FolderOpen,
   Square,
   RotateCcw,
-  RefreshCw
+  RefreshCw,
+  AlertTriangle
 } from 'lucide-react';
 
 interface CaseMeta {
@@ -49,6 +50,10 @@ interface CaseDetail {
   feature_importances: Array<{ feature: string; importance: number }>;
   hook_code: string;
   has_hook?: boolean;
+  train_exists?: boolean;
+  test_exists?: boolean;
+  resolved_train_path?: string;
+  resolved_test_path?: string;
   available_cached: string[];
   job_state: {
     status: string;
@@ -155,6 +160,14 @@ export default function App() {
   const [isBrowsingTrain, setIsBrowsingTrain] = useState<boolean>(false);
   const [isBrowsingTest, setIsBrowsingTest] = useState<boolean>(false);
 
+  // Dataset Relocation State
+  const [relocateTrainPath, setRelocateTrainPath] = useState<string>('');
+  const [relocateTestPath, setRelocateTestPath] = useState<string>('');
+  const [isUpdatingPaths, setIsUpdatingPaths] = useState<boolean>(false);
+  const [showRelocateCard, setShowRelocateCard] = useState<boolean>(false);
+  const [pathUpdateSuccess, setPathUpdateSuccess] = useState<string | null>(null);
+  const [pathUpdateError, setPathUpdateError] = useState<string | null>(null);
+
   const [newCase, setNewCase] = useState({
     id: '',
     name: '',
@@ -217,6 +230,10 @@ export default function App() {
       const res = await fetch(`/api/cases/${id}`);
       const data: CaseDetail = await res.json();
       setCaseDetail(data);
+      setRelocateTrainPath(data.resolved_train_path || data.meta.train_path || '');
+      setRelocateTestPath(data.resolved_test_path || data.meta.test_path || '');
+      setPathUpdateError(null);
+      setPathUpdateSuccess(null);
 
       if (data.available_cached?.length > 0) {
         const defaultW: Record<string, number> = {};
@@ -269,11 +286,66 @@ class CustomFeatures(BaseFeatureHook):
       if (res.ok) {
         const data = await res.json();
         setEdaData(data);
+      } else {
+        setEdaData(null);
+        fetchScannedCsvs();
       }
     } catch (e) {
       console.error('EDA fetch failed:', e);
+      setEdaData(null);
+      fetchScannedCsvs();
     } finally {
       setEdaLoading(false);
+    }
+  };
+
+  const handleUpdatePaths = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!selectedCaseId || !relocateTrainPath.trim()) return;
+
+    setIsUpdatingPaths(true);
+    setPathUpdateSuccess(null);
+    setPathUpdateError(null);
+
+    try {
+      const res = await fetch(`/api/cases/${selectedCaseId}/paths`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          train_path: relocateTrainPath.trim(),
+          test_path: relocateTestPath.trim() || undefined
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setPathUpdateSuccess('Dataset paths updated successfully');
+        setShowRelocateCard(false);
+        await fetchCaseDetail(selectedCaseId);
+        await fetchCases();
+      } else {
+        setPathUpdateError(data.detail || 'Failed to update dataset paths');
+      }
+    } catch (err: any) {
+      setPathUpdateError(err.message || 'Network error updating paths');
+    } finally {
+      setIsUpdatingPaths(false);
+    }
+  };
+
+  const handleBrowseRelocate = async (field: 'train' | 'test') => {
+    try {
+      const title = field === 'train' ? 'Select Training Dataset (CSV)' : 'Select Test Dataset (CSV)';
+      const res = await fetch(`/api/browse-file?title=${encodeURIComponent(title)}`);
+      const data = await res.json();
+      if (data?.path) {
+        if (field === 'train') {
+          setRelocateTrainPath(data.path);
+        } else {
+          setRelocateTestPath(data.path);
+        }
+      }
+    } catch (err) {
+      console.error('File dialog error:', err);
     }
   };
 
@@ -929,11 +1001,238 @@ class CustomFeatureHook(BaseFeatureHook):
                     <span>Profiling dataset schema and statistical distribution...</span>
                   </div>
                 ) : !edaData ? (
-                  <div className="text-center py-12 text-zinc-500">
-                    Failed to profile dataset. Check if train.csv path exists.
+                  <div className="bg-white border border-[#E5E9E6] rounded-2xl p-8 shadow-sm max-w-3xl mx-auto space-y-6">
+                    <div className="flex items-start space-x-4">
+                      <div className="w-12 h-12 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-700 flex-shrink-0">
+                        <AlertTriangle size={24} />
+                      </div>
+                      <div className="flex-1">
+                        <h3 className="text-base font-semibold text-[#121816]">Dataset File Not Found on This Machine</h3>
+                        <p className="text-xs text-[#76807B] mt-1 leading-relaxed">
+                          The configured dataset location could not be located on your local file system. This happens when a case is shared from another machine or when files are moved.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="bg-[#F8FAF9] border border-[#E5E9E6] rounded-xl p-4 space-y-2 text-xs font-mono">
+                      <div className="flex items-center justify-between text-[#76807B]">
+                        <span>Configured Train Path:</span>
+                        <span className="text-rose-600 font-semibold truncate max-w-md">{caseDetail?.meta.train_path || 'None'}</span>
+                      </div>
+                      {caseDetail?.meta.test_path && (
+                        <div className="flex items-center justify-between text-[#76807B]">
+                          <span>Configured Test Path:</span>
+                          <span className="text-zinc-600 truncate max-w-md">{caseDetail.meta.test_path}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    <form onSubmit={handleUpdatePaths} className="space-y-4 pt-2">
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-semibold text-[#121816] flex items-center justify-between">
+                          <span>Training Dataset Path (train.csv) *</span>
+                          <span className="text-[11px] font-normal text-[#76807B]">Local absolute path or workspace-relative path</span>
+                        </label>
+                        <div className="flex space-x-2">
+                          <input
+                            type="text"
+                            value={relocateTrainPath}
+                            onChange={e => setRelocateTrainPath(e.target.value)}
+                            placeholder="e.g. playground-series-s6e11/train.csv or C:/data/train.csv"
+                            className="flex-1 px-3 py-2 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816] focus:outline-none focus:border-[#164E33]"
+                            required
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleBrowseRelocate('train')}
+                            className="px-3 py-2 bg-[#F4F5F6] hover:bg-[#E5E9E6] text-[#121816] text-xs font-medium rounded-xl border border-[#E5E9E6] flex items-center space-x-1.5 transition-colors"
+                          >
+                            <FolderOpen size={14} />
+                            <span>Browse File</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-semibold text-[#121816] flex items-center justify-between">
+                          <span>Test Dataset Path (test.csv, optional)</span>
+                          <span className="text-[11px] font-normal text-[#76807B]">Used for blind test inference and submissions</span>
+                        </label>
+                        <div className="flex space-x-2">
+                          <input
+                            type="text"
+                            value={relocateTestPath}
+                            onChange={e => setRelocateTestPath(e.target.value)}
+                            placeholder="e.g. playground-series-s6e11/test.csv"
+                            className="flex-1 px-3 py-2 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816] focus:outline-none focus:border-[#164E33]"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleBrowseRelocate('test')}
+                            className="px-3 py-2 bg-[#F4F5F6] hover:bg-[#E5E9E6] text-[#121816] text-xs font-medium rounded-xl border border-[#E5E9E6] flex items-center space-x-1.5 transition-colors"
+                          >
+                            <FolderOpen size={14} />
+                            <span>Browse File</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {scannedCsvs.length > 0 && (
+                        <div className="pt-2">
+                          <div className="text-[11px] font-semibold uppercase tracking-wider text-[#76807B] mb-2 font-mono">
+                            Detected Workspace CSV Files (Quick Select):
+                          </div>
+                          <div className="flex flex-wrap gap-2 max-h-36 overflow-y-auto p-2 bg-[#F8FAF9] rounded-xl border border-[#E5E9E6]">
+                            {scannedCsvs.map((f, idx) => (
+                              <button
+                                key={idx}
+                                type="button"
+                                onClick={() => {
+                                  if (f.filename.toLowerCase().includes('test')) {
+                                    setRelocateTestPath(f.path);
+                                  } else {
+                                    setRelocateTrainPath(f.path);
+                                  }
+                                }}
+                                className="text-[11px] font-mono px-2.5 py-1 bg-white hover:bg-[#164E33] hover:text-white border border-[#E5E9E6] rounded-lg transition-colors flex items-center space-x-1 text-[#121816]"
+                              >
+                                <span>{f.path}</span>
+                                <span className="text-[10px] text-zinc-400">({f.size_mb} MB)</span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {pathUpdateError && (
+                        <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs">
+                          {pathUpdateError}
+                        </div>
+                      )}
+
+                      {pathUpdateSuccess && (
+                        <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs">
+                          {pathUpdateSuccess}
+                        </div>
+                      )}
+
+                      <div className="pt-2 flex justify-end">
+                        <button
+                          type="submit"
+                          disabled={isUpdatingPaths || !relocateTrainPath.trim()}
+                          className="px-5 py-2.5 bg-[#164E33] hover:bg-[#113d28] text-white text-xs font-medium rounded-xl transition-colors flex items-center space-x-2 disabled:opacity-50"
+                        >
+                          {isUpdatingPaths ? (
+                            <>
+                              <Loader2 size={14} className="animate-spin" />
+                              <span>Relocating & Profiling...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Check size={14} />
+                              <span>Relocate & Profile Dataset</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </form>
                   </div>
                 ) : (
                   <>
+                    {/* Dataset Source Path & Relocation Bar */}
+                    <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 bg-white border border-[#E5E9E6] rounded-xl text-xs">
+                      <div className="flex items-center space-x-2 truncate">
+                        <span className="text-[#76807B] font-mono uppercase text-[10px] tracking-wider">Source:</span>
+                        <code className="text-[#121816] font-mono text-[11px] truncate bg-[#F4F5F6] px-2 py-0.5 rounded border border-[#E5E9E6]">
+                          {caseDetail?.resolved_train_path || caseDetail?.meta.train_path}
+                        </code>
+                        {caseDetail?.resolved_train_path && caseDetail?.resolved_train_path !== caseDetail?.meta.train_path && (
+                          <span className="text-[10px] font-mono text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">
+                            Auto-Resolved
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <button
+                          type="button"
+                          onClick={() => setShowRelocateCard(!showRelocateCard)}
+                          className="px-2.5 py-1 text-[11px] font-medium text-[#164E33] hover:bg-[#164E33]/10 rounded-lg border border-[#164E33]/30 transition-colors flex items-center space-x-1"
+                        >
+                          <FolderOpen size={12} />
+                          <span>{showRelocateCard ? 'Hide Path Editor' : 'Relocate / Change Path'}</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {showRelocateCard && (
+                      <div className="bg-white border border-[#E5E9E6] rounded-2xl p-6 shadow-sm space-y-4">
+                        <div className="flex items-center justify-between pb-2 border-b border-[#E5E9E6]">
+                          <div>
+                            <h4 className="text-sm font-semibold text-[#121816]">Relocate Dataset Path</h4>
+                            <p className="text-xs text-[#76807B]">Update the path to train.csv and test.csv without modifying code</p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setShowRelocateCard(false)}
+                            className="text-zinc-400 hover:text-zinc-600 p-1"
+                          >
+                            <X size={16} />
+                          </button>
+                        </div>
+                        <form onSubmit={handleUpdatePaths} className="space-y-3">
+                          <div className="space-y-1">
+                            <label className="text-xs font-semibold text-[#121816]">Training Dataset Path</label>
+                            <div className="flex space-x-2">
+                              <input
+                                type="text"
+                                value={relocateTrainPath}
+                                onChange={e => setRelocateTrainPath(e.target.value)}
+                                className="flex-1 px-3 py-1.5 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816] focus:outline-none focus:border-[#164E33]"
+                                required
+                              />
+                              <button
+                                type="button"
+                                onClick={() => handleBrowseRelocate('train')}
+                                className="px-3 py-1.5 bg-[#F4F5F6] hover:bg-[#E5E9E6] text-[#121816] text-xs font-medium rounded-xl border border-[#E5E9E6] flex items-center space-x-1"
+                              >
+                                <FolderOpen size={13} />
+                                <span>Browse</span>
+                              </button>
+                            </div>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs font-semibold text-[#121816]">Test Dataset Path (Optional)</label>
+                            <div className="flex space-x-2">
+                              <input
+                                type="text"
+                                value={relocateTestPath}
+                                onChange={e => setRelocateTestPath(e.target.value)}
+                                className="flex-1 px-3 py-1.5 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816] focus:outline-none focus:border-[#164E33]"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => handleBrowseRelocate('test')}
+                                className="px-3 py-1.5 bg-[#F4F5F6] hover:bg-[#E5E9E6] text-[#121816] text-xs font-medium rounded-xl border border-[#E5E9E6] flex items-center space-x-1"
+                              >
+                                <FolderOpen size={13} />
+                                <span>Browse</span>
+                              </button>
+                            </div>
+                          </div>
+                          <div className="flex justify-end pt-2">
+                            <button
+                              type="submit"
+                              disabled={isUpdatingPaths || !relocateTrainPath.trim()}
+                              className="px-4 py-2 bg-[#164E33] hover:bg-[#113d28] text-white text-xs font-medium rounded-xl transition-colors flex items-center space-x-1.5 disabled:opacity-50"
+                            >
+                              {isUpdatingPaths ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+                              <span>Save & Re-Profile</span>
+                            </button>
+                          </div>
+                        </form>
+                      </div>
+                    )}
+
                     {/* Executive Summary Metrics */}
                     <div className="grid grid-cols-4 gap-4">
                       <div className="bg-white border border-[#E5E9E6] rounded-2xl p-5 shadow-sm flex flex-col justify-between">

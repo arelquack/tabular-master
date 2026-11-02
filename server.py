@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import glob
+import re
 import importlib.util
 import threading
 import time
@@ -84,6 +85,87 @@ class BlendRequest(BaseModel):
 
 class InspectDatasetRequest(BaseModel):
     path: str
+
+class UpdateCasePathsRequest(BaseModel):
+    train_path: str
+    test_path: Optional[str] = None
+
+def resolve_dataset_path(raw_path: str, case_id: Optional[str] = None) -> Optional[str]:
+    if not raw_path:
+        return None
+
+    clean_p = str(raw_path).strip().strip('"').strip("'")
+    if not clean_p:
+        return None
+
+    # Candidate 1: Exact path (absolute or relative to CWD)
+    if os.path.exists(clean_p):
+        return os.path.abspath(clean_p)
+
+    # Candidate 2: Relative to ROOT_DIR
+    p2 = os.path.join(ROOT_DIR, clean_p)
+    if os.path.exists(p2):
+        return os.path.abspath(p2)
+
+    # Candidate 3: Normalized slashes
+    norm_p = clean_p.replace("\\", os.sep).replace("/", os.sep)
+    if os.path.exists(norm_p):
+        return os.path.abspath(norm_p)
+    p3 = os.path.join(ROOT_DIR, norm_p)
+    if os.path.exists(p3):
+        return os.path.abspath(p3)
+
+    # Candidate 4: Right-to-left sub-path matching (handles absolute paths copied from another machine)
+    # E.g. "D:/POLBAN/Semester 7/gemastik-final/playground-series-s6e11/train.csv" -> matches "playground-series-s6e11/train.csv"
+    parts = [seg for seg in re.split(r'[\\/]', clean_p) if seg and not seg.endswith(':')]
+    if len(parts) >= 2:
+        for depth in range(min(len(parts), 4), 1, -1):
+            sub_rel = os.path.join(*parts[-depth:])
+            p_sub = os.path.join(ROOT_DIR, sub_rel)
+            if os.path.exists(p_sub):
+                return os.path.abspath(p_sub)
+
+    # Candidate 5: Direct folder or workspace matching
+    filename = os.path.basename(clean_p)
+    if filename:
+        p_root = os.path.join(ROOT_DIR, filename)
+        if os.path.exists(p_root):
+            return os.path.abspath(p_root)
+
+        if case_id:
+            p_case = os.path.join(CASES_DIR, case_id, filename)
+            if os.path.exists(p_case):
+                return os.path.abspath(p_case)
+            p_case_root = os.path.join(ROOT_DIR, case_id, filename)
+            if os.path.exists(p_case_root):
+                return os.path.abspath(p_case_root)
+
+        # Check immediate parent directory match
+        parent_dir = os.path.basename(os.path.dirname(clean_p))
+        if parent_dir:
+            p_parent = os.path.join(ROOT_DIR, parent_dir, filename)
+            if os.path.exists(p_parent):
+                return os.path.abspath(p_parent)
+
+        # Recursive search in workspace (filter out system/build folders)
+        found_matches = []
+        for root, dirs, files in os.walk(ROOT_DIR):
+            dirs[:] = [d for d in dirs if not d.startswith(".") and d not in {"venv", ".venv", "node_modules", "dist", "experiments", "experiments_backup_archive", "catboost_info"}]
+            if filename in files:
+                found_matches.append(os.path.abspath(os.path.join(root, filename)))
+
+        if found_matches:
+            if parent_dir:
+                for match in found_matches:
+                    if parent_dir.lower() in match.lower():
+                        return match
+            if case_id:
+                for match in found_matches:
+                    if case_id.lower() in match.lower():
+                        return match
+            return found_matches[0]
+
+    return None
 
 def load_hook_class(case_dir: str):
     hook_file = os.path.join(case_dir, "feature_hook.py")
@@ -168,12 +250,22 @@ def get_case(case_id: str):
     all_models = ["lgbm", "xgb", "catboost"]
     available_cached = [m for m in all_models if os.path.exists(os.path.join(artifacts_dir, f"oof_{m}.npy"))]
 
+    # Path resolution status
+    resolved_train = resolve_dataset_path(meta.get("train_path", ""), case_id=case_id)
+    resolved_test = resolve_dataset_path(meta.get("test_path", ""), case_id=case_id) if meta.get("test_path") else None
+    train_exists = bool(resolved_train and os.path.exists(resolved_train))
+    test_exists = bool(resolved_test and os.path.exists(resolved_test)) if resolved_test else True
+
     return {
         "meta": meta,
         "summary": summary_data,
         "feature_importances": feature_importances,
         "hook_code": hook_code,
         "has_hook": has_hook,
+        "train_exists": train_exists,
+        "test_exists": test_exists,
+        "resolved_train_path": resolved_train,
+        "resolved_test_path": resolved_test,
         "available_cached": available_cached,
         "job_state": job_state.get(case_id, {"status": "completed" if summary_data else "ready", "progress": 0, "logs": []})
     }
@@ -191,9 +283,9 @@ def get_case_eda(case_id: str):
     with open(case_json, "r") as f:
         meta = json.load(f)
 
-    train_path = os.path.join(ROOT_DIR, meta["train_path"])
-    if not os.path.exists(train_path):
-        raise HTTPException(status_code=404, detail=f"Dataset file not found: {train_path}")
+    train_path = resolve_dataset_path(meta.get("train_path", ""), case_id=case_id)
+    if not train_path or not os.path.exists(train_path):
+        raise HTTPException(status_code=404, detail=f"Dataset file not found: {meta.get('train_path')}")
 
     # 1. Exact Total Rows Count (Fast line count in binary)
     with open(train_path, "rb") as f:
@@ -367,6 +459,41 @@ def create_case(req: CreateCaseRequest):
 
     return {"status": "created", "case_id": req.id}
 
+@app.post("/api/cases/{case_id}/paths")
+def update_case_paths(case_id: str, req: UpdateCasePathsRequest):
+    case_dir = os.path.join(CASES_DIR, case_id)
+    case_json = os.path.join(case_dir, "case.json")
+    if not os.path.exists(case_json):
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    with open(case_json, "r") as f:
+        meta = json.load(f)
+
+    meta["train_path"] = req.train_path
+    if req.test_path is not None:
+        meta["test_path"] = req.test_path
+
+    with open(case_json, "w") as f:
+        json.dump(meta, f, indent=4)
+
+    # Invalidate EDA cache so next read recalculates
+    if case_id in eda_cache:
+        del eda_cache[case_id]
+
+    resolved_train = resolve_dataset_path(req.train_path, case_id=case_id)
+    resolved_test = resolve_dataset_path(req.test_path, case_id=case_id) if req.test_path else None
+    train_exists = bool(resolved_train and os.path.exists(resolved_train))
+    test_exists = bool(resolved_test and os.path.exists(resolved_test)) if resolved_test else True
+
+    return {
+        "status": "updated",
+        "meta": meta,
+        "resolved_train_path": resolved_train,
+        "resolved_test_path": resolved_test,
+        "train_exists": train_exists,
+        "test_exists": test_exists
+    }
+
 @app.get("/api/scan-csvs")
 def scan_workspace_csvs():
     """Scans the workspace recursively for CSV datasets."""
@@ -418,9 +545,9 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {{
 
 @app.post("/api/inspect-dataset")
 def inspect_dataset(req: InspectDatasetRequest):
-    file_path = os.path.join(ROOT_DIR, req.path) if not os.path.isabs(req.path) else req.path
-    if not os.path.exists(file_path):
-        return {"exists": False, "error": f"File does not exist: {file_path}"}
+    file_path = resolve_dataset_path(req.path)
+    if not file_path or not os.path.exists(file_path):
+        return {"exists": False, "error": f"File does not exist: {req.path}"}
     
     try:
         df_preview = pd.read_csv(file_path, nrows=50)
@@ -460,10 +587,13 @@ def run_pipeline_thread(case_id: str, meta: dict, case_dir: str):
         print(f"[{case_id}] {msg}")
 
     try:
-        train_path = os.path.join(ROOT_DIR, meta["train_path"])
-        test_path = os.path.join(ROOT_DIR, meta["test_path"]) if meta.get("test_path") else None
+        train_path = resolve_dataset_path(meta.get("train_path", ""), case_id=case_id)
+        test_path = resolve_dataset_path(meta.get("test_path", ""), case_id=case_id) if meta.get("test_path") else None
         
-        log(f"Loading dataset from {meta['train_path']}...")
+        if not train_path or not os.path.exists(train_path):
+            raise FileNotFoundError(f"Training dataset not found: {meta.get('train_path')}")
+
+        log(f"Loading dataset from {train_path}...")
         job_state[case_id]["progress"] = 12
         train_df = pd.read_csv(train_path)
         test_df = pd.read_csv(test_path) if test_path and os.path.exists(test_path) else None
@@ -622,7 +752,9 @@ def test_case_hook(case_id: str):
         if not hook:
             return {"status": "error", "message": "Failed to load BaseFeatureHook subclass in feature_hook.py"}
 
-        train_path = os.path.join(ROOT_DIR, meta["train_path"])
+        train_path = resolve_dataset_path(meta.get("train_path", ""), case_id=case_id)
+        if not train_path or not os.path.exists(train_path):
+            return {"status": "error", "message": f"Training dataset not found: {meta.get('train_path')}"}
         sample_df = pd.read_csv(train_path, nrows=1000)
         orig_cols = list(sample_df.columns)
         orig_count = len(orig_cols)
@@ -676,7 +808,9 @@ def run_tune_thread(case_id: str, model_name: str, n_trials: int, meta: dict, ca
         tune_state[case_id]["logs"].append(f"[{time.strftime('%H:%M:%S')}] {msg}")
 
     try:
-        train_path = os.path.join(ROOT_DIR, meta["train_path"])
+        train_path = resolve_dataset_path(meta.get("train_path", ""), case_id=case_id)
+        if not train_path or not os.path.exists(train_path):
+            raise FileNotFoundError(f"Training dataset not found: {meta.get('train_path')}")
         train_df = pd.read_csv(train_path)
 
         target_col = meta["target_col"]
@@ -857,7 +991,10 @@ def run_hill_climb(case_id: str):
     if os.path.exists(y_true_path):
         y_true = np.load(y_true_path)
     else:
-        train_df = pd.read_csv(os.path.join(ROOT_DIR, meta["train_path"]), usecols=[meta["target_col"]])
+        train_path = resolve_dataset_path(meta.get("train_path", ""), case_id=case_id)
+        if not train_path or not os.path.exists(train_path):
+            raise HTTPException(status_code=404, detail="Training dataset not found")
+        train_df = pd.read_csv(train_path, usecols=[meta["target_col"]])
         y_true = train_df[meta["target_col"]].values
         if y_true.dtype == bool or not np.issubdtype(y_true.dtype, np.number):
             y_true = pd.Series(y_true).astype("category").cat.codes.values
@@ -893,7 +1030,10 @@ def run_custom_blend(case_id: str, req: BlendRequest):
     if os.path.exists(y_true_path):
         y_true = np.load(y_true_path)
     else:
-        train_df = pd.read_csv(os.path.join(ROOT_DIR, meta["train_path"]), usecols=[meta["target_col"]])
+        train_path = resolve_dataset_path(meta.get("train_path", ""), case_id=case_id)
+        if not train_path or not os.path.exists(train_path):
+            raise HTTPException(status_code=404, detail="Training dataset not found")
+        train_df = pd.read_csv(train_path, usecols=[meta["target_col"]])
         y_true = train_df[meta["target_col"]].values
         if y_true.dtype == bool or not np.issubdtype(y_true.dtype, np.number):
             y_true = pd.Series(y_true).astype("category").cat.codes.values
@@ -907,13 +1047,15 @@ def run_custom_blend(case_id: str, req: BlendRequest):
     score = MetricEvaluator.calculate(y_true, blended_oof, meta["eval_metric"], meta["task_type"])
 
     if tests and meta.get("test_path") and meta.get("id_col"):
-        blended_test = sum(w * tests[k] for k, w in norm_w.items())
-        test_df = pd.read_csv(os.path.join(ROOT_DIR, meta["test_path"]), usecols=[meta["id_col"]])
-        sub_df = pd.DataFrame({
-            meta["id_col"]: test_df[meta["id_col"]],
-            meta["target_col"]: blended_test
-        })
-        sub_df.to_csv(os.path.join(out_dir, "custom_blend_submission.csv"), index=False)
+        test_path = resolve_dataset_path(meta.get("test_path", ""), case_id=case_id)
+        if test_path and os.path.exists(test_path):
+            blended_test = sum(w * tests[k] for k, w in norm_w.items())
+            test_df = pd.read_csv(test_path, usecols=[meta["id_col"]])
+            sub_df = pd.DataFrame({
+                meta["id_col"]: test_df[meta["id_col"]],
+                meta["target_col"]: blended_test
+            })
+            sub_df.to_csv(os.path.join(out_dir, "custom_blend_submission.csv"), index=False)
 
     return {
         "score": score,
