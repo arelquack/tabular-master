@@ -26,7 +26,9 @@ import {
   Edit3,
   Clock,
   ArrowUpRight,
-  ArrowDownRight
+  ArrowDownRight,
+  Layers,
+  GitMerge
 } from 'lucide-react';
 
 interface CaseMeta {
@@ -206,6 +208,34 @@ export default function App() {
   const [isEditingParams, setIsEditingParams] = useState<boolean>(false);
   const [isSavingParams, setIsSavingParams] = useState<boolean>(false);
   const [paramsSaveMsg, setParamsSaveMsg] = useState<string | null>(null);
+
+  // Dataset Stitcher & Multi-Table Joiner Studio State
+  const [showStitcherModal, setShowStitcherModal] = useState<boolean>(false);
+  const [stitcherMode, setStitcherMode] = useState<'join' | 'concat'>('join');
+  const [stitcherBasePath, setStitcherBasePath] = useState<string>('');
+  const [stitcherJoinPath, setStitcherJoinPath] = useState<string>('');
+  const [baseColumns, setBaseColumns] = useState<string[]>([]);
+  const [joinColumns, setJoinColumns] = useState<string[]>([]);
+  const [stitcherJoinKeys, setStitcherJoinKeys] = useState<string[]>([]);
+  const [stitcherHow, setStitcherHow] = useState<'inner' | 'left' | 'outer'>('inner');
+  const [stitcherAgg, setStitcherAgg] = useState<'none' | 'last' | 'first'>('none');
+  const [stitcherFilterCol, setStitcherFilterCol] = useState<string>('');
+  const [stitcherFilterVal, setStitcherFilterVal] = useState<string>('');
+  const [stitcherOutFile, setStitcherOutFile] = useState<string>('train_merged.csv');
+  const [stitcherApplyTarget, setStitcherApplyTarget] = useState<'train' | 'test' | 'none'>('train');
+
+  // Concat Mode State
+  const [concatPattern, setConcatPattern] = useState<string>('');
+  const [concatMaxFiles, setConcatMaxFiles] = useState<string>('');
+  const [concatOutFile, setConcatOutFile] = useState<string>('concatenated.csv');
+  const [concatApplyTarget, setConcatApplyTarget] = useState<'train' | 'test' | 'none'>('train');
+
+  // Preview & Status State
+  const [stitcherPreviewLoading, setStitcherPreviewLoading] = useState<boolean>(false);
+  const [stitcherPreviewData, setStitcherPreviewData] = useState<any>(null);
+  const [stitcherExecuting, setStitcherExecuting] = useState<boolean>(false);
+  const [stitcherError, setStitcherError] = useState<string | null>(null);
+  const [stitcherSuccess, setStitcherSuccess] = useState<string | null>(null);
 
   const [newCase, setNewCase] = useState({
     id: '',
@@ -545,6 +575,156 @@ class CustomFeatures(BaseFeatureHook):
       alert('Invalid JSON: ' + err.message);
     } finally {
       setIsSavingParams(false);
+    }
+  };
+
+  const handleInspectBaseColumns = async (path: string) => {
+    setStitcherBasePath(path);
+    if (!path.trim()) { setBaseColumns([]); return; }
+    try {
+      const res = await fetch(`/api/tools/inspect-columns?path=${encodeURIComponent(path.trim())}`);
+      if (res.ok) {
+        const d = await res.json();
+        setBaseColumns(d.columns || []);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleInspectJoinColumns = async (path: string) => {
+    setStitcherJoinPath(path);
+    if (!path.trim()) { setJoinColumns([]); return; }
+    try {
+      const res = await fetch(`/api/tools/inspect-columns?path=${encodeURIComponent(path.trim())}`);
+      if (res.ok) {
+        const d = await res.json();
+        setJoinColumns(d.columns || []);
+        if (baseColumns.length > 0) {
+          const common = d.columns.filter((c: string) => baseColumns.includes(c));
+          if (common.length > 0 && stitcherJoinKeys.length === 0) {
+            setStitcherJoinKeys(common);
+          }
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handlePreviewMerge = async () => {
+    if (!stitcherBasePath.trim() || !stitcherJoinPath.trim() || stitcherJoinKeys.length === 0) {
+      setStitcherError('Please specify Base Table, Join Table, and at least one Join Key.');
+      return;
+    }
+    setStitcherPreviewLoading(true);
+    setStitcherError(null);
+    setStitcherPreviewData(null);
+    try {
+      const res = await fetch('/api/tools/preview-merge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          base_path: stitcherBasePath.trim(),
+          join_path: stitcherJoinPath.trim(),
+          join_keys: stitcherJoinKeys,
+          how: stitcherHow,
+          aggregation: stitcherAgg,
+          filter_col: stitcherFilterCol.trim() || undefined,
+          filter_val: stitcherFilterVal.trim() || undefined,
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setStitcherPreviewData(data);
+      } else {
+        setStitcherError(data.detail || 'Preview merge failed');
+      }
+    } catch (err: any) {
+      setStitcherError(err.message || 'Error executing preview merge');
+    } finally {
+      setStitcherPreviewLoading(false);
+    }
+  };
+
+  const handleExecuteMerge = async () => {
+    if (!selectedCaseId) return;
+    if (!stitcherBasePath.trim() || !stitcherJoinPath.trim() || stitcherJoinKeys.length === 0) {
+      setStitcherError('Please specify Base Table, Join Table, and at least one Join Key.');
+      return;
+    }
+    setStitcherExecuting(true);
+    setStitcherError(null);
+    setStitcherSuccess(null);
+    try {
+      const res = await fetch('/api/tools/merge-datasets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          case_id: selectedCaseId,
+          base_path: stitcherBasePath.trim(),
+          join_path: stitcherJoinPath.trim(),
+          join_keys: stitcherJoinKeys,
+          how: stitcherHow,
+          aggregation: stitcherAgg,
+          filter_col: stitcherFilterCol.trim() || undefined,
+          filter_val: stitcherFilterVal.trim() || undefined,
+          output_filename: stitcherOutFile.trim() || 'train_merged.csv',
+          set_as_target: stitcherApplyTarget !== 'none' ? stitcherApplyTarget : undefined
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setStitcherSuccess(`Successfully merged ${data.total_rows.toLocaleString()} rows into ${data.saved_path}!`);
+        await fetchCaseDetail(selectedCaseId);
+        await fetchCases();
+        setTimeout(() => {
+          setShowStitcherModal(false);
+          setStitcherSuccess(null);
+        }, 2200);
+      } else {
+        setStitcherError(data.detail || 'Merge execution failed');
+      }
+    } catch (err: any) {
+      setStitcherError(err.message || 'Error executing merge');
+    } finally {
+      setStitcherExecuting(false);
+    }
+  };
+
+  const handleExecuteConcat = async () => {
+    if (!selectedCaseId || !concatPattern.trim()) return;
+    setStitcherExecuting(true);
+    setStitcherError(null);
+    setStitcherSuccess(null);
+    try {
+      const res = await fetch('/api/tools/concat-partitions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          case_id: selectedCaseId,
+          pattern: concatPattern.trim(),
+          max_files: concatMaxFiles.trim() ? Number(concatMaxFiles) : undefined,
+          output_filename: concatOutFile.trim() || 'concatenated.csv',
+          set_as_target: concatApplyTarget !== 'none' ? concatApplyTarget : undefined
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setStitcherSuccess(`Successfully concatenated ${data.files_matched} files into ${data.saved_path} (${data.total_rows.toLocaleString()} rows)!`);
+        await fetchCaseDetail(selectedCaseId);
+        await fetchCases();
+        setTimeout(() => {
+          setShowStitcherModal(false);
+          setStitcherSuccess(null);
+        }, 2200);
+      } else {
+        setStitcherError(data.detail || 'Concat execution failed');
+      }
+    } catch (err: any) {
+      setStitcherError(err.message || 'Error executing concat');
+    } finally {
+      setStitcherExecuting(false);
     }
   };
 
@@ -1275,6 +1455,18 @@ class CustomFeatureHook(BaseFeatureHook):
                         )}
                       </div>
                       <div className="flex items-center space-x-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowStitcherModal(true);
+                            fetchScannedCsvs();
+                          }}
+                          className="px-2.5 py-1 text-[11px] font-medium text-[#164E33] bg-[#E8F3ED] hover:bg-[#D9EBE1] rounded-lg border border-[#D2E7DC] transition-colors flex items-center space-x-1"
+                          title="Open Dataset Stitcher & Relational Joiner Studio"
+                        >
+                          <Layers size={12} />
+                          <span>Dataset Stitcher & Joiner</span>
+                        </button>
                         <button
                           type="button"
                           onClick={() => setShowRelocateCard(!showRelocateCard)}
@@ -3535,6 +3727,409 @@ class CustomFeatureHook(BaseFeatureHook):
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Dataset Stitcher & Multi-Table Joiner Studio Modal */}
+      {showStitcherModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-fade-in overflow-y-auto">
+          <div className="bg-white border border-[#E5E9E6] rounded-2xl max-w-4xl w-full p-6 shadow-2xl space-y-6 my-8 max-h-[90vh] overflow-y-auto">
+            {/* Modal Header */}
+            <div className="flex items-start justify-between border-b border-[#E5E9E6] pb-4">
+              <div className="space-y-1">
+                <div className="flex items-center space-x-2">
+                  <div className="w-8 h-8 rounded-lg bg-[#E8F3ED] border border-[#D2E7DC] flex items-center justify-center text-[#164E33]">
+                    <Layers size={18} />
+                  </div>
+                  <h3 className="text-base font-bold text-[#121816]">
+                    Dataset Stitcher & Multi-Table Joiner Studio
+                  </h3>
+                  <span className="text-[10px] font-mono uppercase bg-[#164E33] text-white px-2 py-0.5 rounded font-bold">
+                    Multi-Table Engine
+                  </span>
+                </div>
+                <p className="text-xs text-[#76807B]">
+                  Merge relational tables (Base + Auxiliary) or concatenate partitioned multi-file batches into unified tabular matrices without writing Python scripts.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowStitcherModal(false)}
+                className="text-zinc-400 hover:text-zinc-700 p-1 rounded-lg"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Mode Selector Tabs */}
+            <div className="flex border-b border-[#E5E9E6] space-x-6 text-xs font-medium">
+              <button
+                type="button"
+                onClick={() => { setStitcherMode('join'); setStitcherPreviewData(null); }}
+                className={`pb-2.5 transition flex items-center space-x-2 border-b-2 ${
+                  stitcherMode === 'join'
+                    ? 'border-[#164E33] text-[#164E33] font-bold'
+                    : 'border-transparent text-[#76807B] hover:text-[#121816]'
+                }`}
+              >
+                <GitMerge size={14} />
+                <span>Relational Join (Multi-Table Stitcher)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => { setStitcherMode('concat'); setStitcherPreviewData(null); }}
+                className={`pb-2.5 transition flex items-center space-x-2 border-b-2 ${
+                  stitcherMode === 'concat'
+                    ? 'border-[#164E33] text-[#164E33] font-bold'
+                    : 'border-transparent text-[#76807B] hover:text-[#121816]'
+                }`}
+              >
+                <Layers size={14} />
+                <span>Partition Concatenator (Wildcard / Multi-File Batch)</span>
+              </button>
+            </div>
+
+            {/* Notifications */}
+            {stitcherError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs">
+                {stitcherError}
+              </div>
+            )}
+            {stitcherSuccess && (
+              <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs font-medium flex items-center space-x-2">
+                <Check size={14} />
+                <span>{stitcherSuccess}</span>
+              </div>
+            )}
+
+            {/* TAB 1: RELATIONAL JOIN */}
+            {stitcherMode === 'join' && (
+              <div className="space-y-5">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Base Table */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-[#121816] flex items-center justify-between">
+                      <span>Base Table (Target / Master) *</span>
+                      <span className="text-[10px] text-[#76807B] font-mono">e.g. output.csv or train.csv</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={stitcherBasePath}
+                      onChange={e => handleInspectBaseColumns(e.target.value)}
+                      placeholder="e.g. nfl-big-data-bowl-2026-prediction/train/output_2023_w01.csv"
+                      className="w-full px-3 py-2 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816] focus:outline-none focus:border-[#164E33]"
+                    />
+                    {baseColumns.length > 0 && (
+                      <div className="text-[10px] text-[#76807B] font-mono">
+                        Loaded {baseColumns.length} columns: {baseColumns.slice(0, 5).join(', ')}...
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Join Table */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-[#121816] flex items-center justify-between">
+                      <span>Join Table (Auxiliary / Feature Store) *</span>
+                      <span className="text-[10px] text-[#76807B] font-mono">e.g. input.csv or profiles.csv</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={stitcherJoinPath}
+                      onChange={e => handleInspectJoinColumns(e.target.value)}
+                      placeholder="e.g. nfl-big-data-bowl-2026-prediction/train/input_2023_w01.csv"
+                      className="w-full px-3 py-2 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816] focus:outline-none focus:border-[#164E33]"
+                    />
+                    {joinColumns.length > 0 && (
+                      <div className="text-[10px] text-[#76807B] font-mono">
+                        Loaded {joinColumns.length} columns: {joinColumns.slice(0, 5).join(', ')}...
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Scanned CSVs Helper Chips */}
+                {scannedCsvs.length > 0 && (
+                  <div className="p-3 bg-[#F8FAF9] border border-[#E5E9E6] rounded-xl space-y-1.5">
+                    <span className="text-[10px] uppercase font-bold text-[#76807B] font-mono">Quick Pick from Workspace:</span>
+                    <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
+                      {scannedCsvs.slice(0, 15).map(f => (
+                        <button
+                          key={f.path}
+                          type="button"
+                          onClick={() => {
+                            if (!stitcherBasePath) handleInspectBaseColumns(f.path);
+                            else handleInspectJoinColumns(f.path);
+                          }}
+                          className="px-2 py-0.5 bg-white border border-[#E5E9E6] hover:border-[#164E33] text-[10px] font-mono rounded text-[#121816] transition"
+                        >
+                          {f.filename} ({f.size_mb}MB)
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Join Keys Selector */}
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold text-[#121816] flex items-center justify-between">
+                    <span>Join Key Columns (Matching Identifiers) *</span>
+                    <span className="text-[10px] text-[#76807B]">Click column tags to toggle as join keys</span>
+                  </label>
+                  
+                  {/* Detected Common Columns */}
+                  {baseColumns.length > 0 && joinColumns.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {joinColumns.filter(c => baseColumns.includes(c)).map(col => {
+                        const isSelected = stitcherJoinKeys.includes(col);
+                        return (
+                          <button
+                            key={col}
+                            type="button"
+                            onClick={() => {
+                              if (isSelected) {
+                                setStitcherJoinKeys(stitcherJoinKeys.filter(k => k !== col));
+                              } else {
+                                setStitcherJoinKeys([...stitcherJoinKeys, col]);
+                              }
+                            }}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-mono font-medium border transition ${
+                              isSelected
+                                ? 'bg-[#164E33] text-white border-[#164E33]'
+                                : 'bg-white text-[#76807B] border-[#E5E9E6] hover:border-[#164E33]'
+                            }`}
+                          >
+                            <span>{isSelected ? '[x] ' : '+ '}</span>
+                            <span>{col}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  <input
+                    type="text"
+                    value={stitcherJoinKeys.join(', ')}
+                    onChange={e => setStitcherJoinKeys(e.target.value.split(',').map(s => s.trim()).filter(Boolean))}
+                    placeholder="e.g. game_id, play_id, nfl_id"
+                    className="w-full px-3 py-1.5 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816] focus:outline-none focus:border-[#164E33]"
+                  />
+                </div>
+
+                {/* Strategy, 1-to-Many Reduction, and Filter */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {/* Join Type */}
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-[#121816]">Join Strategy</label>
+                    <select
+                      value={stitcherHow}
+                      onChange={e => setStitcherHow(e.target.value as any)}
+                      className="w-full px-3 py-2 bg-white border border-[#E5E9E6] rounded-xl text-xs text-[#121816] focus:outline-none focus:border-[#164E33]"
+                    >
+                      <option value="inner">Inner Join (Keep only matching)</option>
+                      <option value="left">Left Join (Keep all base rows)</option>
+                      <option value="outer">Outer Join (Keep everything)</option>
+                    </select>
+                  </div>
+
+                  {/* 1-to-Many Reduction */}
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-[#121816]">1-to-Many Reduction</label>
+                    <select
+                      value={stitcherAgg}
+                      onChange={e => setStitcherAgg(e.target.value as any)}
+                      className="w-full px-3 py-2 bg-white border border-[#E5E9E6] rounded-xl text-xs text-[#121816] focus:outline-none focus:border-[#164E33]"
+                    >
+                      <option value="none">None (Standard Merge)</option>
+                      <option value="last">Take Last Record per Group (T_0 Temporal State)</option>
+                      <option value="first">Take First Record per Group</option>
+                    </select>
+                  </div>
+
+                  {/* Optional Filter */}
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-[#121816]">Optional Row Filter</label>
+                    <div className="flex space-x-1.5">
+                      <input
+                        type="text"
+                        placeholder="Col (e.g. player_to_predict)"
+                        value={stitcherFilterCol}
+                        onChange={e => setStitcherFilterCol(e.target.value)}
+                        className="w-1/2 px-2 py-2 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono"
+                      />
+                      <input
+                        type="text"
+                        placeholder="Val (e.g. True)"
+                        value={stitcherFilterVal}
+                        onChange={e => setStitcherFilterVal(e.target.value)}
+                        className="w-1/2 px-2 py-2 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Output & Destination */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-[#E5E9E6]">
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-[#121816]">Output Filename</label>
+                    <input
+                      type="text"
+                      value={stitcherOutFile}
+                      onChange={e => setStitcherOutFile(e.target.value)}
+                      placeholder="e.g. train_merged.csv"
+                      className="w-full px-3 py-2 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816]"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-[#121816]">Apply to Case</label>
+                    <select
+                      value={stitcherApplyTarget}
+                      onChange={e => setStitcherApplyTarget(e.target.value as any)}
+                      className="w-full px-3 py-2 bg-white border border-[#E5E9E6] rounded-xl text-xs text-[#121816]"
+                    >
+                      <option value="train">Save & Set as Training Dataset (train_path)</option>
+                      <option value="test">Save & Set as Test Dataset (test_path)</option>
+                      <option value="none">Save Only (Do not modify case.json)</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB 2: CONCAT PARTITIONS */}
+            {stitcherMode === 'concat' && (
+              <div className="space-y-5">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-[#121816] flex items-center justify-between">
+                    <span>File Pattern Wildcard (Glob) *</span>
+                    <span className="text-[10px] text-[#76807B] font-mono">Matches all partitions matching pattern</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={concatPattern}
+                    onChange={e => setConcatPattern(e.target.value)}
+                    placeholder="e.g. nfl-big-data-bowl-2026-prediction/train/input_2023_w*.csv"
+                    className="w-full px-3 py-2 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816]"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-[#121816]">Max Files (Optional)</label>
+                    <input
+                      type="number"
+                      value={concatMaxFiles}
+                      onChange={e => setConcatMaxFiles(e.target.value)}
+                      placeholder="e.g. 3 (leave blank for all)"
+                      className="w-full px-3 py-2 bg-white border border-[#E5E9E6] rounded-xl text-xs"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-[#121816]">Output Filename</label>
+                    <input
+                      type="text"
+                      value={concatOutFile}
+                      onChange={e => setConcatOutFile(e.target.value)}
+                      placeholder="e.g. input_concatenated.csv"
+                      className="w-full px-3 py-2 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-[#121816]">Apply to Case</label>
+                    <select
+                      value={concatApplyTarget}
+                      onChange={e => setConcatApplyTarget(e.target.value as any)}
+                      className="w-full px-3 py-2 bg-white border border-[#E5E9E6] rounded-xl text-xs"
+                    >
+                      <option value="train">Save & Set as Training Dataset (train_path)</option>
+                      <option value="test">Save & Set as Test Dataset (test_path)</option>
+                      <option value="none">Save Only (Do not modify case.json)</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* LIVE PREVIEW AREA */}
+            {stitcherPreviewData && (
+              <div className="bg-[#121816] border border-[#26332C] rounded-xl p-4 space-y-3">
+                <div className="flex items-center justify-between text-xs font-mono text-[#E5E9E6]">
+                  <span>Live Preview (5 sample rows x {stitcherPreviewData.columns.length} columns)</span>
+                  <span className="text-[#A0ACA5] text-[11px]">Preview Sample Validated</span>
+                </div>
+                <div className="overflow-x-auto max-h-48 border border-[#26332C] rounded-lg">
+                  <table className="w-full text-[10px] font-mono text-left text-zinc-300">
+                    <thead className="bg-[#1C2621] text-zinc-200 uppercase tracking-wider sticky top-0">
+                      <tr>
+                        {stitcherPreviewData.columns.map((col: string) => (
+                          <th key={col} className="px-2.5 py-1.5 border-b border-[#26332C] whitespace-nowrap">
+                            {col}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#26332C]">
+                      {stitcherPreviewData.preview_rows.map((row: any, rIdx: number) => (
+                        <tr key={rIdx} className="hover:bg-white/5">
+                          {stitcherPreviewData.columns.map((col: string) => (
+                            <td key={col} className="px-2.5 py-1 whitespace-nowrap truncate max-w-xs">
+                              {String(row[col])}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* Modal Actions */}
+            <div className="flex items-center justify-between pt-4 border-t border-[#E5E9E6]">
+              {stitcherMode === 'join' ? (
+                <button
+                  type="button"
+                  onClick={handlePreviewMerge}
+                  disabled={stitcherPreviewLoading || !stitcherBasePath || !stitcherJoinPath}
+                  className="px-4 py-2 border border-[#E5E9E6] hover:border-[#164E33] hover:bg-[#F8FAF9] text-[#121816] text-xs font-medium rounded-xl transition flex items-center space-x-1.5 disabled:opacity-50"
+                >
+                  {stitcherPreviewLoading ? <Loader2 size={13} className="animate-spin" /> : <Layers size={13} />}
+                  <span>Test & Preview Merge</span>
+                </button>
+              ) : <div />}
+
+              <div className="flex items-center space-x-2.5">
+                <button
+                  type="button"
+                  onClick={() => setShowStitcherModal(false)}
+                  className="px-4 py-2 text-xs font-medium text-[#76807B] hover:text-[#121816] rounded-xl transition"
+                >
+                  Close
+                </button>
+
+                {stitcherMode === 'join' ? (
+                  <button
+                    type="button"
+                    onClick={handleExecuteMerge}
+                    disabled={stitcherExecuting || !stitcherBasePath || !stitcherJoinPath}
+                    className="px-5 py-2 bg-[#164E33] hover:bg-[#113d28] text-white text-xs font-semibold rounded-xl transition flex items-center space-x-1.5 disabled:opacity-50 shadow-sm"
+                  >
+                    {stitcherExecuting ? <Loader2 size={13} className="animate-spin" /> : <GitMerge size={13} />}
+                    <span>Execute Merge & Apply</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleExecuteConcat}
+                    disabled={stitcherExecuting || !concatPattern}
+                    className="px-5 py-2 bg-[#164E33] hover:bg-[#113d28] text-white text-xs font-semibold rounded-xl transition flex items-center space-x-1.5 disabled:opacity-50 shadow-sm"
+                  >
+                    {stitcherExecuting ? <Loader2 size={13} className="animate-spin" /> : <Layers size={13} />}
+                    <span>Execute Concat & Apply</span>
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       )}

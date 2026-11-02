@@ -99,6 +99,36 @@ class UpdateParamsRequest(BaseModel):
     architecture_preset: str = "standard"  # "shallow", "standard", "custom"
     model_params: Optional[Dict[str, Any]] = None
 
+class MergeDatasetsRequest(BaseModel):
+    case_id: str
+    base_path: str
+    join_path: str
+    join_keys: List[str]
+    how: str = "inner"  # "left", "inner", "right", "outer"
+    aggregation: str = "none"  # "none", "last", "first"
+    group_by_keys: Optional[List[str]] = None
+    filter_col: Optional[str] = None
+    filter_val: Optional[str] = None
+    output_filename: str = "train_merged.csv"
+    set_as_target: Optional[str] = None  # "train", "test", None
+
+class ConcatPartitionsRequest(BaseModel):
+    case_id: str
+    pattern: str
+    max_files: Optional[int] = None
+    output_filename: str = "concatenated.csv"
+    set_as_target: Optional[str] = None
+
+class PreviewMergeRequest(BaseModel):
+    base_path: str
+    join_path: str
+    join_keys: List[str]
+    how: str = "inner"
+    aggregation: str = "none"
+    group_by_keys: Optional[List[str]] = None
+    filter_col: Optional[str] = None
+    filter_val: Optional[str] = None
+
 ARCH_PRESETS = {
     "shallow": {
         "lgbm": {
@@ -640,6 +670,175 @@ def inspect_dataset(req: InspectDatasetRequest):
         }
     except Exception as e:
         return {"exists": False, "error": str(e)}
+
+@app.get("/api/tools/inspect-columns")
+def inspect_dataset_columns(path: str):
+    file_p = resolve_dataset_path(path)
+    if not file_p or not os.path.exists(file_p):
+        raise HTTPException(status_code=404, detail=f"File not found: {path}")
+    try:
+        sample = pd.read_csv(file_p, nrows=20)
+        return {
+            "columns": list(sample.columns),
+            "sample": sample.head(3).fillna("NaN").to_dict(orient="records"),
+            "total_sample_cols": len(sample.columns)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+def _prepare_join_df(join_df: pd.DataFrame, req_filter_col, req_filter_val, req_aggregation, group_keys):
+    if req_filter_col and req_filter_col in join_df.columns and req_filter_val is not None:
+        val_str = str(req_filter_val).strip()
+        if val_str.lower() == "true":
+            join_df = join_df[join_df[req_filter_col] == True]
+        elif val_str.lower() == "false":
+            join_df = join_df[join_df[req_filter_col] == False]
+        else:
+            join_df = join_df[join_df[req_filter_col].astype(str) == val_str]
+
+    if req_aggregation == "last" and group_keys:
+        valid_groups = [k for k in group_keys if k in join_df.columns]
+        if valid_groups:
+            sort_c = [c for c in ["frame_id", "timestamp", "time", "date", "id"] if c in join_df.columns]
+            if sort_c:
+                join_df = join_df.sort_values(sort_c[0])
+            join_df = join_df.groupby(valid_groups).last().reset_index()
+    elif req_aggregation == "first" and group_keys:
+        valid_groups = [k for k in group_keys if k in join_df.columns]
+        if valid_groups:
+            sort_c = [c for c in ["frame_id", "timestamp", "time", "date", "id"] if c in join_df.columns]
+            if sort_c:
+                join_df = join_df.sort_values(sort_c[0])
+            join_df = join_df.groupby(valid_groups).first().reset_index()
+    return join_df
+
+@app.post("/api/tools/preview-merge")
+def preview_merge_datasets(req: PreviewMergeRequest):
+    base_p = resolve_dataset_path(req.base_path)
+    join_p = resolve_dataset_path(req.join_path)
+    if not base_p or not os.path.exists(base_p):
+        raise HTTPException(status_code=404, detail=f"Base dataset not found: {req.base_path}")
+    if not join_p or not os.path.exists(join_p):
+        raise HTTPException(status_code=404, detail=f"Join dataset not found: {req.join_path}")
+
+    try:
+        base_df = pd.read_csv(base_p, nrows=200)
+        join_df = pd.read_csv(join_p, nrows=1000)
+
+        group_keys = req.group_by_keys or req.join_keys
+        join_df = _prepare_join_df(join_df, req.filter_col, req.filter_val, req.aggregation, group_keys)
+
+        merged = base_df.merge(join_df, on=req.join_keys, how=req.how, suffixes=("_base", "_join"))
+        return {
+            "status": "ok",
+            "columns": list(merged.columns),
+            "preview_rows": merged.head(5).fillna("NaN").to_dict(orient="records"),
+            "preview_count": len(merged)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/api/tools/merge-datasets")
+def execute_merge_datasets(req: MergeDatasetsRequest):
+    base_p = resolve_dataset_path(req.base_path)
+    join_p = resolve_dataset_path(req.join_path)
+    if not base_p or not os.path.exists(base_p):
+        raise HTTPException(status_code=404, detail=f"Base dataset not found: {req.base_path}")
+    if not join_p or not os.path.exists(join_p):
+        raise HTTPException(status_code=404, detail=f"Join dataset not found: {req.join_path}")
+
+    case_dir = os.path.join(CASES_DIR, req.case_id)
+    if not os.path.exists(case_dir):
+        raise HTTPException(status_code=404, detail=f"Case not found: {req.case_id}")
+
+    try:
+        base_df = pd.read_csv(base_p)
+        join_df = pd.read_csv(join_p)
+
+        group_keys = req.group_by_keys or req.join_keys
+        join_df = _prepare_join_df(join_df, req.filter_col, req.filter_val, req.aggregation, group_keys)
+
+        merged = base_df.merge(join_df, on=req.join_keys, how=req.how, suffixes=("_base", "_join"))
+
+        out_fname = req.output_filename.strip() if req.output_filename.strip() else "train_merged.csv"
+        if not out_fname.endswith(".csv"):
+            out_fname += ".csv"
+        out_p = os.path.join(case_dir, out_fname)
+        merged.to_csv(out_p, index=False)
+
+        # Update case.json if requested
+        rel_saved_path = os.path.relpath(out_p, ROOT_DIR).replace("\\", "/")
+        case_json_p = os.path.join(case_dir, "case.json")
+        if os.path.exists(case_json_p) and req.set_as_target in ["train", "test"]:
+            with open(case_json_p, "r") as f:
+                meta = json.load(f)
+            if req.set_as_target == "train":
+                meta["train_path"] = rel_saved_path
+            elif req.set_as_target == "test":
+                meta["test_path"] = rel_saved_path
+            with open(case_json_p, "w") as f:
+                json.dump(meta, f, indent=4)
+
+        return {
+            "status": "success",
+            "saved_path": rel_saved_path,
+            "total_rows": len(merged),
+            "total_columns": len(merged.columns),
+            "columns": list(merged.columns),
+            "applied_target": req.set_as_target
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/api/tools/concat-partitions")
+def execute_concat_partitions(req: ConcatPartitionsRequest):
+    case_dir = os.path.join(CASES_DIR, req.case_id)
+    if not os.path.exists(case_dir):
+        raise HTTPException(status_code=404, detail=f"Case not found: {req.case_id}")
+
+    pattern = req.pattern.strip().strip('"').strip("'")
+    full_pattern = os.path.join(ROOT_DIR, pattern) if not os.path.isabs(pattern) else pattern
+    files = sorted(glob.glob(full_pattern))
+    if not files:
+        raise HTTPException(status_code=404, detail=f"No files matched pattern: {pattern}")
+
+    if req.max_files and req.max_files > 0:
+        files = files[:req.max_files]
+
+    try:
+        dfs = []
+        for fp in files:
+            dfs.append(pd.read_csv(fp))
+        concatenated = pd.concat(dfs, ignore_index=True)
+
+        out_fname = req.output_filename.strip() if req.output_filename.strip() else "concatenated.csv"
+        if not out_fname.endswith(".csv"):
+            out_fname += ".csv"
+        out_p = os.path.join(case_dir, out_fname)
+        concatenated.to_csv(out_p, index=False)
+
+        rel_saved_path = os.path.relpath(out_p, ROOT_DIR).replace("\\", "/")
+        case_json_p = os.path.join(case_dir, "case.json")
+        if os.path.exists(case_json_p) and req.set_as_target in ["train", "test"]:
+            with open(case_json_p, "r") as f:
+                meta = json.load(f)
+            if req.set_as_target == "train":
+                meta["train_path"] = rel_saved_path
+            elif req.set_as_target == "test":
+                meta["test_path"] = rel_saved_path
+            with open(case_json_p, "w") as f:
+                json.dump(meta, f, indent=4)
+
+        return {
+            "status": "success",
+            "files_matched": len(files),
+            "saved_path": rel_saved_path,
+            "total_rows": len(concatenated),
+            "total_columns": len(concatenated.columns),
+            "applied_target": req.set_as_target
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 def record_run_history(case_id: str, meta: dict, results: dict, hook_present: bool, case_dir: str):
     history_file = os.path.join(case_dir, "history.json")
