@@ -60,6 +60,50 @@
             "champion_model": "lgbm",
             "submission_filename": "submission_run_003.csv",
             "notes": ""
+        },
+        {
+            "run_id": "run_004",
+            "run_number": 4,
+            "timestamp": "2026-11-02 11:31:52",
+            "name": "Feature Engineering (31 features)",
+            "tag": "feature_engineering",
+            "has_hook": true,
+            "features_count": 31,
+            "models": [
+                "lgbm"
+            ],
+            "cv_score": 0.94604,
+            "all_scores": {
+                "lgbm": 0.94604
+            },
+            "metric": "roc_auc",
+            "cv_delta": 0.00028,
+            "lb_score": 0.94672,
+            "champion_model": "lgbm",
+            "submission_filename": "submission_run_004.csv",
+            "notes": ""
+        },
+        {
+            "run_id": "run_005",
+            "run_number": 5,
+            "timestamp": "2026-11-02 11:50:17",
+            "name": "Feature Engineering (47 features)",
+            "tag": "feature_engineering",
+            "has_hook": true,
+            "features_count": 47,
+            "models": [
+                "lgbm"
+            ],
+            "cv_score": 0.94676,
+            "all_scores": {
+                "lgbm": 0.94676
+            },
+            "metric": "roc_auc",
+            "cv_delta": 0.001,
+            "lb_score": 0.94814,
+            "champion_model": "lgbm",
+            "submission_filename": "submission_run_005.csv",
+            "notes": ""
         }
     ]
 }

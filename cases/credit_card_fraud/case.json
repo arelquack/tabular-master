@@ -17,5 +17,31 @@
         "xgb",
         "catboost"
     ],
-    "output_dir": "experiments/credit_card_fraud_run"
+    "output_dir": "experiments/credit_card_fraud_run",
+    "architecture_preset": "shallow",
+    "model_params": {
+        "lgbm": {
+            "num_leaves": 4,
+            "max_depth": 3,
+            "learning_rate": 0.04,
+            "n_estimators": 5000,
+            "min_child_samples": 100,
+            "colsample_bytree": 0.5,
+            "subsample": 0.8
+        },
+        "xgb": {
+            "max_depth": 2,
+            "learning_rate": 0.04,
+            "n_estimators": 5000,
+            "min_child_weight": 20,
+            "colsample_bytree": 0.5,
+            "subsample": 0.8
+        },
+        "catboost": {
+            "depth": 3,
+            "learning_rate": 0.05,
+            "iterations": 4000,
+            "l2_leaf_reg": 5.0
+        }
+    }
 }

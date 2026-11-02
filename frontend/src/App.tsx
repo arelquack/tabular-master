@@ -199,6 +199,14 @@ export default function App() {
   const [tempNotes, setTempNotes] = useState<string>('');
   const [isSavingLb, setIsSavingLb] = useState<boolean>(false);
 
+  // Architecture & Hyperparameter State
+  const [archPreset, setArchPreset] = useState<'shallow' | 'standard' | 'custom'>('standard');
+  const [modelParams, setModelParams] = useState<any>({});
+  const [paramsDraft, setParamsDraft] = useState<string>('{}');
+  const [isEditingParams, setIsEditingParams] = useState<boolean>(false);
+  const [isSavingParams, setIsSavingParams] = useState<boolean>(false);
+  const [paramsSaveMsg, setParamsSaveMsg] = useState<string | null>(null);
+
   const [newCase, setNewCase] = useState({
     id: '',
     name: '',
@@ -301,6 +309,19 @@ class CustomFeatures(BaseFeatureHook):
 
       if (data.meta?.models?.length > 0) {
         setSelectedModels(data.meta.models);
+      }
+
+      // Fetch architecture and hyperparameters
+      try {
+        const pRes = await fetch(`/api/cases/${id}/params`);
+        if (pRes.ok) {
+          const pData = await pRes.json();
+          setArchPreset(pData.architecture_preset || 'standard');
+          setModelParams(pData.model_params || {});
+          setParamsDraft(JSON.stringify(pData.model_params || {}, null, 2));
+        }
+      } catch (e) {
+        console.error('Failed to load params:', e);
       }
 
       // Automatically load EDA
@@ -473,6 +494,57 @@ class CustomFeatures(BaseFeatureHook):
       }
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  const handleSelectPreset = async (preset: 'shallow' | 'standard') => {
+    if (!selectedCaseId) return;
+    setIsSavingParams(true);
+    try {
+      const res = await fetch(`/api/cases/${selectedCaseId}/params`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ architecture_preset: preset })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setArchPreset(preset);
+        setModelParams(data.model_params || {});
+        setParamsDraft(JSON.stringify(data.model_params || {}, null, 2));
+        setParamsSaveMsg(`Applied ${preset === 'shallow' ? 'Shallow Trees' : 'Standard Baseline'} preset`);
+        setTimeout(() => setParamsSaveMsg(null), 3500);
+        await fetchCaseDetail(selectedCaseId);
+      }
+    } catch (err) {
+      console.error('Error applying preset:', err);
+    } finally {
+      setIsSavingParams(false);
+    }
+  };
+
+  const handleSaveCustomParams = async () => {
+    if (!selectedCaseId) return;
+    try {
+      const parsed = JSON.parse(paramsDraft);
+      setIsSavingParams(true);
+      const res = await fetch(`/api/cases/${selectedCaseId}/params`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ architecture_preset: 'custom', model_params: parsed })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setArchPreset('custom');
+        setModelParams(data.model_params || {});
+        setIsEditingParams(false);
+        setParamsSaveMsg('Custom hyperparameters saved');
+        setTimeout(() => setParamsSaveMsg(null), 3500);
+        await fetchCaseDetail(selectedCaseId);
+      }
+    } catch (err: any) {
+      alert('Invalid JSON: ' + err.message);
+    } finally {
+      setIsSavingParams(false);
     }
   };
 
@@ -2349,6 +2421,190 @@ class CustomFeatureHook(BaseFeatureHook):
                       );
                     })}
                   </div>
+                </div>
+
+                {/* Model Architecture & Hyperparameter Configuration */}
+                <div className="bg-white border border-[#E5E9E6] rounded-2xl p-6 shadow-sm space-y-5">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[#E5E9E6] pb-4">
+                    <div>
+                      <div className="flex items-center space-x-2">
+                        <h3 className="font-bold text-sm text-[#121816] uppercase tracking-tight">
+                          Model Architecture & Hyperparameter Presets
+                        </h3>
+                        <span className={`text-[10px] font-mono uppercase px-2 py-0.5 rounded font-bold border ${
+                          archPreset === 'shallow'
+                            ? 'bg-[#E8F3ED] text-[#164E33] border-[#D2E7DC]'
+                            : archPreset === 'custom'
+                            ? 'bg-[#FFF8E1] text-[#B78103] border-[#FFE082]'
+                            : 'bg-[#F4F5F6] text-[#4A5550] border-[#E5E9E6]'
+                        }`}>
+                          {archPreset === 'shallow' ? 'Shallow Trees Mode' : archPreset === 'custom' ? 'Custom JSON' : 'Standard Deep Trees'}
+                        </span>
+                      </div>
+                      <p className="text-xs text-[#76807B] mt-1">
+                        Select structural tree depth paradigms or inspect tuned hyperparameters applied to GBDT models.
+                      </p>
+                    </div>
+
+                    {paramsSaveMsg && (
+                      <div className="inline-flex items-center space-x-1.5 px-3 py-1 bg-[#E8F3ED] border border-[#D2E7DC] text-[#164E33] text-xs font-medium rounded-lg">
+                        <Check size={13} />
+                        <span>{paramsSaveMsg}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Architecture Preset Cards */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    {/* Shallow Trees Preset */}
+                    <button
+                      type="button"
+                      onClick={() => handleSelectPreset('shallow')}
+                      disabled={isSavingParams}
+                      className={`text-left p-4 rounded-xl border transition flex flex-col justify-between ${
+                        archPreset === 'shallow'
+                          ? 'border-[#164E33] bg-[#F7FAF8] ring-1 ring-[#164E33]'
+                          : 'border-[#E5E9E6] bg-white hover:border-[#164E33]'
+                      }`}
+                    >
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-[#121816]">Shallow Trees</span>
+                          <span className="text-[9px] font-mono uppercase bg-[#164E33] text-white px-1.5 py-0.5 rounded font-semibold">
+                            Recommended (0.950+)
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-[#76807B] leading-relaxed">
+                          num_leaves=4 (LGBM), max_depth=2 (XGB), depth=3 (CatBoost) with lr=0.04 and 5000 trees. Avoids overfitting on synthetic additive CTGAN distributions.
+                        </p>
+                      </div>
+                      <div className="mt-3 pt-2 border-t border-[#E5E9E6] flex items-center justify-between text-[10px] font-mono">
+                        <span className="text-[#164E33] font-semibold">Additive Logit Structure</span>
+                        <span className={archPreset === 'shallow' ? 'text-[#164E33] font-bold' : 'text-[#76807B]'}>
+                          {archPreset === 'shallow' ? '[Active]' : 'Select'}
+                        </span>
+                      </div>
+                    </button>
+
+                    {/* Standard Baseline Preset */}
+                    <button
+                      type="button"
+                      onClick={() => handleSelectPreset('standard')}
+                      disabled={isSavingParams}
+                      className={`text-left p-4 rounded-xl border transition flex flex-col justify-between ${
+                        archPreset === 'standard'
+                          ? 'border-[#164E33] bg-[#F7FAF8] ring-1 ring-[#164E33]'
+                          : 'border-[#E5E9E6] bg-white hover:border-[#164E33]'
+                      }`}
+                    >
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-[#121816]">Standard GBDT</span>
+                          <span className="text-[9px] font-mono uppercase bg-[#F4F5F6] text-[#76807B] px-1.5 py-0.5 rounded border border-[#E5E9E6]">
+                            Baseline
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-[#76807B] leading-relaxed">
+                          Default deep trees: num_leaves=45 (LGBM), max_depth=6 (XGB/CatBoost) with lr=0.03. Suitable for traditional non-synthetic tabular data.
+                        </p>
+                      </div>
+                      <div className="mt-3 pt-2 border-t border-[#E5E9E6] flex items-center justify-between text-[10px] font-mono">
+                        <span className="text-[#76807B]">Deep Splitting Structure</span>
+                        <span className={archPreset === 'standard' ? 'text-[#164E33] font-bold' : 'text-[#76807B]'}>
+                          {archPreset === 'standard' ? '[Active]' : 'Select'}
+                        </span>
+                      </div>
+                    </button>
+
+                    {/* Custom JSON Editor Preset */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsEditingParams(!isEditingParams);
+                        if (!isEditingParams) {
+                          setParamsDraft(JSON.stringify(modelParams, null, 2));
+                        }
+                      }}
+                      className={`text-left p-4 rounded-xl border transition flex flex-col justify-between ${
+                        archPreset === 'custom' || isEditingParams
+                          ? 'border-[#B78103] bg-[#FFFDF7] ring-1 ring-[#B78103]'
+                          : 'border-[#E5E9E6] bg-white hover:border-[#164E33]'
+                      }`}
+                    >
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-[#121816]">Custom Parameters</span>
+                          <span className="text-[9px] font-mono uppercase bg-[#FFF8E1] text-[#B78103] border border-[#FFE082] px-1.5 py-0.5 rounded font-semibold">
+                            Manual JSON
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-[#76807B] leading-relaxed">
+                          Directly inspect or edit the JSON dictionary of hyperparameters passed to LightGBM, XGBoost, and CatBoost.
+                        </p>
+                      </div>
+                      <div className="mt-3 pt-2 border-t border-[#E5E9E6] flex items-center justify-between text-[10px] font-mono">
+                        <span className="text-[#B78103]">Direct Tuning</span>
+                        <span className="text-[#B78103] font-bold">
+                          {isEditingParams ? 'Hide Editor' : 'Open Editor'}
+                        </span>
+                      </div>
+                    </button>
+                  </div>
+
+                  {/* Active Hyperparameters Summary Badge Strip */}
+                  <div className="bg-[#F8FAF9] border border-[#E5E9E6] rounded-xl p-3.5 flex flex-wrap items-center gap-2 text-xs font-mono">
+                    <span className="text-[#76807B] uppercase text-[10px] font-bold tracking-wider mr-1">Active Hyperparameters:</span>
+                    {selectedModels.map(m => {
+                      const p = (modelParams && modelParams[m]) || {};
+                      const summary = m === 'lgbm' 
+                        ? `leaves: ${p.num_leaves ?? 45}, lr: ${p.learning_rate ?? 0.03}, trees: ${p.n_estimators ?? 2000}, colsample: ${p.colsample_bytree ?? 0.75}`
+                        : m === 'xgb'
+                        ? `depth: ${p.max_depth ?? 6}, lr: ${p.learning_rate ?? 0.03}, trees: ${p.n_estimators ?? 2000}, colsample: ${p.colsample_bytree ?? 0.75}`
+                        : `depth: ${p.depth ?? 6}, lr: ${p.learning_rate ?? 0.03}, iter: ${p.iterations ?? 2000}`;
+                      return (
+                        <div key={m} className="inline-flex items-center space-x-1.5 bg-white border border-[#D2E7DC] px-2.5 py-1 rounded-lg text-[#164E33] shadow-2xs">
+                          <span className="font-bold uppercase text-[11px]">{m}:</span>
+                          <span className="text-[10px] text-[#222]">{summary}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Collapsible Custom JSON Editor */}
+                  {isEditingParams && (
+                    <div className="bg-[#121816] border border-[#26332C] rounded-xl p-4 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-mono font-medium text-[#E5E9E6]">
+                          Raw Hyperparameters JSON (meta.model_params)
+                        </span>
+                        <div className="flex items-center space-x-2">
+                          <button
+                            type="button"
+                            onClick={() => setIsEditingParams(false)}
+                            className="text-xs text-[#A0ACA5] hover:text-white px-2 py-1"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleSaveCustomParams}
+                            disabled={isSavingParams}
+                            className="inline-flex items-center space-x-1.5 px-3 py-1 bg-[#164E33] hover:bg-[#1E6B47] text-white text-xs font-mono font-medium rounded-lg transition"
+                          >
+                            <Save size={12} />
+                            <span>Save Configuration</span>
+                          </button>
+                        </div>
+                      </div>
+                      <textarea
+                        value={paramsDraft}
+                        onChange={e => setParamsDraft(e.target.value)}
+                        rows={10}
+                        className="w-full bg-[#0D1210] border border-[#26332C] rounded-lg p-3 text-xs font-mono text-[#D2E7DC] focus:outline-none focus:border-[#164E33]"
+                        spellCheck={false}
+                      />
+                    </div>
+                  )}
                 </div>
 
                 {/* Optuna Bayesian Hyperparameter Optimization Studio */}

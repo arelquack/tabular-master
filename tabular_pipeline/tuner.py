@@ -81,39 +81,39 @@ class HyperparameterTuner:
             # Define hyperparameter search spaces per family
             if m_name == "lgbm":
                 params = {
-                    "learning_rate": trial.suggest_float("learning_rate", 0.03, 0.15, log=True),
-                    "num_leaves": trial.suggest_int("num_leaves", 31, 160),
-                    "max_depth": trial.suggest_int("max_depth", 6, 12),
+                    "learning_rate": trial.suggest_float("learning_rate", 0.02, 0.12, log=True),
+                    "num_leaves": trial.suggest_int("num_leaves", 4, 128),
+                    "max_depth": trial.suggest_int("max_depth", 2, 10),
                     "min_child_samples": trial.suggest_int("min_child_samples", 20, 250),
                     "subsample": trial.suggest_float("subsample", 0.65, 0.95),
-                    "colsample_bytree": trial.suggest_float("colsample_bytree", 0.50, 0.90),
+                    "colsample_bytree": trial.suggest_float("colsample_bytree", 0.40, 0.90),
                     "reg_alpha": trial.suggest_float("reg_alpha", 1e-3, 10.0, log=True),
                     "reg_lambda": trial.suggest_float("reg_lambda", 1e-2, 20.0, log=True),
-                    "n_estimators": 400,
+                    "n_estimators": 600,
                     "n_jobs": -1,
                     "random_state": self.seed,
                     "verbose": -1,
                 }
             elif m_name == "xgb":
                 params = {
-                    "learning_rate": trial.suggest_float("learning_rate", 0.03, 0.15, log=True),
-                    "max_depth": trial.suggest_int("max_depth", 5, 9),
+                    "learning_rate": trial.suggest_float("learning_rate", 0.02, 0.12, log=True),
+                    "max_depth": trial.suggest_int("max_depth", 2, 8),
                     "min_child_weight": trial.suggest_int("min_child_weight", 5, 80),
                     "subsample": trial.suggest_float("subsample", 0.65, 0.95),
-                    "colsample_bytree": trial.suggest_float("colsample_bytree", 0.50, 0.90),
+                    "colsample_bytree": trial.suggest_float("colsample_bytree", 0.40, 0.90),
                     "reg_alpha": trial.suggest_float("reg_alpha", 1e-3, 10.0, log=True),
                     "reg_lambda": trial.suggest_float("reg_lambda", 1e-2, 20.0, log=True),
-                    "n_estimators": 400,
+                    "n_estimators": 600,
                     "tree_method": "hist",
                     "n_jobs": -1,
                     "random_state": self.seed,
                 }
             elif m_name == "catboost":
                 params = {
-                    "learning_rate": trial.suggest_float("learning_rate", 0.03, 0.15, log=True),
-                    "depth": trial.suggest_int("depth", 5, 8),
+                    "learning_rate": trial.suggest_float("learning_rate", 0.02, 0.12, log=True),
+                    "depth": trial.suggest_int("depth", 3, 7),
                     "l2_leaf_reg": trial.suggest_float("l2_leaf_reg", 1.0, 25.0, log=True),
-                    "iterations": 400,
+                    "iterations": 600,
                     "random_seed": self.seed,
                     "verbose": False,
                 }

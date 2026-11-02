@@ -95,6 +95,60 @@ class UpdateRunLBRequest(BaseModel):
     lb_score: Optional[float] = None
     notes: Optional[str] = None
 
+class UpdateParamsRequest(BaseModel):
+    architecture_preset: str = "standard"  # "shallow", "standard", "custom"
+    model_params: Optional[Dict[str, Any]] = None
+
+ARCH_PRESETS = {
+    "shallow": {
+        "lgbm": {
+            "num_leaves": 4,
+            "max_depth": 3,
+            "learning_rate": 0.04,
+            "n_estimators": 5000,
+            "min_child_samples": 100,
+            "colsample_bytree": 0.5,
+            "subsample": 0.8
+        },
+        "xgb": {
+            "max_depth": 2,
+            "learning_rate": 0.04,
+            "n_estimators": 5000,
+            "min_child_weight": 20,
+            "colsample_bytree": 0.5,
+            "subsample": 0.8
+        },
+        "catboost": {
+            "depth": 3,
+            "learning_rate": 0.05,
+            "iterations": 4000,
+            "l2_leaf_reg": 5.0
+        }
+    },
+    "standard": {
+        "lgbm": {
+            "num_leaves": 45,
+            "learning_rate": 0.03,
+            "n_estimators": 2000,
+            "colsample_bytree": 0.75,
+            "subsample": 0.8
+        },
+        "xgb": {
+            "max_depth": 6,
+            "learning_rate": 0.03,
+            "n_estimators": 2000,
+            "colsample_bytree": 0.75,
+            "subsample": 0.8
+        },
+        "catboost": {
+            "depth": 6,
+            "learning_rate": 0.03,
+            "iterations": 2000,
+            "l2_leaf_reg": 5.0
+        }
+    }
+}
+
 def resolve_dataset_path(raw_path: str, case_id: Optional[str] = None) -> Optional[str]:
     if not raw_path:
         return None
@@ -1079,6 +1133,48 @@ def apply_tuned_params(case_id: str):
         json.dump(meta, f, indent=4)
 
     return {"status": "applied", "model": m_name, "model_params": meta["model_params"]}
+
+@app.get("/api/cases/{case_id}/params")
+def get_case_params(case_id: str):
+    case_dir = os.path.join(CASES_DIR, case_id)
+    case_json = os.path.join(case_dir, "case.json")
+    if not os.path.exists(case_json):
+        raise HTTPException(status_code=404, detail="Case not found")
+    with open(case_json, "r") as f:
+        meta = json.load(f)
+    preset = meta.get("architecture_preset", "standard")
+    params = meta.get("model_params", ARCH_PRESETS.get(preset, ARCH_PRESETS["standard"]))
+    return {
+        "architecture_preset": preset,
+        "model_params": params,
+        "presets_catalog": ARCH_PRESETS
+    }
+
+@app.post("/api/cases/{case_id}/params")
+def update_case_params(case_id: str, req: UpdateParamsRequest):
+    case_dir = os.path.join(CASES_DIR, case_id)
+    case_json = os.path.join(case_dir, "case.json")
+    if not os.path.exists(case_json):
+        raise HTTPException(status_code=404, detail="Case not found")
+    with open(case_json, "r") as f:
+        meta = json.load(f)
+
+    meta["architecture_preset"] = req.architecture_preset
+    if req.architecture_preset in ARCH_PRESETS and (not req.model_params or req.model_params == {}):
+        meta["model_params"] = ARCH_PRESETS[req.architecture_preset]
+    elif req.model_params is not None:
+        meta["model_params"] = req.model_params
+    else:
+        meta["model_params"] = ARCH_PRESETS.get(req.architecture_preset, {})
+
+    with open(case_json, "w") as f:
+        json.dump(meta, f, indent=4)
+
+    return {
+        "status": "updated",
+        "architecture_preset": meta["architecture_preset"],
+        "model_params": meta["model_params"]
+    }
 
 @app.post("/api/cases/{case_id}/ensemble/hill-climb")
 def run_hill_climb(case_id: str):
