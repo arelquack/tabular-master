@@ -123,6 +123,11 @@ export default function App() {
   const [feOp, setFeOp] = useState<string>('/');
   const [feColB, setFeColB] = useState<string>('');
 
+  // Visual Group-By Aggregation Builder
+  const [feGroupCat, setFeGroupCat] = useState<string>('');
+  const [feGroupNum, setFeGroupNum] = useState<string>('');
+  const [feGroupStat, setFeGroupStat] = useState<'diff' | 'mean' | 'std' | 'zscore'>('diff');
+
   // Optuna Tuning state
   const [tuneModel, setTuneModel] = useState<'lgbm' | 'xgb' | 'catboost' | 'all'>('all');
   const [tuneTrials, setTuneTrials] = useState<number>(30);
@@ -416,28 +421,54 @@ class CustomFeatureHook(BaseFeatureHook):
     insertCodeIntoHook(expr);
   };
 
+  const handleInsertGroupFormula = () => {
+    if (!feGroupCat || !feGroupNum) {
+      alert('Please select both a Group Categorical Column and a Numeric Column.');
+      return;
+    }
+    const cleanCat = feGroupCat.replace(/[^a-zA-Z0-9_]/g, '_');
+    const cleanNum = feGroupNum.replace(/[^a-zA-Z0-9_]/g, '_');
+
+    let expr = '';
+    if (feGroupStat === 'diff') {
+      const colName = `${cleanNum}_diff_from_${cleanCat}_mean`;
+      expr = `# Visual Group Deviation: ${colName}\n        grp_map = train_df.groupby('${feGroupCat}')['${feGroupNum}'].mean().to_dict()\n        for df in ([train_df, test_df] if test_df is not None else [train_df]):\n            df['${colName}'] = df['${feGroupNum}'] - df['${feGroupCat}'].map(grp_map)`;
+    } else if (feGroupStat === 'mean') {
+      const colName = `${cleanNum}_by_${cleanCat}_mean`;
+      expr = `# Visual Group Mean: ${colName}\n        grp_map = train_df.groupby('${feGroupCat}')['${feGroupNum}'].mean().to_dict()\n        for df in ([train_df, test_df] if test_df is not None else [train_df]):\n            df['${colName}'] = df['${feGroupCat}'].map(grp_map)`;
+    } else if (feGroupStat === 'std') {
+      const colName = `${cleanNum}_by_${cleanCat}_std`;
+      expr = `# Visual Group Std: ${colName}\n        grp_map = train_df.groupby('${feGroupCat}')['${feGroupNum}'].std().fillna(0).to_dict()\n        for df in ([train_df, test_df] if test_df is not None else [train_df]):\n            df['${colName}'] = df['${feGroupCat}'].map(grp_map)`;
+    } else {
+      const colName = `${cleanNum}_zscore_by_${cleanCat}`;
+      expr = `# Visual Group Z-Score: ${colName}\n        g_mean = train_df.groupby('${feGroupCat}')['${feGroupNum}'].mean().to_dict()\n        g_std = train_df.groupby('${feGroupCat}')['${feGroupNum}'].std().fillna(1.0).to_dict()\n        for df in ([train_df, test_df] if test_df is not None else [train_df]):\n            mean_s = df['${feGroupCat}'].map(g_mean)\n            std_s = df['${feGroupCat}'].map(g_std).replace(0, 1.0)\n            df['${colName}'] = (df['${feGroupNum}'] - mean_s) / std_s`;
+    }
+
+    insertCodeIntoHook(expr);
+  };
+
   const handleInsertGroupStatsTemplate = () => {
-    const snippet = `# --- UNIVERSAL PRIMITIVE 1: GROUP-BY AGGREGATIONS & RELATIVE Z-SCORES ---
-        # Computes peer-group baseline statistics (mean, std, and relative deviation)
-        cat_cols = [c for c in train_df.select_dtypes(include=['object', 'category']).columns if c not in ['id', 'ID', 'target', 'satisfaction']]
-        num_cols = [c for c in train_df.select_dtypes(include=['number']).columns if c not in ['id', 'ID', 'target', 'satisfaction']]
-        if len(cat_cols) > 0 and len(num_cols) > 0:
-            group_col = cat_cols[0]
-            val_col = num_cols[0]
-            group_stats = train_df.groupby(group_col)[val_col].agg(['mean', 'std']).reset_index()
-            group_stats.columns = [group_col, f'{val_col}_grp_mean', f'{val_col}_grp_std']
-            train_df = train_df.merge(group_stats, on=group_col, how='left')
-            train_df[f'{val_col}_diff_grp_mean'] = train_df[val_col] - train_df[f'{val_col}_grp_mean']
-            if test_df is not None:
-                test_df = test_df.merge(group_stats, on=group_col, how='left')
-                test_df[f'{val_col}_diff_grp_mean'] = test_df[val_col] - test_df[f'{val_col}_grp_mean']`;
+    const target = meta?.target_col || 'target';
+    const id = meta?.id_col || 'id';
+    const snippet = `# --- UNIVERSAL PRIMITIVE 1: GROUP-BY AGGREGATIONS & RELATIVE DEVIATION ---
+        # Computes peer-group baseline statistics (learned strictly from train_df to prevent leakage)
+        cat_cols = [c for c in train_df.select_dtypes(include=['object', 'category']).columns if c not in ['${id}', '${target}']]
+        num_cols = [c for c in train_df.select_dtypes(include=['number']).columns if c not in ['${id}', '${target}']]
+        for group_col in cat_cols[:2]:
+            for val_col in num_cols[:2]:
+                grp_mean = train_df.groupby(group_col)[val_col].mean().to_dict()
+                for df in ([train_df, test_df] if test_df is not None else [train_df]):
+                    df[f'{val_col}_by_{group_col}_mean'] = df[group_col].map(grp_mean)
+                    df[f'{val_col}_diff_{group_col}_mean'] = df[val_col] - df[group_col].map(grp_mean)`;
     insertCodeIntoHook(snippet);
   };
 
   const handleInsertRowStatsTemplate = () => {
+    const target = meta?.target_col || 'target';
+    const id = meta?.id_col || 'id';
     const snippet = `# --- UNIVERSAL PRIMITIVE 2: ROW-WISE INTENSITY & CONSISTENCY STATISTICS ---
         # Computes across-the-board intensity, dispersion, and missingness per entity
-        numeric_cols = [c for c in train_df.select_dtypes(include=['number']).columns if c not in ['id', 'ID', 'target', 'satisfaction']][:8]
+        numeric_cols = [c for c in train_df.select_dtypes(include=['number']).columns if c not in ['${id}', '${target}']][:8]
         if len(numeric_cols) >= 2:
             for df in ([train_df, test_df] if test_df is not None else [train_df]):
                 df['row_stat_mean'] = df[numeric_cols].mean(axis=1)
@@ -449,21 +480,24 @@ class CustomFeatureHook(BaseFeatureHook):
   };
 
   const handleInsertFreqEncodingTemplate = () => {
+    const target = meta?.target_col || 'target';
+    const id = meta?.id_col || 'id';
     const snippet = `# --- UNIVERSAL PRIMITIVE 3: HIGH-CARDINALITY FREQUENCY & RARITY ENCODING ---
-        # Maps categorical entities (categories, postal codes, devices) to prevalence rates
-        cat_cols = [c for c in train_df.select_dtypes(include=['object', 'category']).columns if c not in ['id', 'ID', 'target', 'satisfaction']]
+        # Maps categorical entities to prevalence rates (detects rare categories without leakage)
+        cat_cols = [c for c in train_df.select_dtypes(include=['object', 'category']).columns if c not in ['${id}', '${target}']]
         for c in cat_cols:
             freq = train_df[c].value_counts(normalize=True).to_dict()
-            train_df[f'{c}_freq'] = train_df[c].map(freq).fillna(0)
-            if test_df is not None:
-                test_df[f'{c}_freq'] = test_df[c].map(freq).fillna(0)`;
+            for df in ([train_df, test_df] if test_df is not None else [train_df]):
+                df[f'{c}_freq'] = df[c].map(freq).fillna(0)`;
     insertCodeIntoHook(snippet);
   };
 
   const handleInsertLogTransformTemplate = () => {
-    const snippet = `# --- UNIVERSAL PRIMITIVE 4: SKEW CORRECTION & LOG-DIFFERENCE RATIOS ---
+    const target = meta?.target_col || 'target';
+    const id = meta?.id_col || 'id';
+    const snippet = `# --- UNIVERSAL PRIMITIVE 4: SKEW CORRECTION & LOG-TRANSFORM ---
         # Stabilizes heavy-tailed variables (financial, revenue, delays, physical quantities)
-        num_cols = [c for c in train_df.select_dtypes(include=['number']).columns if c not in ['id', 'ID', 'target', 'satisfaction']]
+        num_cols = [c for c in train_df.select_dtypes(include=['number']).columns if c not in ['${id}', '${target}']]
         for c in num_cols[:4]:
             if (train_df[c] >= 0).all():
                 for df in ([train_df, test_df] if test_df is not None else [train_df]):
@@ -1566,51 +1600,110 @@ class CustomFeatureHook(BaseFeatureHook):
                     </div>
                   </div>
 
-                  {/* Visual Formula Builder */}
-                  <div className="border border-[#E5E9E6] rounded-xl p-4 bg-[#F8FAF9] space-y-3">
-                    <div className="text-[11px] font-bold uppercase tracking-wider text-[#76807B] font-mono">Visual Formula & Ratio Generator</div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <select
-                        value={feColA}
-                        onChange={e => setFeColA(e.target.value)}
-                        className="bg-white border border-[#E5E9E6] hover:border-[#164E33] rounded-xl px-3 py-1.5 text-xs font-mono font-medium text-[#121816] focus:outline-none focus:border-[#164E33] transition"
-                      >
-                        <option value="">-- Select Column A --</option>
-                        {edaData?.columns_profile?.map((c: any) => (
-                          <option key={c.name} value={c.name}>{c.name}</option>
-                        ))}
-                      </select>
+                  {/* Visual Builders: Pairwise & Group-By */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Visual Formula Builder */}
+                    <div className="border border-[#E5E9E6] rounded-xl p-4 bg-[#F8FAF9] space-y-3">
+                      <div className="text-[11px] font-bold uppercase tracking-wider text-[#76807B] font-mono">1. Pairwise Formula & Ratio Generator</div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <select
+                          value={feColA}
+                          onChange={e => setFeColA(e.target.value)}
+                          className="bg-white border border-[#E5E9E6] hover:border-[#164E33] rounded-xl px-2.5 py-1.5 text-xs font-mono font-medium text-[#121816] focus:outline-none focus:border-[#164E33] transition max-w-[140px]"
+                        >
+                          <option value="">-- Col A --</option>
+                          {edaData?.columns_profile?.map((c: any) => (
+                            <option key={c.name} value={c.name}>{c.name}</option>
+                          ))}
+                        </select>
 
-                      <select
-                        value={feOp}
-                        onChange={e => setFeOp(e.target.value)}
-                        className="bg-white border border-[#E5E9E6] hover:border-[#164E33] rounded-xl px-3 py-1.5 text-xs font-mono font-bold text-[#164E33] focus:outline-none focus:border-[#164E33] transition"
-                      >
-                        <option value="/">/ (Ratio)</option>
-                        <option value="*">* (Product)</option>
-                        <option value="-">- (Difference)</option>
-                        <option value="+">+ (Sum)</option>
-                      </select>
+                        <select
+                          value={feOp}
+                          onChange={e => setFeOp(e.target.value)}
+                          className="bg-white border border-[#E5E9E6] hover:border-[#164E33] rounded-xl px-2 py-1.5 text-xs font-mono font-bold text-[#164E33] focus:outline-none focus:border-[#164E33] transition"
+                        >
+                          <option value="/">/</option>
+                          <option value="*">*</option>
+                          <option value="-">-</option>
+                          <option value="+">+</option>
+                        </select>
 
-                      <select
-                        value={feColB}
-                        onChange={e => setFeColB(e.target.value)}
-                        className="bg-white border border-[#E5E9E6] hover:border-[#164E33] rounded-xl px-3 py-1.5 text-xs font-mono font-medium text-[#121816] focus:outline-none focus:border-[#164E33] transition"
-                      >
-                        <option value="">-- Select Column B --</option>
-                        {edaData?.columns_profile?.map((c: any) => (
-                          <option key={c.name} value={c.name}>{c.name}</option>
-                        ))}
-                      </select>
+                        <select
+                          value={feColB}
+                          onChange={e => setFeColB(e.target.value)}
+                          className="bg-white border border-[#E5E9E6] hover:border-[#164E33] rounded-xl px-2.5 py-1.5 text-xs font-mono font-medium text-[#121816] focus:outline-none focus:border-[#164E33] transition max-w-[140px]"
+                        >
+                          <option value="">-- Col B --</option>
+                          {edaData?.columns_profile?.map((c: any) => (
+                            <option key={c.name} value={c.name}>{c.name}</option>
+                          ))}
+                        </select>
 
-                      <button
-                        type="button"
-                        onClick={handleInsertFormula}
-                        className="flex items-center space-x-1.5 bg-[#121816] hover:bg-[#164E33] text-white text-xs font-semibold px-4 py-1.5 rounded-xl transition shadow-2xs"
-                      >
-                        <Plus size={13} />
-                        <span>Insert Formula into Hook</span>
-                      </button>
+                        <button
+                          type="button"
+                          onClick={handleInsertFormula}
+                          className="flex items-center space-x-1 bg-[#121816] hover:bg-[#164E33] text-white text-xs font-semibold px-3 py-1.5 rounded-xl transition shadow-2xs"
+                        >
+                          <Plus size={12} />
+                          <span>Insert</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Visual Group-By Aggregation Builder */}
+                    <div className="border border-[#E5E9E6] rounded-xl p-4 bg-[#F8FAF9] space-y-3">
+                      <div className="text-[11px] font-bold uppercase tracking-wider text-[#76807B] font-mono">2. Group-By Aggregator & Deviation</div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <select
+                          value={feGroupCat}
+                          onChange={e => setFeGroupCat(e.target.value)}
+                          className="bg-white border border-[#E5E9E6] hover:border-[#164E33] rounded-xl px-2.5 py-1.5 text-xs font-mono font-medium text-[#121816] focus:outline-none focus:border-[#164E33] transition max-w-[140px]"
+                        >
+                          <option value="">-- Group (Cat) --</option>
+                          {edaData?.columns_profile?.filter((c: any) => c.type === 'categorical' || c.dtype === 'object')?.map((c: any) => (
+                            <option key={c.name} value={c.name}>{c.name}</option>
+                          ))}
+                          {/* Fallback to all columns if type filter empty */}
+                          {(!edaData?.columns_profile?.some((c: any) => c.type === 'categorical' || c.dtype === 'object')) && edaData?.columns_profile?.map((c: any) => (
+                            <option key={c.name} value={c.name}>{c.name}</option>
+                          ))}
+                        </select>
+
+                        <select
+                          value={feGroupNum}
+                          onChange={e => setFeGroupNum(e.target.value)}
+                          className="bg-white border border-[#E5E9E6] hover:border-[#164E33] rounded-xl px-2.5 py-1.5 text-xs font-mono font-medium text-[#121816] focus:outline-none focus:border-[#164E33] transition max-w-[140px]"
+                        >
+                          <option value="">-- Value (Num) --</option>
+                          {edaData?.columns_profile?.filter((c: any) => c.type === 'numerical' || ['int64', 'float64'].includes(c.dtype))?.map((c: any) => (
+                            <option key={c.name} value={c.name}>{c.name}</option>
+                          ))}
+                          {/* Fallback to all columns if filter empty */}
+                          {(!edaData?.columns_profile?.some((c: any) => c.type === 'numerical')) && edaData?.columns_profile?.map((c: any) => (
+                            <option key={c.name} value={c.name}>{c.name}</option>
+                          ))}
+                        </select>
+
+                        <select
+                          value={feGroupStat}
+                          onChange={e => setFeGroupStat(e.target.value as any)}
+                          className="bg-white border border-[#E5E9E6] hover:border-[#164E33] rounded-xl px-2 py-1.5 text-xs font-mono font-bold text-[#164E33] focus:outline-none focus:border-[#164E33] transition"
+                        >
+                          <option value="diff">Diff from Mean</option>
+                          <option value="mean">Group Mean</option>
+                          <option value="std">Group Std</option>
+                          <option value="zscore">Group Z-Score</option>
+                        </select>
+
+                        <button
+                          type="button"
+                          onClick={handleInsertGroupFormula}
+                          className="flex items-center space-x-1 bg-[#121816] hover:bg-[#164E33] text-white text-xs font-semibold px-3 py-1.5 rounded-xl transition shadow-2xs"
+                        >
+                          <Plus size={12} />
+                          <span>Insert</span>
+                        </button>
+                      </div>
                     </div>
                   </div>
 
