@@ -1,0 +1,21 @@
+{
+    "id": "f1_podium",
+    "name": "Formula 1 Podium Prediction",
+    "description": "Relational Star-Schema unified case from cases/f1. Target: podium",
+    "train_path": "cases/f1_podium/train.csv",
+    "test_path": "cases/f1_podium/test.csv",
+    "id_col": "resultId",
+    "target_col": "podium",
+    "task_type": "binary",
+    "eval_metric": "roc_auc",
+    "cv_strategy": "group_kfold",
+    "group_col": "raceId",
+    "n_splits": 5,
+    "seed": 2026,
+    "models": [
+        "lgbm",
+        "xgb",
+        "catboost"
+    ],
+    "output_dir": "experiments/f1_podium_run"
+}

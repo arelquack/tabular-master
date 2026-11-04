@@ -1,0 +1,101 @@
+{
+    "case_id": "nfl_big_data_bowl_2026",
+    "runs": [
+        {
+            "run_id": "run_001",
+            "run_number": 1,
+            "timestamp": "2026-11-03 06:35:04",
+            "name": "Ensemble (ensemble_stacking)",
+            "tag": "ensemble",
+            "has_hook": false,
+            "features_count": 33,
+            "models": [
+                "lgbm",
+                "xgb",
+                "catboost"
+            ],
+            "cv_score": 3.68202,
+            "all_scores": {
+                "lgbm": 3.73607,
+                "xgb": 3.72609,
+                "catboost": 3.71144,
+                "ensemble_mean": 3.6855,
+                "ensemble_opt_weights": 3.68203,
+                "ensemble_stacking": 3.68202,
+                "ensemble_hill_climbing": 3.68476
+            },
+            "metric": "rmse",
+            "cv_delta": 0.0,
+            "lb_score": null,
+            "champion_model": "ensemble_stacking",
+            "submission_filename": "submission_run_001.csv",
+            "notes": ""
+        },
+        {
+            "run_id": "run_002",
+            "run_number": 2,
+            "timestamp": "2026-11-03 12:40:33",
+            "name": "Pure Baseline (33 features)",
+            "tag": "baseline",
+            "has_hook": false,
+            "features_count": 33,
+            "models": [
+                "lgbm"
+            ],
+            "cv_score": 3.76381,
+            "all_scores": {
+                "lgbm": 3.76381
+            },
+            "metric": "rmse",
+            "cv_delta": -0.08179,
+            "lb_score": null,
+            "champion_model": "lgbm",
+            "submission_filename": "submission_run_002.csv",
+            "notes": ""
+        },
+        {
+            "run_id": "run_003",
+            "run_number": 3,
+            "timestamp": "2026-11-03 13:46:50",
+            "name": "Feature Engineering (31 features)",
+            "tag": "feature_engineering",
+            "has_hook": true,
+            "features_count": 31,
+            "models": [
+                "lgbm"
+            ],
+            "cv_score": 3.85385,
+            "all_scores": {
+                "lgbm": 3.85385
+            },
+            "metric": "rmse",
+            "cv_delta": -0.17183,
+            "lb_score": null,
+            "champion_model": "lgbm",
+            "submission_filename": "submission_run_003.csv",
+            "notes": ""
+        },
+        {
+            "run_id": "run_004",
+            "run_number": 4,
+            "timestamp": "2026-11-03 13:59:08",
+            "name": "Feature Engineering (31 features)",
+            "tag": "feature_engineering",
+            "has_hook": true,
+            "features_count": 31,
+            "models": [
+                "catboost"
+            ],
+            "cv_score": 3.68735,
+            "all_scores": {
+                "catboost": 3.68735
+            },
+            "metric": "rmse",
+            "cv_delta": -0.00533,
+            "lb_score": null,
+            "champion_model": "catboost",
+            "submission_filename": "submission_run_004.csv",
+            "notes": ""
+        }
+    ]
+}

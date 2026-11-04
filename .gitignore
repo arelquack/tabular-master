@@ -39,6 +39,10 @@ yarn-error.log*
 
 # Datasets and large binary files (Kaggle CSVs, Parquet, Archives)
 *.csv
+*.tsv
+*.xlsx
+*.xls
+*.jsonl
 *.parquet
 *.zip
 *.rar

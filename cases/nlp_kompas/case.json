@@ -1,0 +1,23 @@
+{
+  "id": "nlp_kompas",
+  "name": "NLP Kompas",
+  "description": "Text / NLP case normalized from cases/kompas/data/scrape_kompas_all.xlsx. Text: content, Target: category",
+  "train_path": "cases/nlp_kompas/train.csv",
+  "test_path": "",
+  "id_col": "link",
+  "target_col": "category",
+  "target_column": "category",
+  "text_column": "clean_text",
+  "data_type": "nlp",
+  "task_type": "multiclass",
+  "eval_metric": "f1_macro",
+  "cv_strategy": "stratified_kfold",
+  "n_splits": 5,
+  "seed": 2026,
+  "models": [
+    "lgbm",
+    "xgb",
+    "catboost"
+  ],
+  "output_dir": "experiments/nlp_kompas_run"
+}

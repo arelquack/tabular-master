@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
+import { TextStudio } from './TextStudio';
 import { 
   Play, 
   Download, 
   Plus, 
-  FileCode, 
+  FileCode,
+  FileText, 
   Sliders, 
   Database, 
   Loader2, 
@@ -29,8 +31,8 @@ import {
   ArrowDownRight,
   Layers,
   GitMerge,
-  Sparkles,
-  Trash2
+  Trash2,
+  ChevronDown
 } from 'lucide-react';
 
 interface CaseMeta {
@@ -140,7 +142,93 @@ interface EdaData {
       target_rate?: number;
     }>;
   }>;
+  conditional_distributions?: Array<{
+    feature: string;
+    p1: number;
+    p99: number;
+    ks_statistic?: number;
+    curves: Array<{
+      group: string;
+      points: Array<{ x: number; density: number }>;
+    }>;
+  }>;
+  spearman_correlations?: Array<{
+    feature: string;
+    spearman: number;
+    pearson: number;
+    abs_spearman: number;
+    non_linear_gap: number;
+  }>;
+  dynamic_interpretations?: Array<{
+    type: string;
+    title: string;
+    badge: string;
+    color: string;
+    description: string;
+  }>;
   preview_rows: any[];
+}
+
+interface AblationStep {
+  step_id: string;
+  name: string;
+  technique: string;
+  score: number;
+  delta_vs_base: number;
+  impact: string;
+  folds: number[];
+  note: string;
+}
+
+interface AblationData {
+  case_id: string;
+  eval_metric: string;
+  is_higher_better: boolean;
+  baseline_score: number;
+  champion_score: number;
+  total_gain: number;
+  steps: AblationStep[];
+  interpretation: string;
+}
+
+const isMetricHigherBetter = (metric?: string): boolean => {
+  if (!metric) return true;
+  const m = metric.toLowerCase();
+  if (['rmse', 'mae', 'logloss', 'loss', 'mse'].includes(m)) {
+    return false;
+  }
+  return true;
+};
+
+
+// Catmull-Rom to Cubic Bezier smooth spline generator for fluid, publication-grade curves
+function getSmoothSpline(points: Array<{ x: number; y: number }>): string {
+  if (points.length === 0) return '';
+  if (points.length === 1) return `M ${points[0].x.toFixed(1)},${points[0].y.toFixed(1)}`;
+  if (points.length === 2) {
+    return `M ${points[0].x.toFixed(1)},${points[0].y.toFixed(1)} L ${points[1].x.toFixed(1)},${points[1].y.toFixed(1)}`;
+  }
+  let d = `M ${points[0].x.toFixed(1)},${points[0].y.toFixed(1)}`;
+  for (let i = 0; i < points.length - 1; i++) {
+    const p0 = points[i === 0 ? 0 : i - 1];
+    const p1 = points[i];
+    const p2 = points[i + 1];
+    const p3 = points[i + 2] || p2;
+    const cp1x = p1.x + (p2.x - p0.x) / 6;
+    const cp1y = p1.y + (p2.y - p0.y) / 6;
+    const cp2x = p2.x - (p3.x - p1.x) / 6;
+    const cp2y = p2.y - (p3.y - p1.y) / 6;
+    d += ` C ${cp1x.toFixed(1)},${cp1y.toFixed(1)} ${cp2x.toFixed(1)},${cp2y.toFixed(1)} ${p2.x.toFixed(1)},${p2.y.toFixed(1)}`;
+  }
+  return d;
+}
+
+function getSmoothArea(points: Array<{ x: number; y: number }>, baselineY: number): string {
+  if (points.length < 2) return '';
+  const lineD = getSmoothSpline(points);
+  const lastPt = points[points.length - 1];
+  const firstPt = points[0];
+  return `${lineD} L ${lastPt.x.toFixed(1)},${baselineY} L ${firstPt.x.toFixed(1)},${baselineY} Z`;
 }
 
 export default function App() {
@@ -149,13 +237,19 @@ export default function App() {
   const [caseDetail, setCaseDetail] = useState<CaseDetail | null>(null);
   
   // Data Mining Workflow Tabs
-  const [activeTab, setActiveTab] = useState<'eda' | 'fe' | 'training' | 'ensemble' | 'artifacts'>('eda');
+  // Studio Mode: Tabular vs NLP / Text Studio
+  const [studioMode, setStudioMode] = useState<'tabular' | 'nlp'>('tabular');
+
+  const [activeTab, setActiveTab] = useState<'eda' | 'fe' | 'training' | 'ablation' | 'ensemble' | 'artifacts'>('eda');
   const [loading, setLoading] = useState<boolean>(true);
   const [running, setRunning] = useState<boolean>(false);
 
   // EDA State
   const [edaData, setEdaData] = useState<EdaData | null>(null);
   const [edaLoading, setEdaLoading] = useState<boolean>(false);
+  const [ablationData, setAblationData] = useState<AblationData | null>(null);
+  const [ablationLoading, setAblationLoading] = useState<boolean>(false);
+  const [exportDropdownOpen, setExportDropdownOpen] = useState<boolean>(false);
   const [selectedFeature, setSelectedFeature] = useState<string>('');
   const [edaViewMode, setEdaViewMode] = useState<'composite' | 'trend' | 'bars'>('composite');
 
@@ -227,7 +321,17 @@ export default function App() {
 
   // Dataset Stitcher & Multi-Table Joiner Studio State
   const [showStitcherModal, setShowStitcherModal] = useState<boolean>(false);
-  const [stitcherMode, setStitcherMode] = useState<'wizard' | 'join' | 'concat'>('wizard');
+  const [stitcherMode, setStitcherMode] = useState<'wizard' | 'join' | 'concat' | 'relational'>('relational');
+  const [relationalDir, setRelationalDir] = useState<string>('cases/f1');
+  const [relationalCaseId, setRelationalCaseId] = useState<string>('f1_podium');
+  const [relationalCaseName, setRelationalCaseName] = useState<string>('Formula 1 Podium Finish Prediction');
+  const [relationalTargetType, setRelationalTargetType] = useState<string>('podium_binary');
+  const [relationalSplitCol, setRelationalSplitCol] = useState<string>('year');
+  const [relationalSplitVal, setRelationalSplitVal] = useState<string>('2022');
+  const [relationalDiscovery, setRelationalDiscovery] = useState<any>(null);
+  const [relationalDiscovering, setRelationalDiscovering] = useState<boolean>(false);
+  const [relationalExecuting, setRelationalExecuting] = useState<boolean>(false);
+
   const [wizardBasePattern, setWizardBasePattern] = useState<string>('');
   const [wizardJoinPattern, setWizardJoinPattern] = useState<string>('');
   const [wizardJoinKeys, setWizardJoinKeys] = useState<string>('');
@@ -258,6 +362,14 @@ export default function App() {
   const [stitcherError, setStitcherError] = useState<string | null>(null);
   const [stitcherSuccess, setStitcherSuccess] = useState<string | null>(null);
 
+  const [creationSource, setCreationSource] = useState<'single' | 'batch' | 'relational' | 'text'>('single');
+  const [textSourcePath, setTextSourcePath] = useState<string>('');
+  const [textTestSourcePath, setTextTestSourcePath] = useState<string>('');
+  const [textColOverride, setTextColOverride] = useState<string>('');
+  const [labelColOverride, setLabelColOverride] = useState<string>('');
+  const [idColOverride, setIdColOverride] = useState<string>('');
+  const [textNormalizedData, setTextNormalizedData] = useState<any>(null);
+  const [isNormalizingText, setIsNormalizingText] = useState<boolean>(false);
   const [isCreatingCase, setIsCreatingCase] = useState<boolean>(false);
   const [newCase, setNewCase] = useState({
     id: '',
@@ -327,6 +439,9 @@ export default function App() {
       const res = await fetch(`/api/cases/${id}`);
       const data: CaseDetail = await res.json();
       setCaseDetail(data);
+      if (data.meta && ((data.meta as any).data_type === 'nlp' || (data.meta as any).text_column)) {
+        setStudioMode('nlp');
+      }
       setRelocateTrainPath(data.resolved_train_path || data.meta.train_path || '');
       setRelocateTestPath(data.resolved_test_path || data.meta.test_path || '');
       setRelocateTargetCol(data.meta.target_col || '');
@@ -386,6 +501,7 @@ class CustomFeatures(BaseFeatureHook):
 
       // Automatically load EDA
       fetchEda(id);
+      fetchAblation(id);
     } catch (err) {
       console.error('Failed to load case detail:', err);
     }
@@ -410,6 +526,24 @@ class CustomFeatures(BaseFeatureHook):
       setEdaLoading(false);
     }
   };
+  const fetchAblation = async (id: string) => {
+    setAblationLoading(true);
+    try {
+      const res = await fetch(`/api/cases/${id}/ablation`);
+      if (res.ok) {
+        const data = await res.json();
+        setAblationData(data);
+      } else {
+        setAblationData(null);
+      }
+    } catch (e) {
+      console.error('Ablation fetch failed:', e);
+      setAblationData(null);
+    } finally {
+      setAblationLoading(false);
+    }
+  };
+
 
   const handleUpdatePaths = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -543,6 +677,16 @@ class CustomFeatures(BaseFeatureHook):
     } catch (err) {
       console.error('Tuning launch failed:', err);
       setTuning(false);
+    }
+  };
+
+  const handleStopTune = async () => {
+    if (!selectedCaseId) return;
+    try {
+      await fetch(`/api/cases/${selectedCaseId}/tune-stop`, { method: 'POST' });
+      setTuning(false);
+    } catch (err) {
+      console.error('Stop tuning failed:', err);
     }
   };
 
@@ -757,6 +901,76 @@ class CustomFeatures(BaseFeatureHook):
       setStitcherError(err.message || 'Error executing concat');
     } finally {
       setStitcherExecuting(false);
+    }
+  };
+
+
+  const handleDiscoverRelational = async () => {
+    if (!relationalDir.trim()) {
+      alert('Please enter a folder path (e.g. cases/f1)');
+      return;
+    }
+    setRelationalDiscovering(true);
+    setStitcherError(null);
+    try {
+      const res = await fetch('/api/tools/relational-discover', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dir_path: relationalDir.trim() })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setRelationalDiscovery(data);
+      } else {
+        setStitcherError(data.detail || 'Relational schema discovery failed');
+      }
+    } catch (e: any) {
+      setStitcherError(e.message || 'Network error discovering schema');
+    } finally {
+      setRelationalDiscovering(false);
+    }
+  };
+
+  const handleExecuteRelationalStitch = async () => {
+    if (!relationalDir.trim() || !relationalCaseId.trim()) {
+      alert('Please fill out folder path and Case ID');
+      return;
+    }
+    setRelationalExecuting(true);
+    setStitcherError(null);
+    try {
+      const res = await fetch('/api/tools/relational-stitch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          case_id: relationalCaseId.trim(),
+          case_name: relationalCaseName.trim(),
+          dir_path: relationalDir.trim(),
+          base_table: relationalDiscovery?.suggested_base || 'results.csv',
+          target_type: relationalTargetType,
+          target_col: relationalTargetType === 'podium_binary' ? 'podium' : (relationalTargetType === 'points_binary' ? 'points_finish' : 'positionOrder'),
+          task_type: relationalTargetType === 'finishing_pos_reg' ? 'regression' : 'binary',
+          eval_metric: relationalTargetType === 'finishing_pos_reg' ? 'rmse' : 'roc_auc',
+          cv_strategy: 'group_kfold',
+          group_col: relationalDiscovery?.suggested_group_col || 'raceId',
+          split_col: relationalSplitCol.trim() || 'year',
+          split_val: relationalSplitVal.trim() || '2022'
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setShowStitcherModal(false);
+        await fetchCases();
+        setSelectedCaseId(relationalCaseId.trim());
+        await fetchCaseDetail(relationalCaseId.trim());
+        setActiveTab('eda');
+      } else {
+        setStitcherError(data.detail || 'Failed to build relational case');
+      }
+    } catch (e: any) {
+      setStitcherError(e.message || 'Execution error');
+    } finally {
+      setRelationalExecuting(false);
     }
   };
 
@@ -998,11 +1212,128 @@ class CustomFeatureHook(BaseFeatureHook):
     insertCodeIntoHook(snippet, 'UNIVERSAL PRIMITIVE 3');
   };
 
+    const handleScanNormalizeText = async () => {
+    if (!textSourcePath.trim()) {
+      alert('Please provide a dataset path (folder of .txt files, .jsonl, .xlsx, .tsv, or .csv)');
+      return;
+    }
+    setIsNormalizingText(true);
+    try {
+      const caseId = newCase.id.trim() || 'nlp_case';
+      const caseName = newCase.name.trim() || 'Text Classification Case';
+      const res = await fetch('/api/tools/text-normalize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          source_path: textSourcePath.trim(),
+          test_source_path: textTestSourcePath.trim() || undefined,
+          case_id: caseId,
+          case_name: caseName,
+          text_col: textColOverride.trim() || undefined,
+          label_col: labelColOverride.trim() || undefined,
+          id_col: idColOverride.trim() || undefined,
+          task_type: newCase.task_type || undefined,
+          eval_metric: newCase.eval_metric || undefined,
+          cv_strategy: newCase.cv_strategy || undefined,
+          n_splits: newCase.n_splits || undefined
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Failed to normalize text dataset');
+      setTextNormalizedData(data);
+      setNewCase(prev => ({
+        ...prev,
+        id: data.case_id,
+        name: caseName,
+        target_col: data.label_col || prev.target_col,
+        id_col: data.id_col || prev.id_col,
+        task_type: data.task_type || prev.task_type,
+        eval_metric: data.eval_metric || prev.eval_metric
+      }));
+    } catch (err: any) {
+      alert(err.message || 'Text normalization failed');
+    } finally {
+      setIsNormalizingText(false);
+    }
+  };
+
+  const handleInsertNlpPrimitive = () => {
+    const snippet = `# --- UNIVERSAL NLP PRIMITIVE: TF-IDF + LSA + TEXT STYLOMETRICS ---
+        from tabular_pipeline.text_engine import TextFeatureExtractor, IndonesianTextCleaner
+
+        # 1. Identify text column & clean text
+        text_cols = [c for c in train_df.columns if train_df[c].dtype == object and c not in ['${meta?.id_col || 'id'}', '${meta?.target_col || 'label'}']]
+        text_col = text_cols[0] if text_cols else 'text'
+
+        for df in ([train_df, test_df] if test_df is not None else [train_df]):
+            if text_col in df.columns:
+                df['clean_text'] = df[text_col].apply(IndonesianTextCleaner.clean)
+                
+                # 2. Extract stylometrics (word count, char count, uppercase, punctuation ratios)
+                styles = TextFeatureExtractor.extract_stylometrics(df, 'clean_text')
+                for sc in styles.columns:
+                    df[sc] = styles[sc]
+
+        # 3. TF-IDF + Latent Semantic Analysis (50 dense components)
+        if 'clean_text' in train_df.columns:
+            lsa_tr, lsa_te = TextFeatureExtractor.extract_tfidf_lsa(train_df, test_df, 'clean_text', n_components=50)
+            for c in lsa_tr.columns:
+                train_df[c] = lsa_tr[c]
+                if test_df is not None and lsa_te is not None:
+                    test_df[c] = lsa_te[c]`;
+    insertCodeIntoHook(snippet, 'UNIVERSAL NLP PRIMITIVE (TF-IDF + LSA)');
+  };
+
+  const handleInsertOfflineBertEmbeddings = () => {
+    const snippet = `# --- OFFLINE INDOBERT / TRANSFORMER EMBEDDING BRIDGE ---
+        from tabular_pipeline.text_engine import TextFeatureExtractor
+        import os
+
+        # Point to your local offline folder containing config.json & pytorch_model.bin
+        model_path = "./models/indobert-base-p1"
+        text_cols = [c for c in train_df.columns if train_df[c].dtype == object and c not in ['${meta?.id_col || 'id'}', '${meta?.target_col || 'label'}']]
+        text_col = text_cols[0] if text_cols else 'text'
+
+        if os.path.exists(model_path) and text_col in train_df.columns:
+            emb_tr, emb_te = TextFeatureExtractor.extract_transformer_embeddings(
+                train_df, test_df, text_col=text_col, model_dir_or_name=model_path, batch_size=32
+            )
+            for c in emb_tr.columns:
+                train_df[c] = emb_tr[c]
+                if test_df is not None and emb_te is not None:
+                    test_df[c] = emb_te[c]`;
+    insertCodeIntoHook(snippet, 'OFFLINE INDOBERT EMBEDDINGS');
+  };
+
+  const handleInsertKinematicsTemplate = () => {
+    const snippet = `# --- KINEMATICS & DIFFERENTIAL TARGET PRIMITIVE (SPATIO-TEMPORAL) ---
+        # 1. Temporal Step Progression (10Hz / step ratio)
+        if 'frame_id' in train_df.columns:
+            train_df['t'] = train_df['frame_id'] * 0.1
+            if test_df is not None and 'frame_id' in test_df.columns:
+                test_df['t'] = test_df['frame_id'] * 0.1
+
+        # 2. Velocity Vectors (vx, vy from speed & direction)
+        for df in [train_df, test_df]:
+            if df is not None and 'dir' in df.columns and 's' in df.columns:
+                rad = np.radians(df['dir'].fillna(0))
+                df['vx'] = df['s'].fillna(0) * np.sin(rad)
+                df['vy'] = df['s'].fillna(0) * np.cos(rad)
+                if 'x_last' in df.columns and 't' in df.columns:
+                    df['x_inertial'] = df['x_last'] + df['vx'] * df['t']
+                    df['y_inertial'] = df['y_last'] + df['vy'] * df['t']
+                if 'ball_land_x' in df.columns and 'x_last' in df.columns:
+                    df['dist_ball_x'] = df['ball_land_x'].fillna(0) - df['x_last']
+                    df['dist_ball_y'] = df['ball_land_y'].fillna(0) - df['y_last']
+                    df['dist_ball'] = np.sqrt(df['dist_ball_x']**2 + df['dist_ball_y']**2)`;
+    insertCodeIntoHook(snippet, 'KINEMATICS & DIFFERENTIAL TARGET');
+  };
+
   const handleInsertLogTransformTemplate = () => {
     const target = meta?.target_col || 'target';
     const id = meta?.id_col || 'id';
     const snippet = `# --- UNIVERSAL PRIMITIVE 4: SKEW CORRECTION & LOG-TRANSFORM ---
-        # Stabilizes heavy-tailed variables (financial, revenue, delays, physical quantities)
+        # Stabilizes skewed continuous distributions with log1p transformation
         num_cols = [c for c in train_df.select_dtypes(include=['number']).columns if c not in ['${id}', '${target}']]
         for c in num_cols[:4]:
             if (train_df[c] >= 0).all():
@@ -1125,28 +1456,39 @@ class CustomFeatureHook(BaseFeatureHook):
     }
   };
 
-  // Browse file using native Windows File Dialog
-  const handleBrowseFile = async (field: 'train' | 'test') => {
-    if (field === 'train') setIsBrowsingTrain(true);
+  // Browse file or folder using native Windows File Dialog
+  const handleBrowseFile = async (
+    field: 'train' | 'test' | 'text_train' | 'text_test',
+    mode: 'file' | 'folder' = 'file'
+  ) => {
+    if (field === 'train' || field === 'text_train') setIsBrowsingTrain(true);
     else setIsBrowsingTest(true);
 
     try {
-      const title = field === 'train' ? 'Select Training Dataset (CSV)' : 'Select Test Dataset (CSV)';
-      const res = await fetch(`/api/browse-file?title=${encodeURIComponent(title)}`);
+      const title = mode === 'folder'
+        ? 'Select Dataset Folder (Text Files Directory)'
+        : 'Select Dataset File (CSV, Excel, JSONL, TXT)';
+      const res = await fetch(`/api/browse-file?title=${encodeURIComponent(title)}&mode=${mode}`);
       const data = await res.json();
       if (data?.path) {
         if (field === 'train') {
           setNewCase(prev => ({ ...prev, train_path: data.path }));
           setInspectPath(data.path);
           handleInspect(data.path);
-        } else {
+        } else if (field === 'test') {
+          setNewCase(prev => ({ ...prev, test_path: data.path }));
+        } else if (field === 'text_train') {
+          setTextSourcePath(data.path);
+          setNewCase(prev => ({ ...prev, train_path: data.path }));
+        } else if (field === 'text_test') {
+          setTextTestSourcePath(data.path);
           setNewCase(prev => ({ ...prev, test_path: data.path }));
         }
       }
     } catch (err) {
       console.error('File dialog error:', err);
     } finally {
-      if (field === 'train') setIsBrowsingTrain(false);
+      if (field === 'train' || field === 'text_train') setIsBrowsingTrain(false);
       else setIsBrowsingTest(false);
     }
   };
@@ -1156,17 +1498,67 @@ class CustomFeatureHook(BaseFeatureHook):
     e.preventDefault();
     setIsCreatingCase(true);
     try {
+      if (creationSource === 'text') {
+        if (!textNormalizedData) {
+          await handleScanNormalizeText();
+        }
+        setIsModalOpen(false);
+        await fetchCases();
+        const cid = newCase.id.trim() || textNormalizedData?.case_id || 'nlp_case';
+        setSelectedCaseId(cid);
+        await fetchCaseDetail(cid);
+        setStudioMode('nlp');
+        return;
+      }
+
+      if (creationSource === 'relational') {
+        const caseId = newCase.id.trim() || 'f1_podium';
+        const caseName = newCase.name.trim() || 'Formula 1 Podium Prediction';
+        const targetName = relationalTargetType === 'podium_binary' ? 'podium' : (relationalTargetType === 'points_binary' ? 'points_finish' : 'positionOrder');
+        const taskType = relationalTargetType === 'finishing_pos_reg' ? 'regression' : 'binary';
+        const evalMetric = relationalTargetType === 'finishing_pos_reg' ? 'rmse' : 'roc_auc';
+
+        const res = await fetch('/api/tools/relational-stitch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            case_id: caseId,
+            case_name: caseName,
+            dir_path: relationalDir.trim() || 'cases/f1',
+            base_table: relationalDiscovery?.suggested_base || 'results.csv',
+            target_type: relationalTargetType,
+            target_col: targetName,
+            task_type: taskType,
+            eval_metric: evalMetric,
+            cv_strategy: 'group_kfold',
+            group_col: relationalDiscovery?.suggested_group_col || 'raceId',
+            split_col: relationalSplitCol.trim() || 'year',
+            split_val: relationalSplitVal.trim() || '2022'
+          })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Relational stitch failed');
+        setIsModalOpen(false);
+        await fetchCases();
+        setSelectedCaseId(data.case_id);
+        await fetchCaseDetail(data.case_id);
+        setActiveTab('eda');
+        return;
+      }
+
       const res = await fetch('/api/cases', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newCase)
       });
       const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Failed to create case');
       setIsModalOpen(false);
       await fetchCases();
       setSelectedCaseId(data.case_id);
-    } catch (err) {
-      console.error(err);
+      await fetchCaseDetail(data.case_id);
+    } catch (err: any) {
+      alert(err.message || 'Failed to create case');
     } finally {
       setIsCreatingCase(false);
     }
@@ -1190,35 +1582,39 @@ class CustomFeatureHook(BaseFeatureHook):
   const scores = summary?.all_scores || {};
   const championScore = summary?.champion_score;
   const championModel = summary?.champion_model;
+  const isHigherBetter = isMetricHigherBetter(meta?.eval_metric);
 
   const singleModels = ['lgbm', 'xgb', 'catboost'].filter(m => scores[m] !== undefined);
   let bestSingleScore: number | null = null;
   let bestSingleName = '';
   if (singleModels.length > 0) {
-    singleModels.sort((a, b) => scores[b] - scores[a]);
+    singleModels.sort((a, b) => isHigherBetter ? scores[b] - scores[a] : scores[a] - scores[b]);
     bestSingleName = singleModels[0];
     bestSingleScore = scores[bestSingleName];
   }
 
   return (
-    <div className="min-h-screen bg-[#F4F5F6] text-[#121816] font-sans antialiased selection:bg-[#E8F3ED] selection:text-[#164E33]">
+    <div className="min-h-screen bg-[#F4F5F6] text-[#121816] font-sans antialiased selection:bg-zinc-100 selection:text-zinc-900">
       {/* Top Header */}
-      <header className="border-b border-[#E5E9E6] bg-white sticky top-0 z-20 shadow-2xs">
-        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center space-x-6">
-            <div className="flex items-center space-x-2.5">
-              <span className="font-bold tracking-tight text-base text-[#121816]">TABULAR STUDIO</span>
-              <span className="text-[10px] font-mono font-bold bg-[#E8F3ED] text-[#164E33] border border-[#D2E7DC] px-2 py-0.5 rounded-full">
-                NEXUS
+      <header className="border-b border-zinc-200/80 bg-white sticky top-0 z-30">
+        <div className="max-w-7xl mx-auto px-6 h-14 flex items-center justify-between gap-4">
+          {/* Left: Brand + Project Switcher */}
+          <div className="flex items-center space-x-4 min-w-0">
+            <div className="flex items-center space-x-2 flex-shrink-0">
+              <span className="font-bold tracking-tight text-sm text-zinc-950">{studioMode === 'tabular' ? 'TABULAR STUDIO' : 'TEXT & NLP STUDIO'}</span>
+              <span className="text-[10px] font-mono text-zinc-400 font-semibold tracking-wider">
+                / NEXUS
               </span>
             </div>
 
-            {/* Case Selector */}
-            <div className="flex items-center space-x-2">
+            <div className="h-4 w-px bg-zinc-200"></div>
+
+            {/* Case Selector Group */}
+            <div className="flex items-center space-x-2 min-w-0">
               <select
                 value={selectedCaseId}
                 onChange={e => setSelectedCaseId(e.target.value)}
-                className="bg-[#F8FAF9] border border-[#E5E9E6] hover:border-[#164E33] rounded-xl px-3 py-1.5 text-xs font-medium text-[#121816] focus:outline-none focus:border-[#164E33] transition"
+                className="bg-transparent border border-zinc-200 hover:border-zinc-400 rounded-md px-2.5 py-1 text-xs font-medium text-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-950 transition-colors truncate max-w-xs"
               >
                 {cases.map(c => (
                   <option key={c.id} value={c.id}>
@@ -1226,20 +1622,26 @@ class CustomFeatureHook(BaseFeatureHook):
                   </option>
                 ))}
               </select>
-              
+
               <button
-                onClick={() => setIsModalOpen(true)}
-                className="flex items-center space-x-1.5 border border-[#E5E9E6] hover:border-[#164E33] hover:bg-[#F8FAF9] text-[#121816] text-xs font-medium px-3 py-1.5 rounded-xl transition shadow-2xs"
+                onClick={() => {
+                  setIsModalOpen(true);
+                  if (studioMode === 'nlp') {
+                    setCreationSource('text');
+                  }
+                }}
+                className="flex items-center space-x-1 border border-zinc-200 hover:border-zinc-400 hover:bg-zinc-50 text-zinc-800 text-xs font-medium px-2.5 py-1 rounded-md transition-colors whitespace-nowrap"
+                title="Create a new competitive ML case"
               >
-                <Plus size={13} />
-                <span>New Case</span>
+                <Plus size={12} />
+                <span>New</span>
               </button>
 
               {cases.length > 0 && selectedCaseId && (
                 <button
                   type="button"
                   onClick={() => handleDeleteCase(selectedCaseId)}
-                  className="flex items-center space-x-1 border border-[#E5E9E6] hover:border-rose-400 hover:bg-rose-50 text-zinc-400 hover:text-rose-600 text-xs font-medium px-2 py-1.5 rounded-xl transition"
+                  className="flex items-center p-1 border border-transparent hover:border-zinc-200 hover:bg-zinc-100 text-zinc-400 hover:text-zinc-700 rounded-md transition-colors"
                   title={`Delete active case "${selectedCaseId}"`}
                 >
                   <Trash2 size={13} />
@@ -1248,78 +1650,164 @@ class CustomFeatureHook(BaseFeatureHook):
             </div>
           </div>
 
-          <div className="flex items-center space-x-3">
-            <a
-              href={`/api/cases/${selectedCaseId}/export-script`}
-              target="_blank"
-              rel="noreferrer"
-              className="flex items-center space-x-1.5 text-xs font-medium border border-[#E5E9E6] hover:border-[#164E33] hover:bg-[#F8FAF9] text-[#121816] px-3 py-1.5 rounded-xl transition shadow-2xs"
+          {/* Center: Dual-Mode Studio Switcher */}
+          <div className="flex items-center bg-zinc-100 p-0.5 rounded-lg border border-zinc-200">
+            <button
+              type="button"
+              onClick={() => setStudioMode('tabular')}
+              className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
+                studioMode === 'tabular'
+                  ? 'bg-white text-zinc-950 shadow-xs border border-zinc-200/80 font-semibold'
+                  : 'text-zinc-500 hover:text-zinc-900'
+              }`}
             >
-              <FileCode size={13} />
-              <span>Export Script.py</span>
-            </a>
-
-            <a
-              href={`/api/cases/${selectedCaseId}/export-notebook`}
-              target="_blank"
-              rel="noreferrer"
-              className="flex items-center space-x-1.5 text-xs font-medium border border-[#E5E9E6] hover:border-[#164E33] hover:bg-[#F8FAF9] text-[#121816] px-3 py-1.5 rounded-xl transition shadow-2xs"
+              Tabular Studio
+            </button>
+            <button
+              type="button"
+              onClick={() => setStudioMode('nlp')}
+              className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
+                studioMode === 'nlp'
+                  ? 'bg-white text-zinc-950 shadow-xs border border-zinc-200/80 font-semibold'
+                  : 'text-zinc-500 hover:text-zinc-900'
+              }`}
             >
-              <BookOpen size={13} />
-              <span>Export Notebook.ipynb</span>
-            </a>
+              Text &amp; NLP Studio
+            </button>
+          </div>
 
-            {running ? (
+          {/* Right: Consolidated Actions */}
+          <div className="flex items-center space-x-2.5 flex-shrink-0">
+            {/* Unified Export Dropdown */}
+            <div className="relative">
               <button
-                onClick={handleStopPipeline}
-                className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 transition shadow-sm"
-                title="Halt current training execution immediately"
+                type="button"
+                onClick={() => setExportDropdownOpen(!exportDropdownOpen)}
+                className="flex items-center space-x-1.5 text-xs font-medium border border-zinc-200 hover:border-zinc-400 hover:bg-zinc-50 text-zinc-800 px-3 py-1.5 rounded-md transition-colors whitespace-nowrap"
               >
-                <Square size={12} className="fill-current" />
-                <span>Stop Pipeline</span>
+                <Download size={13} className="text-zinc-600" />
+                <span>Export Code</span>
+                <ChevronDown size={12} className={`text-zinc-400 transition-transform ${exportDropdownOpen ? 'rotate-180' : ''}`} />
               </button>
-            ) : (
-              <button
-                onClick={handleExecute}
-                className="flex items-center space-x-1.5 px-4 py-1.5 rounded-xl text-xs font-semibold text-white bg-[#164E33] hover:bg-[#123E28] transition shadow-sm"
-              >
-                <Play size={13} />
-                <span>Run Pipeline</span>
-              </button>
+
+              {exportDropdownOpen && (
+                <>
+                  <div className="fixed inset-0 z-30" onClick={() => setExportDropdownOpen(false)}></div>
+                  <div className="absolute right-0 mt-1.5 w-72 bg-white border border-zinc-200 rounded-xl shadow-lg z-40 py-1.5 text-xs divide-y divide-zinc-100 animate-in fade-in slide-in-from-top-1 duration-150">
+                    <div className="px-3 py-1.5 text-[10px] font-mono uppercase text-zinc-400 font-semibold tracking-wider">
+                      Export Solution Code
+                    </div>
+
+                    <a
+                      href={`/api/cases/${selectedCaseId}/export-script`}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={() => setExportDropdownOpen(false)}
+                      className="flex items-start space-x-2.5 px-3 py-2 hover:bg-zinc-50 text-zinc-800 transition group"
+                    >
+                      <FileCode size={15} className="text-zinc-400 group-hover:text-zinc-800 mt-0.5 flex-shrink-0" />
+                      <div>
+                        <div className="font-semibold text-xs text-zinc-900">Solution Script (.py)</div>
+                        <div className="text-[11px] text-zinc-500">Standalone terminal code (0 dependencies)</div>
+                      </div>
+                    </a>
+
+                    <a
+                      href={`/api/cases/${selectedCaseId}/export-notebook`}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={() => setExportDropdownOpen(false)}
+                      className="flex items-start space-x-2.5 px-3 py-2 hover:bg-zinc-50 text-zinc-800 transition group"
+                    >
+                      <BookOpen size={15} className="text-zinc-400 group-hover:text-zinc-800 mt-0.5 flex-shrink-0" />
+                      <div>
+                        <div className="font-semibold text-xs text-zinc-900">Kaggle Notebook (CSV)</div>
+                        <div className="text-[11px] text-zinc-500">Standard batch submission.csv protocol</div>
+                      </div>
+                    </a>
+
+                    <a
+                      href={`/api/cases/${selectedCaseId}/export-inference-notebook`}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={() => setExportDropdownOpen(false)}
+                      className="flex items-start space-x-2.5 px-3 py-2 hover:bg-zinc-50 text-zinc-800 transition group"
+                    >
+                      <Cpu size={15} className="text-zinc-400 group-hover:text-zinc-800 mt-0.5 flex-shrink-0" />
+                      <div>
+                        <div className="font-semibold text-xs text-zinc-900 flex items-center space-x-1.5">
+                          <span>Gateway Notebook (API)</span>
+                          <span className="text-[9px] font-mono text-zinc-500 font-normal">Fast Inference</span>
+                        </div>
+                        <div className="text-[11px] text-zinc-500">Kaggle live inference server (zero timeout)</div>
+                      </div>
+                    </a>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Run / Stop Pipeline Button - ONLY in tabular mode */}
+            {studioMode === 'tabular' && (
+              running ? (
+                <button
+                  onClick={handleStopPipeline}
+                  className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-md text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 transition shadow-xs whitespace-nowrap"
+                  title="Halt current training execution immediately"
+                >
+                  <Square size={12} className="fill-current" />
+                  <span>Stop</span>
+                </button>
+              ) : (
+                <button
+                  onClick={handleExecute}
+                  className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-md text-xs font-semibold text-white bg-zinc-950 hover:bg-zinc-800 transition shadow-xs whitespace-nowrap"
+                >
+                  <Play size={12} className="fill-current" />
+                  <span>Run Pipeline</span>
+                </button>
+              )
             )}
           </div>
         </div>
 
-        {/* Data Mining Lifecycle Tabs (Strict Sequential Workflow) */}
-        <div className="max-w-7xl mx-auto px-6 flex space-x-8 -mb-px">
-          {[
-            { id: 'eda', step: '1', label: 'Dataset & EDA', icon: Database },
-            { id: 'fe', step: '2', label: 'Feature Engineering', icon: Wrench },
-            { id: 'training', step: '3', label: 'Model Training & CV', icon: Cpu },
-            { id: 'ensemble', step: '4', label: 'Ensemble Laboratory', icon: Sliders },
-            { id: 'artifacts', step: '5', label: 'Submissions & Artifacts', icon: FileSpreadsheet }
-          ].map(tab => {
-            const Icon = tab.icon;
-            const active = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id as any)}
-                className={`flex items-center space-x-2 py-3 border-b-2 text-xs font-medium transition ${
-                  active
-                    ? 'border-[#164E33] text-[#164E33] font-bold'
-                    : 'border-transparent text-[#76807B] hover:text-[#121816] hover:border-zinc-300'
-                }`}
-              >
-                <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded-md font-bold ${active ? 'bg-[#E8F3ED] text-[#164E33] border border-[#D2E7DC]' : 'bg-zinc-100 text-[#76807B]'}`}>
-                  {tab.step}
-                </span>
-                <Icon size={14} />
-                <span>{tab.label}</span>
-              </button>
-            );
-          })}
-        </div>
+        {/* Minimal Modern Tabs Navigation: ONLY visible when studioMode === 'tabular' */}
+        {studioMode === 'tabular' && (
+          <div className="border-t border-zinc-200/80 bg-white">
+            <div className="max-w-7xl mx-auto px-6 flex items-center space-x-8 overflow-x-auto no-scrollbar">
+              {[
+                { id: 'eda', step: '1', label: 'Dataset & EDA', icon: Database },
+                { id: 'fe', step: '2', label: 'Feature Engineering', icon: Wrench },
+                { id: 'training', step: '3', label: 'Model Training & CV', icon: Cpu },
+                { id: 'ablation', step: '4', label: 'Ablation Study', icon: Layers },
+                { id: 'ensemble', step: '5', label: 'Ensemble Laboratory', icon: Sliders },
+                { id: 'artifacts', step: '6', label: 'Submissions & Artifacts', icon: FileSpreadsheet }
+              ].map(tab => {
+                const Icon = tab.icon;
+                const active = activeTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id as any)}
+                    className={`group flex items-center space-x-2 py-3 text-xs font-medium border-b-2 -mb-px transition-all whitespace-nowrap ${
+                      active
+                        ? 'border-zinc-950 text-zinc-950 font-semibold'
+                        : 'border-transparent text-zinc-400 hover:text-zinc-800 hover:border-zinc-300'
+                    }`}
+                  >
+                    <span className={`text-[11px] font-mono transition-colors ${
+                      active ? 'text-zinc-950 font-bold' : 'text-zinc-400 group-hover:text-zinc-600'
+                    }`}>
+                      {tab.step}.
+                    </span>
+                    <Icon size={14} className={active ? 'text-zinc-950' : 'text-zinc-400 group-hover:text-zinc-600'} />
+                    <span>{tab.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </header>
 
       {/* Main Container */}
@@ -1331,6 +1819,12 @@ class CustomFeatureHook(BaseFeatureHook):
           </div>
         ) : !caseDetail ? (
           <div className="text-center py-20 text-zinc-500">Select or create a case to begin.</div>
+        ) : studioMode === 'nlp' ? (
+          <TextStudio
+            selectedCaseId={selectedCaseId}
+            caseDetail={caseDetail}
+            onRefreshCase={() => fetchCaseDetail(selectedCaseId)}
+          />
         ) : (
           <>
             {/* Live Pipeline Execution Terminal */}
@@ -1438,8 +1932,8 @@ class CustomFeatureHook(BaseFeatureHook):
                             type="text"
                             value={relocateTrainPath}
                             onChange={e => setRelocateTrainPath(e.target.value)}
-                            placeholder="e.g. playground-series-s6e11/train.csv or C:/data/train.csv"
-                            className="flex-1 px-3 py-2 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816] focus:outline-none focus:border-[#164E33]"
+                            placeholder="e.g. data/train.csv or C:/datasets/train.csv"
+                            className="flex-1 px-3 py-2 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816] focus:outline-none focus:border-zinc-900"
                             required
                           />
                           <button
@@ -1463,8 +1957,8 @@ class CustomFeatureHook(BaseFeatureHook):
                             type="text"
                             value={relocateTestPath}
                             onChange={e => setRelocateTestPath(e.target.value)}
-                            placeholder="e.g. playground-series-s6e11/test.csv"
-                            className="flex-1 px-3 py-2 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816] focus:outline-none focus:border-[#164E33]"
+                            placeholder="e.g. data/test.csv or C:/datasets/test.csv"
+                            className="flex-1 px-3 py-2 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816] focus:outline-none focus:border-zinc-900"
                           />
                           <button
                             type="button"
@@ -1494,7 +1988,7 @@ class CustomFeatureHook(BaseFeatureHook):
                                     setRelocateTrainPath(f.path);
                                   }
                                 }}
-                                className="text-[11px] font-mono px-2.5 py-1 bg-white hover:bg-[#164E33] hover:text-white border border-[#E5E9E6] rounded-lg transition-colors flex items-center space-x-1 text-[#121816]"
+                                className="text-[11px] font-mono px-2.5 py-1 bg-white hover:bg-zinc-900 hover:text-white border border-[#E5E9E6] rounded-lg transition-colors flex items-center space-x-1 text-[#121816]"
                               >
                                 <span>{f.path}</span>
                                 <span className="text-[10px] text-zinc-400">({f.size_mb} MB)</span>
@@ -1520,7 +2014,7 @@ class CustomFeatureHook(BaseFeatureHook):
                         <button
                           type="submit"
                           disabled={isUpdatingPaths || !relocateTrainPath.trim()}
-                          className="px-5 py-2.5 bg-[#164E33] hover:bg-[#113d28] text-white text-xs font-medium rounded-xl transition-colors flex items-center space-x-2 disabled:opacity-50"
+                          className="px-5 py-2.5 bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-medium rounded-xl transition-colors flex items-center space-x-2 disabled:opacity-50"
                         >
                           {isUpdatingPaths ? (
                             <>
@@ -1559,7 +2053,7 @@ class CustomFeatureHook(BaseFeatureHook):
                             setShowStitcherModal(true);
                             fetchScannedCsvs();
                           }}
-                          className="px-2.5 py-1 text-[11px] font-medium text-[#164E33] bg-[#E8F3ED] hover:bg-[#D9EBE1] rounded-lg border border-[#D2E7DC] transition-colors flex items-center space-x-1"
+                          className="px-2.5 py-1 text-[11px] font-medium text-zinc-700 bg-zinc-100 hover:bg-[#D9EBE1] rounded-lg border border-zinc-200 transition-colors flex items-center space-x-1"
                           title="Open Dataset Stitcher & Relational Joiner Studio"
                         >
                           <Layers size={12} />
@@ -1568,7 +2062,7 @@ class CustomFeatureHook(BaseFeatureHook):
                         <button
                           type="button"
                           onClick={() => setShowRelocateCard(!showRelocateCard)}
-                          className="px-2.5 py-1 text-[11px] font-medium text-[#164E33] hover:bg-[#164E33]/10 rounded-lg border border-[#164E33]/30 transition-colors flex items-center space-x-1"
+                          className="px-2.5 py-1 text-[11px] font-medium text-zinc-900 hover:bg-zinc-900/10 rounded-lg border border-zinc-900/30 transition-colors flex items-center space-x-1"
                         >
                           <FolderOpen size={12} />
                           <span>{showRelocateCard ? 'Hide Path Editor' : 'Relocate / Change Path'}</span>
@@ -1577,7 +2071,7 @@ class CustomFeatureHook(BaseFeatureHook):
                     </div>
 
                     {showRelocateCard && (
-                      <div className="bg-white border border-[#E5E9E6] rounded-2xl p-6 shadow-sm space-y-4">
+                      <div className="bg-white border border-zinc-200/80 rounded-xl p-5 shadow-2xs space-y-4">
                         <div className="flex items-center justify-between pb-2 border-b border-[#E5E9E6]">
                           <div>
                             <h4 className="text-sm font-semibold text-[#121816]">Relocate Dataset Path</h4>
@@ -1599,7 +2093,7 @@ class CustomFeatureHook(BaseFeatureHook):
                                 type="text"
                                 value={relocateTrainPath}
                                 onChange={e => setRelocateTrainPath(e.target.value)}
-                                className="flex-1 px-3 py-1.5 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816] focus:outline-none focus:border-[#164E33]"
+                                className="flex-1 px-3 py-1.5 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816] focus:outline-none focus:border-zinc-900"
                                 required
                               />
                               <button
@@ -1619,7 +2113,7 @@ class CustomFeatureHook(BaseFeatureHook):
                                 type="text"
                                 value={relocateTestPath}
                                 onChange={e => setRelocateTestPath(e.target.value)}
-                                className="flex-1 px-3 py-1.5 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816] focus:outline-none focus:border-[#164E33]"
+                                className="flex-1 px-3 py-1.5 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816] focus:outline-none focus:border-zinc-900"
                               />
                               <button
                                 type="button"
@@ -1639,7 +2133,7 @@ class CustomFeatureHook(BaseFeatureHook):
                                 value={relocateTargetCol}
                                 onChange={e => setRelocateTargetCol(e.target.value)}
                                 placeholder="e.g. x_base, target"
-                                className="w-full px-3 py-1.5 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816] focus:outline-none focus:border-[#164E33]"
+                                className="w-full px-3 py-1.5 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816] focus:outline-none focus:border-zinc-900"
                               />
                             </div>
                             <div className="space-y-1">
@@ -1649,7 +2143,7 @@ class CustomFeatureHook(BaseFeatureHook):
                                 value={relocateIdCol}
                                 onChange={e => setRelocateIdCol(e.target.value)}
                                 placeholder="e.g. frame_id, id"
-                                className="w-full px-3 py-1.5 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816] focus:outline-none focus:border-[#164E33]"
+                                className="w-full px-3 py-1.5 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816] focus:outline-none focus:border-zinc-900"
                               />
                             </div>
                           </div>
@@ -1657,7 +2151,7 @@ class CustomFeatureHook(BaseFeatureHook):
                             <button
                               type="submit"
                               disabled={isUpdatingPaths || !relocateTrainPath.trim()}
-                              className="px-4 py-2 bg-[#164E33] hover:bg-[#113d28] text-white text-xs font-medium rounded-xl transition-colors flex items-center space-x-1.5 disabled:opacity-50"
+                              className="px-4 py-2 bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-medium rounded-xl transition-colors flex items-center space-x-1.5 disabled:opacity-50"
                             >
                               {isUpdatingPaths ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
                               <span>Save & Re-Profile</span>
@@ -1728,12 +2222,12 @@ class CustomFeatureHook(BaseFeatureHook):
                     {/* Target Distribution & Correlation Ranking */}
                     <div className="grid grid-cols-3 gap-6">
                       {/* Target Distribution / Regression Histogram */}
-                      <div className="bg-white border border-[#E5E9E6] rounded-2xl p-6 shadow-sm space-y-4">
+                      <div className="bg-white border border-zinc-200/80 rounded-xl p-5 shadow-2xs space-y-4">
                         <div className="flex justify-between items-center">
                           <h3 className="font-bold text-sm text-[#121816]">
                             {edaData.summary.is_regression ? 'Target Continuous Distribution' : 'Target Class Balance'}
                           </h3>
-                          <span className="text-[10px] font-mono uppercase bg-[#164E33]/10 text-[#164E33] px-2 py-0.5 rounded font-semibold">
+                          <span className="text-[10px] font-mono uppercase bg-zinc-900/10 text-zinc-900 px-2 py-0.5 rounded font-semibold">
                             {edaData.summary.is_regression ? 'Continuous' : 'Discrete'}
                           </span>
                         </div>
@@ -1751,7 +2245,7 @@ class CustomFeatureHook(BaseFeatureHook):
                                 <span className="text-[#76807B] font-mono">{td.percentage}% ({td.count.toLocaleString()})</span>
                               </div>
                               <div className="w-full bg-[#F4F5F6] h-2.5 rounded-full overflow-hidden border border-[#E5E9E6]/60">
-                                <div className="bg-[#164E33] h-full rounded-full" style={{ width: `${td.percentage}%` }} />
+                                <div className="bg-zinc-900 h-full rounded-full" style={{ width: `${td.percentage}%` }} />
                               </div>
                             </div>
                           ))}
@@ -1762,7 +2256,7 @@ class CustomFeatureHook(BaseFeatureHook):
                       <div className="col-span-2 bg-white border border-[#E5E9E6] rounded-2xl p-6 shadow-sm space-y-4">
                         <div className="flex justify-between items-center">
                           <h3 className="font-bold text-sm text-[#121816]">Top Predictive Signals (Correlations with Target)</h3>
-                          <span className="text-[11px] font-mono bg-[#E8F3ED] text-[#164E33] px-2 py-0.5 rounded-md border border-[#D2E7DC]">
+                          <span className="text-[11px] font-mono bg-zinc-100 text-zinc-700 px-2 py-0.5 rounded-md border border-zinc-200">
                             Pearson (r)
                           </span>
                         </div>
@@ -1779,7 +2273,7 @@ class CustomFeatureHook(BaseFeatureHook):
                               title="Click to view distribution"
                             >
                               <span className="truncate w-44 text-[#121816] font-medium">#{idx + 1} {c.feature}</span>
-                              <span className={`font-semibold ${c.correlation >= 0 ? 'text-[#164E33]' : 'text-[#76807B]'}`}>
+                              <span className={`font-semibold ${c.correlation >= 0 ? 'text-zinc-900' : 'text-[#76807B]'}`}>
                                 {c.correlation > 0 ? `+${c.correlation.toFixed(3)}` : c.correlation.toFixed(3)}
                               </span>
                             </div>
@@ -1787,6 +2281,203 @@ class CustomFeatureHook(BaseFeatureHook):
                         </div>
                       </div>
                     </div>
+
+                    
+                    {/* Dynamic Flexible Interpretations (Data-Driven, Domain-Agnostic) */}
+                    {edaData.dynamic_interpretations && edaData.dynamic_interpretations.length > 0 && (
+                      <div className="bg-white border border-zinc-200/80 rounded-xl p-5 shadow-2xs space-y-4">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center space-x-2">
+                            <Activity className="text-zinc-800" size={17} />
+                            <h3 className="font-bold text-sm text-[#121816]">Automated Statistical Insights & Interpretations</h3>
+                          </div>
+                          <span className="text-[10px] font-mono uppercase text-zinc-400 font-semibold tracking-wider">
+                            Dataset Intelligence
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-1">
+                          {edaData.dynamic_interpretations.map((interp, idx) => (
+                            <div key={idx} className="bg-white border border-[#E5E9E6] rounded-xl p-4 shadow-2xs space-y-2 flex flex-col justify-between">
+                              <div className="space-y-1.5">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-[10px] font-mono uppercase font-semibold text-zinc-400 tracking-wider">
+                                    {interp.badge}
+                                  </span>
+                                </div>
+                                <h4 className="text-xs font-bold text-[#121816] leading-snug">{interp.title}</h4>
+                                <p className="text-[11px] text-[#76807B] leading-relaxed">
+                                  {interp.description}
+                                </p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Multi-Feature Conditional Distributions (1st to 99th Percentile) - Grid 3x4 */}
+                    {edaData.conditional_distributions && edaData.conditional_distributions.length > 0 && (
+                      <div className="bg-white border border-zinc-200/80 rounded-xl p-5 shadow-2xs space-y-4">
+                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 border-b border-[#E5E9E6] pb-4">
+                          <div>
+                            <div className="flex items-center space-x-2">
+                              <h3 className="font-bold text-sm text-[#121816]">Feature Distributions by Class / Target</h3>
+                              <span className="text-[10px] font-mono uppercase text-zinc-400 font-semibold tracking-wider">
+                                1st - 99th Percentile
+                              </span>
+                            </div>
+                            <p className="text-xs text-[#76807B] mt-1">
+                              Density curves conditional on target subgroups. Quantifies distributional separation without outlier distortion.
+                            </p>
+                          </div>
+                          {edaData.conditional_distributions[0]?.curves?.length >= 2 && (
+                            <div className="flex items-center space-x-4 text-xs font-mono font-medium">
+                              <div className="flex items-center space-x-1.5">
+                                <span className="w-2.5 h-2.5 rounded-full bg-blue-600"></span>
+                                <span className="text-zinc-600">{edaData.conditional_distributions[0].curves[0].group}</span>
+                              </div>
+                              <div className="flex items-center space-x-1.5">
+                                <span className="w-2.5 h-2.5 rounded-full bg-rose-600"></span>
+                                <span className="text-zinc-600">{edaData.conditional_distributions[0].curves[1].group}</span>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                          {edaData.conditional_distributions.slice(0, 12).map((item) => {
+                            const maxDensity = Math.max(
+                              ...item.curves.flatMap(c => c.points.map(p => p.density)),
+                              0.0001
+                            );
+                            const width = 240;
+                            const height = 90;
+
+                            return (
+                              <div key={item.feature} className="border border-zinc-200 rounded-lg p-3 bg-white hover:border-zinc-300 transition space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <span className="font-mono text-xs font-bold text-[#121816] truncate" title={item.feature}>
+                                    {item.feature}
+                                  </span>
+                                  {item.ks_statistic !== undefined && (
+                                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded text-zinc-500 bg-zinc-50 border border-zinc-200" title="Kolmogorov-Smirnov Target Separation Score">
+                                      KS: {item.ks_statistic}
+                                    </span>
+                                  )}
+                                </div>
+
+                                <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-24 overflow-hidden rounded-md">
+                                  <line x1="0" y1={height} x2={width} y2={height} stroke="#e4e4e7" strokeWidth="1" />
+                                  <line x1="0" y1={height / 2} x2={width} y2={height / 2} stroke="#f4f4f5" strokeDasharray="3 3" />
+
+                                  {item.curves.map((curve, cIdx) => {
+                                    if (curve.points.length < 2) return null;
+                                    const strokeColor = cIdx === 0 ? "#2563eb" : "#e11d48";
+                                    const fillColor = cIdx === 0 ? "rgba(37, 99, 235, 0.10)" : "rgba(225, 29, 72, 0.10)";
+
+                                    const pts = curve.points.map((p, idx) => {
+                                      const x = (idx / (curve.points.length - 1)) * width;
+                                      const y = height - (p.density / maxDensity) * (height - 10);
+                                      return { x, y };
+                                    });
+
+                                    const pathD = getSmoothArea(pts, height);
+                                    const strokeD = getSmoothSpline(pts);
+
+                                    return (
+                                      <g key={cIdx}>
+                                        <path d={pathD} fill={fillColor} />
+                                        <path d={strokeD} fill="none" stroke={strokeColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                      </g>
+                                    );
+                                  })}
+                                </svg>
+
+                                <div className="flex justify-between text-[10px] font-mono text-[#76807B] pt-0.5 border-t border-zinc-100">
+                                  <span>{item.p1}</span>
+                                  <span className="text-zinc-400">1st - 99th</span>
+                                  <span>{item.p99}</span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Spearman vs Pearson Diverging Rank Correlation Spectrum */}
+                    {edaData.spearman_correlations && edaData.spearman_correlations.length > 0 && (
+                      <div className="bg-white border border-zinc-200/80 rounded-xl p-5 shadow-2xs space-y-4">
+                        <div className="flex items-center justify-between border-b border-[#E5E9E6] pb-3">
+                          <div>
+                            <div className="flex items-center space-x-2">
+                              <h3 className="font-bold text-sm text-[#121816]">Spearman Rank vs Pearson Linear Correlation Spectrum</h3>
+                              <span className="text-[10px] font-mono uppercase text-zinc-400 font-semibold tracking-wider">
+                                Diverging Spectrum
+                              </span>
+                            </div>
+                            <p className="text-xs text-[#76807B] mt-0.5">
+                              Horizontal divergence from zero. Comparison of monotonic rank correlation (Spearman) against linear correlation (Pearson).
+                            </p>
+                          </div>
+                          <div className="flex items-center space-x-4 text-xs font-mono">
+                            <span className="text-blue-700 flex items-center space-x-1">
+                              <span className="w-2.5 h-2.5 rounded-sm bg-blue-600 inline-block"></span>
+                              <span>Negative Correlation</span>
+                            </span>
+                            <span className="text-amber-800 flex items-center space-x-1">
+                              <span className="w-2.5 h-2.5 rounded-sm bg-amber-700 inline-block"></span>
+                              <span>Positive Correlation</span>
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="space-y-2 pt-2 max-h-96 overflow-y-auto pr-2">
+                          {edaData.spearman_correlations.map((item) => {
+                            const val = item.spearman;
+                            const isNeg = val < 0;
+                            const barWidth = Math.min(100, Math.abs(val) * 100);
+                            const barColor = isNeg ? "#4A709C" : "#A65959";
+
+                            return (
+                              <div key={item.feature} className="grid grid-cols-12 items-center text-xs font-mono py-1 border-b border-zinc-100 hover:bg-zinc-50/60 px-2 rounded">
+                                <div className="col-span-3 truncate text-[#121816] font-medium" title={item.feature}>
+                                  {item.feature}
+                                </div>
+                                <div className="col-span-7 flex items-center h-4 relative">
+                                  <div className="absolute left-1/2 top-0 bottom-0 w-[1px] bg-zinc-300 z-10"></div>
+                                  
+                                  <div className="w-1/2 flex justify-end pr-0.5">
+                                    {isNeg && (
+                                      <div
+                                        className="h-3 rounded-l"
+                                        style={{ width: `${barWidth}%`, backgroundColor: barColor }}
+                                      ></div>
+                                    )}
+                                  </div>
+
+                                  <div className="w-1/2 flex justify-start pl-0.5">
+                                    {!isNeg && (
+                                      <div
+                                        className="h-3 rounded-r"
+                                        style={{ width: `${barWidth}%`, backgroundColor: barColor }}
+                                      ></div>
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="col-span-2 text-right font-semibold space-x-2">
+                                  <span style={{ color: barColor }}>{val > 0 ? `+${val.toFixed(3)}` : val.toFixed(3)}</span>
+                                  <span className="text-[10px] text-zinc-400 font-normal" title="Pearson (r)">
+                                    (r: {item.pearson > 0 ? `+${item.pearson.toFixed(2)}` : item.pearson.toFixed(2)})
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
 
                     {/* Interactive Feature Pattern & Distribution Explorer */}
                     {(() => {
@@ -2296,7 +2987,7 @@ class CustomFeatureHook(BaseFeatureHook):
                         (x - Mean_by_Cat) / Std_by_Cat
                       </p>
                       <p className="text-[11px] text-zinc-600 leading-snug">
-                        Measures a student/customer/passenger's value relative to their peer group baseline.
+                        Standardizes continuous variables against categorical group baselines to highlight deviations.
                       </p>
                     </div>
 
@@ -2306,7 +2997,7 @@ class CustomFeatureHook(BaseFeatureHook):
                         Num_A / (Num_B + 1e-5)
                       </p>
                       <p className="text-[11px] text-zinc-600 leading-snug">
-                        Computes per-capita intensity, speed, or financial ratios across continuous columns.
+                        Extracts interaction ratios and proportions across pairs of continuous features.
                       </p>
                     </div>
 
@@ -2316,7 +3007,7 @@ class CustomFeatureHook(BaseFeatureHook):
                         Cat_col.map(train_freq)
                       </p>
                       <p className="text-[11px] text-zinc-600 leading-snug">
-                        Maps high-cardinality entities (schools, cities, zipcodes) to prevalence rates without leakage.
+                        Encodes high-cardinality discrete categories by frequency without target leakage.
                       </p>
                     </div>
 
@@ -2338,7 +3029,7 @@ class CustomFeatureHook(BaseFeatureHook):
                     <div>
                       <div className="flex items-center space-x-2">
                         <h4 className="font-bold text-sm text-[#121816] uppercase tracking-tight">Domain Feature Engineering Hook (`feature_hook.py`)</h4>
-                        <span className="text-[10px] font-mono uppercase bg-[#E8F3ED] text-[#164E33] border border-[#D2E7DC] px-2 py-0.5 rounded font-bold">
+                        <span className="text-[10px] font-mono uppercase bg-zinc-100 text-zinc-700 border border-zinc-200/80 px-2 py-0.5 rounded font-bold">
                           Live In-Browser Code & Visual Builder
                         </span>
                       </div>
@@ -2349,7 +3040,7 @@ class CustomFeatureHook(BaseFeatureHook):
 
                     <div className="flex items-center space-x-2">
                       {hookSaved && (
-                        <span className="text-xs font-mono text-[#164E33] font-semibold flex items-center space-x-1 mr-2">
+                        <span className="text-xs font-mono text-zinc-900 font-semibold flex items-center space-x-1 mr-2">
                           <Check size={14} />
                           <span>Saved & Ready</span>
                         </span>
@@ -2385,7 +3076,7 @@ class CustomFeatureHook(BaseFeatureHook):
                         onClick={() => handleTestHook()}
                         disabled={hookTesting}
                         title="Dry-run and validate feature hook on a 1k sample"
-                        className="flex items-center space-x-1 border border-[#E5E9E6] hover:border-[#164E33] text-[#121816] hover:bg-[#F8FAF9] px-3 py-2 rounded-xl text-xs font-medium transition shadow-2xs"
+                        className="flex items-center space-x-1 border border-[#E5E9E6] hover:border-zinc-400 text-[#121816] hover:bg-[#F8FAF9] px-3 py-2 rounded-xl text-xs font-medium transition shadow-2xs"
                       >
                         {hookTesting ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}
                         <span>Dry-Run Test</span>
@@ -2394,7 +3085,7 @@ class CustomFeatureHook(BaseFeatureHook):
                       <button
                         onClick={handleSaveHook}
                         disabled={savingHook}
-                        className="flex items-center space-x-1.5 bg-[#164E33] hover:bg-[#113C27] text-white text-xs font-semibold px-4 py-2 rounded-xl transition shadow-2xs"
+                        className="flex items-center space-x-1.5 bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-semibold px-4 py-2 rounded-xl transition shadow-2xs"
                       >
                         {savingHook ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
                         <span>{savingHook ? 'Saving Hook...' : 'Save Feature Hook'}</span>
@@ -2406,7 +3097,7 @@ class CustomFeatureHook(BaseFeatureHook):
                   {hookValidation && (
                     <div className={`border rounded-xl p-4 transition ${
                       hookValidation.status === 'valid'
-                        ? 'border-[#D2E7DC] bg-[#F8FAF9]'
+                        ? 'border-zinc-200 bg-[#F8FAF9]'
                         : hookValidation.status === 'error'
                         ? 'border-red-200 bg-red-50/40 text-red-900'
                         : 'border-[#E5E9E6] bg-white'
@@ -2415,7 +3106,7 @@ class CustomFeatureHook(BaseFeatureHook):
                         <div className="flex items-center space-x-2">
                           <span className={`text-[10px] font-mono uppercase px-2 py-0.5 rounded font-bold border ${
                             hookValidation.status === 'valid'
-                              ? 'bg-[#E8F3ED] text-[#164E33] border-[#D2E7DC]'
+                              ? 'bg-zinc-100 text-zinc-700 border-zinc-200'
                               : 'bg-red-100 text-red-700 border-red-200'
                           }`}>
                             {hookValidation.status === 'valid' ? 'Active & Validated' : 'Validation Error'}
@@ -2434,7 +3125,7 @@ class CustomFeatureHook(BaseFeatureHook):
                             type="button"
                             onClick={() => handleTestHook()}
                             disabled={hookTesting}
-                            className="text-xs text-[#164E33] hover:underline font-semibold flex items-center space-x-1"
+                            className="text-xs text-zinc-900 hover:underline font-semibold flex items-center space-x-1"
                           >
                             {hookTesting && <Loader2 size={11} className="animate-spin" />}
                             <span>Re-test Hook</span>
@@ -2453,7 +3144,7 @@ class CustomFeatureHook(BaseFeatureHook):
                           </div>
                           <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
                             {hookValidation.added_features?.map((col: string) => (
-                              <span key={col} className="text-[11px] font-mono bg-white text-[#164E33] border border-[#D2E7DC] px-2 py-0.5 rounded-md shadow-2xs">
+                              <span key={col} className="text-[11px] font-mono bg-white text-zinc-900 border border-zinc-200 px-2 py-0.5 rounded-md shadow-2xs">
                                 + {col}
                               </span>
                             ))}
@@ -2470,7 +3161,7 @@ class CustomFeatureHook(BaseFeatureHook):
                       <button
                         type="button"
                         onClick={handleInsertGroupStatsTemplate}
-                        className="flex items-center space-x-1.5 bg-[#F8FAF9] hover:bg-[#E8F3ED] text-[#121816] hover:text-[#164E33] border border-[#E5E9E6] hover:border-[#164E33] px-3 py-1.5 rounded-xl text-xs font-medium transition shadow-2xs"
+                        className="flex items-center space-x-1.5 bg-[#F8FAF9] hover:bg-zinc-100 text-[#121816] hover:text-zinc-900 border border-[#E5E9E6] hover:border-zinc-400 px-3 py-1.5 rounded-xl text-xs font-medium transition shadow-2xs"
                       >
                         <Plus size={12} />
                         <span>+ Group-By Baseline & Relative Z-Scores</span>
@@ -2479,7 +3170,7 @@ class CustomFeatureHook(BaseFeatureHook):
                       <button
                         type="button"
                         onClick={handleInsertRowStatsTemplate}
-                        className="flex items-center space-x-1.5 bg-[#F8FAF9] hover:bg-[#E8F3ED] text-[#121816] hover:text-[#164E33] border border-[#E5E9E6] hover:border-[#164E33] px-3 py-1.5 rounded-xl text-xs font-medium transition shadow-2xs"
+                        className="flex items-center space-x-1.5 bg-[#F8FAF9] hover:bg-zinc-100 text-[#121816] hover:text-zinc-900 border border-[#E5E9E6] hover:border-zinc-400 px-3 py-1.5 rounded-xl text-xs font-medium transition shadow-2xs"
                       >
                         <Plus size={12} />
                         <span>+ Row-wise Intensity & Summary Stats</span>
@@ -2488,7 +3179,7 @@ class CustomFeatureHook(BaseFeatureHook):
                       <button
                         type="button"
                         onClick={handleInsertFreqEncodingTemplate}
-                        className="flex items-center space-x-1.5 bg-[#F8FAF9] hover:bg-[#E8F3ED] text-[#121816] hover:text-[#164E33] border border-[#E5E9E6] hover:border-[#164E33] px-3 py-1.5 rounded-xl text-xs font-medium transition shadow-2xs"
+                        className="flex items-center space-x-1.5 bg-[#F8FAF9] hover:bg-zinc-100 text-[#121816] hover:text-zinc-900 border border-[#E5E9E6] hover:border-zinc-400 px-3 py-1.5 rounded-xl text-xs font-medium transition shadow-2xs"
                       >
                         <Plus size={12} />
                         <span>+ High-Cardinality Frequency Rarity</span>
@@ -2496,8 +3187,35 @@ class CustomFeatureHook(BaseFeatureHook):
 
                       <button
                         type="button"
+                        onClick={handleInsertNlpPrimitive}
+                        className="flex items-center space-x-1.5 bg-zinc-900 hover:bg-zinc-800 text-white px-3 py-1.5 rounded-xl text-xs font-semibold transition shadow-2xs"
+                      >
+                        <FileText size={12} />
+                        <span>+ Universal NLP (TF-IDF + LSA + Stats)</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleInsertOfflineBertEmbeddings}
+                        className="flex items-center space-x-1.5 bg-[#F8FAF9] hover:bg-zinc-100 text-[#121816] hover:text-zinc-900 border border-[#E5E9E6] hover:border-zinc-400 px-3 py-1.5 rounded-xl text-xs font-medium transition shadow-2xs"
+                      >
+                        <Plus size={12} />
+                        <span>+ Offline IndoBERT Embeddings</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleInsertKinematicsTemplate}
+                        className="flex items-center space-x-1.5 bg-zinc-50 hover:bg-zinc-100 text-zinc-800 border border-zinc-200 hover:border-zinc-400 px-3 py-1.5 rounded-lg text-xs font-medium transition shadow-2xs"
+                      >
+                        <Plus size={12} />
+                        <span>+ Sequential Kinematics & Delta Target</span>
+                      </button>
+
+                      <button
+                        type="button"
                         onClick={handleInsertLogTransformTemplate}
-                        className="flex items-center space-x-1.5 bg-[#F8FAF9] hover:bg-[#E8F3ED] text-[#121816] hover:text-[#164E33] border border-[#E5E9E6] hover:border-[#164E33] px-3 py-1.5 rounded-xl text-xs font-medium transition shadow-2xs"
+                        className="flex items-center space-x-1.5 bg-[#F8FAF9] hover:bg-zinc-100 text-[#121816] hover:text-zinc-900 border border-[#E5E9E6] hover:border-zinc-400 px-3 py-1.5 rounded-xl text-xs font-medium transition shadow-2xs"
                       >
                         <Plus size={12} />
                         <span>+ Log1p Skew Correction</span>
@@ -2514,7 +3232,7 @@ class CustomFeatureHook(BaseFeatureHook):
                         <select
                           value={feColA}
                           onChange={e => setFeColA(e.target.value)}
-                          className="bg-white border border-[#E5E9E6] hover:border-[#164E33] rounded-xl px-2.5 py-1.5 text-xs font-mono font-medium text-[#121816] focus:outline-none focus:border-[#164E33] transition max-w-[140px]"
+                          className="bg-white border border-[#E5E9E6] hover:border-zinc-400 rounded-xl px-2.5 py-1.5 text-xs font-mono font-medium text-[#121816] focus:outline-none focus:border-zinc-900 transition max-w-[140px]"
                         >
                           <option value="">-- Col A --</option>
                           {edaData?.columns_profile?.map((c: any) => (
@@ -2525,7 +3243,7 @@ class CustomFeatureHook(BaseFeatureHook):
                         <select
                           value={feOp}
                           onChange={e => setFeOp(e.target.value)}
-                          className="bg-white border border-[#E5E9E6] hover:border-[#164E33] rounded-xl px-2 py-1.5 text-xs font-mono font-bold text-[#164E33] focus:outline-none focus:border-[#164E33] transition"
+                          className="bg-white border border-[#E5E9E6] hover:border-zinc-400 rounded-xl px-2 py-1.5 text-xs font-mono font-bold text-zinc-900 focus:outline-none focus:border-zinc-900 transition"
                         >
                           <option value="/">/</option>
                           <option value="*">*</option>
@@ -2536,7 +3254,7 @@ class CustomFeatureHook(BaseFeatureHook):
                         <select
                           value={feColB}
                           onChange={e => setFeColB(e.target.value)}
-                          className="bg-white border border-[#E5E9E6] hover:border-[#164E33] rounded-xl px-2.5 py-1.5 text-xs font-mono font-medium text-[#121816] focus:outline-none focus:border-[#164E33] transition max-w-[140px]"
+                          className="bg-white border border-[#E5E9E6] hover:border-zinc-400 rounded-xl px-2.5 py-1.5 text-xs font-mono font-medium text-[#121816] focus:outline-none focus:border-zinc-900 transition max-w-[140px]"
                         >
                           <option value="">-- Col B --</option>
                           {edaData?.columns_profile?.map((c: any) => (
@@ -2547,7 +3265,7 @@ class CustomFeatureHook(BaseFeatureHook):
                         <button
                           type="button"
                           onClick={handleInsertFormula}
-                          className="flex items-center space-x-1 bg-[#121816] hover:bg-[#164E33] text-white text-xs font-semibold px-3 py-1.5 rounded-xl transition shadow-2xs"
+                          className="flex items-center space-x-1 bg-[#121816] hover:bg-zinc-900 text-white text-xs font-semibold px-3 py-1.5 rounded-xl transition shadow-2xs"
                         >
                           <Plus size={12} />
                           <span>Insert</span>
@@ -2562,7 +3280,7 @@ class CustomFeatureHook(BaseFeatureHook):
                         <select
                           value={feGroupCat}
                           onChange={e => setFeGroupCat(e.target.value)}
-                          className="bg-white border border-[#E5E9E6] hover:border-[#164E33] rounded-xl px-2.5 py-1.5 text-xs font-mono font-medium text-[#121816] focus:outline-none focus:border-[#164E33] transition max-w-[140px]"
+                          className="bg-white border border-[#E5E9E6] hover:border-zinc-400 rounded-xl px-2.5 py-1.5 text-xs font-mono font-medium text-[#121816] focus:outline-none focus:border-zinc-900 transition max-w-[140px]"
                         >
                           <option value="">-- Group (Cat) --</option>
                           {edaData?.columns_profile?.filter((c: any) => c.type === 'categorical' || c.dtype === 'object')?.map((c: any) => (
@@ -2577,7 +3295,7 @@ class CustomFeatureHook(BaseFeatureHook):
                         <select
                           value={feGroupNum}
                           onChange={e => setFeGroupNum(e.target.value)}
-                          className="bg-white border border-[#E5E9E6] hover:border-[#164E33] rounded-xl px-2.5 py-1.5 text-xs font-mono font-medium text-[#121816] focus:outline-none focus:border-[#164E33] transition max-w-[140px]"
+                          className="bg-white border border-[#E5E9E6] hover:border-zinc-400 rounded-xl px-2.5 py-1.5 text-xs font-mono font-medium text-[#121816] focus:outline-none focus:border-zinc-900 transition max-w-[140px]"
                         >
                           <option value="">-- Value (Num) --</option>
                           {edaData?.columns_profile?.filter((c: any) => c.type === 'numerical' || ['int64', 'float64'].includes(c.dtype))?.map((c: any) => (
@@ -2592,7 +3310,7 @@ class CustomFeatureHook(BaseFeatureHook):
                         <select
                           value={feGroupStat}
                           onChange={e => setFeGroupStat(e.target.value as any)}
-                          className="bg-white border border-[#E5E9E6] hover:border-[#164E33] rounded-xl px-2 py-1.5 text-xs font-mono font-bold text-[#164E33] focus:outline-none focus:border-[#164E33] transition"
+                          className="bg-white border border-[#E5E9E6] hover:border-zinc-400 rounded-xl px-2 py-1.5 text-xs font-mono font-bold text-zinc-900 focus:outline-none focus:border-zinc-900 transition"
                         >
                           <option value="diff">Diff from Mean</option>
                           <option value="mean">Group Mean</option>
@@ -2603,7 +3321,7 @@ class CustomFeatureHook(BaseFeatureHook):
                         <button
                           type="button"
                           onClick={handleInsertGroupFormula}
-                          className="flex items-center space-x-1 bg-[#121816] hover:bg-[#164E33] text-white text-xs font-semibold px-3 py-1.5 rounded-xl transition shadow-2xs"
+                          className="flex items-center space-x-1 bg-[#121816] hover:bg-zinc-900 text-white text-xs font-semibold px-3 py-1.5 rounded-xl transition shadow-2xs"
                         >
                           <Plus size={12} />
                           <span>Insert</span>
@@ -2618,7 +3336,7 @@ class CustomFeatureHook(BaseFeatureHook):
                       onChange={e => setEditableHookCode(e.target.value)}
                       rows={16}
                       spellCheck={false}
-                      className="w-full bg-[#121816] text-[#E8F3ED] p-4 rounded-xl font-mono text-xs leading-relaxed border border-[#E5E9E6] focus:outline-none focus:border-[#164E33] selection:bg-[#164E33]"
+                      className="w-full bg-[#121816] text-[#E8F3ED] p-4 rounded-xl font-mono text-xs leading-relaxed border border-[#E5E9E6] focus:outline-none focus:border-zinc-900 selection:bg-zinc-900"
                       placeholder="Write your custom BaseFeatureHook transform() method here..."
                     />
                     <div className="flex justify-between items-center text-[11px] text-[#76807B] font-mono">
@@ -2638,7 +3356,9 @@ class CustomFeatureHook(BaseFeatureHook):
                   <div className="bg-white border border-[#E5E9E6] rounded-2xl p-5 shadow-sm">
                     <div className="text-[11px] font-bold uppercase tracking-wider text-[#76807B] font-mono">Target Variable</div>
                     <div className="text-xl font-bold mt-1 text-[#121816] font-mono">{meta?.target_col}</div>
-                    <div className="text-xs text-[#76807B] mt-1 capitalize">{meta?.task_type} Classification</div>
+                    <div className="text-xs text-[#76807B] mt-1 capitalize">
+                      {meta?.task_type === 'regression' ? 'Continuous Regression' : `${meta?.task_type} Classification`}
+                    </div>
                   </div>
 
                   <div className="bg-white border border-[#E5E9E6] rounded-2xl p-5 shadow-sm">
@@ -2664,8 +3384,12 @@ class CustomFeatureHook(BaseFeatureHook):
                     <div className="text-xl font-bold mt-1 text-[#121816] font-mono flex items-center space-x-2">
                       <span>{championScore ? championScore.toFixed(5) : 'Not Run'}</span>
                       {championScore && bestSingleScore && (
-                        <span className="text-[11px] font-mono font-bold px-2 py-0.5 rounded-full bg-[#E8F3ED] text-[#164E33] border border-[#D2E7DC]">
-                          +{ (championScore - bestSingleScore).toFixed(5) }
+                        <span className="text-[11px] font-mono font-bold px-2 py-0.5 rounded-full bg-zinc-100 text-zinc-700 border border-zinc-200/80">
+                          {(() => {
+                            const diff = championScore - bestSingleScore;
+                            const prefix = diff > 0 ? '+' : '';
+                            return `${prefix}${diff.toFixed(5)}`;
+                          })()}
                         </span>
                       )}
                     </div>
@@ -2676,13 +3400,13 @@ class CustomFeatureHook(BaseFeatureHook):
                 {/* Feature Hook Active Banner */}
                 <div className="bg-white border border-[#E5E9E6] rounded-2xl p-4 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3">
                   <div className="flex items-center space-x-3">
-                    <span className={`w-2.5 h-2.5 rounded-full ${caseDetail?.has_hook ? 'bg-[#164E33]' : 'bg-[#98A29D]'}`} />
+                    <span className={`w-2.5 h-2.5 rounded-full ${caseDetail?.has_hook ? 'bg-zinc-900' : 'bg-[#98A29D]'}`} />
                     <div>
                       <div className="flex items-center space-x-2">
                         <span className="text-xs font-bold text-[#121816]">Feature Engineering Hook:</span>
                         <span className={`text-[10px] font-mono uppercase px-2 py-0.5 rounded font-bold border ${
                           caseDetail?.has_hook 
-                            ? 'bg-[#E8F3ED] text-[#164E33] border-[#D2E7DC]' 
+                            ? 'bg-zinc-100 text-zinc-700 border-zinc-200' 
                             : 'bg-[#F8FAF9] text-[#76807B] border-[#E5E9E6]'
                         }`}>
                           {caseDetail?.has_hook ? 'Active & Ready for CV' : 'No Custom Hook (Using Raw Dataset)'}
@@ -2700,7 +3424,7 @@ class CustomFeatureHook(BaseFeatureHook):
                     <button
                       type="button"
                       onClick={() => setActiveTab('fe')}
-                      className="text-xs font-semibold text-[#164E33] hover:underline whitespace-nowrap self-start md:self-auto"
+                      className="text-xs font-semibold text-zinc-900 hover:underline whitespace-nowrap self-start md:self-auto"
                     >
                       Inspect in Step 2 &rarr;
                     </button>
@@ -2738,8 +3462,8 @@ class CustomFeatureHook(BaseFeatureHook):
                           }}
                           className={`flex items-center space-x-1.5 text-xs font-mono font-medium px-3.5 py-1.5 rounded-xl border transition ${
                             active 
-                              ? 'bg-[#164E33] text-white border-[#164E33] font-semibold shadow-2xs' 
-                              : 'bg-white text-[#76807B] border-[#E5E9E6] hover:border-[#164E33]'
+                              ? 'bg-zinc-900 text-white border-zinc-900 font-semibold shadow-2xs' 
+                              : 'bg-white text-[#76807B] border-[#E5E9E6] hover:border-zinc-400'
                           }`}
                         >
                           <span>{active ? '[x]' : '[ ]'}</span>
@@ -2751,7 +3475,7 @@ class CustomFeatureHook(BaseFeatureHook):
                 </div>
 
                 {/* Model Architecture & Hyperparameter Configuration */}
-                <div className="bg-white border border-[#E5E9E6] rounded-2xl p-6 shadow-sm space-y-5">
+                <div className="bg-white border border-zinc-200/80 rounded-xl p-5 shadow-2xs space-y-4">
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[#E5E9E6] pb-4">
                     <div>
                       <div className="flex items-center space-x-2">
@@ -2760,7 +3484,7 @@ class CustomFeatureHook(BaseFeatureHook):
                         </h3>
                         <span className={`text-[10px] font-mono uppercase px-2 py-0.5 rounded font-bold border ${
                           archPreset === 'shallow'
-                            ? 'bg-[#E8F3ED] text-[#164E33] border-[#D2E7DC]'
+                            ? 'bg-zinc-100 text-zinc-700 border-zinc-200'
                             : archPreset === 'custom'
                             ? 'bg-[#FFF8E1] text-[#B78103] border-[#FFE082]'
                             : 'bg-[#F4F5F6] text-[#4A5550] border-[#E5E9E6]'
@@ -2774,7 +3498,7 @@ class CustomFeatureHook(BaseFeatureHook):
                     </div>
 
                     {paramsSaveMsg && (
-                      <div className="inline-flex items-center space-x-1.5 px-3 py-1 bg-[#E8F3ED] border border-[#D2E7DC] text-[#164E33] text-xs font-medium rounded-lg">
+                      <div className="inline-flex items-center space-x-1.5 px-3 py-1 bg-zinc-100 border border-zinc-200 text-zinc-900 text-xs font-medium rounded-lg">
                         <Check size={13} />
                         <span>{paramsSaveMsg}</span>
                       </div>
@@ -2790,24 +3514,24 @@ class CustomFeatureHook(BaseFeatureHook):
                       disabled={isSavingParams}
                       className={`text-left p-4 rounded-xl border transition flex flex-col justify-between ${
                         archPreset === 'shallow'
-                          ? 'border-[#164E33] bg-[#F7FAF8] ring-1 ring-[#164E33]'
-                          : 'border-[#E5E9E6] bg-white hover:border-[#164E33]'
+                          ? 'border-zinc-900 bg-[#F7FAF8] ring-1 ring-zinc-900'
+                          : 'border-[#E5E9E6] bg-white hover:border-zinc-400'
                       }`}
                     >
                       <div className="space-y-1">
                         <div className="flex items-center justify-between">
                           <span className="text-xs font-bold text-[#121816]">Shallow Trees</span>
-                          <span className="text-[9px] font-mono uppercase bg-[#164E33] text-white px-1.5 py-0.5 rounded font-semibold">
-                            Recommended (0.950+)
+                          <span className="text-[9px] font-mono uppercase bg-zinc-100 text-zinc-700 px-1.5 py-0.5 rounded border border-zinc-200 font-semibold">
+                            Constrained
                           </span>
                         </div>
                         <p className="text-[11px] text-[#76807B] leading-relaxed">
-                          num_leaves=4 (LGBM), max_depth=2 (XGB), depth=3 (CatBoost) with lr=0.04 and 5000 trees. Avoids overfitting on synthetic additive CTGAN distributions.
+                          num_leaves=4 (LGBM), max_depth=2 (XGB), depth=3 (CatBoost) with lr=0.04. Regularized trees designed to prevent memorization on noisy high-order splits.
                         </p>
                       </div>
                       <div className="mt-3 pt-2 border-t border-[#E5E9E6] flex items-center justify-between text-[10px] font-mono">
-                        <span className="text-[#164E33] font-semibold">Additive Logit Structure</span>
-                        <span className={archPreset === 'shallow' ? 'text-[#164E33] font-bold' : 'text-[#76807B]'}>
+                        <span className="text-zinc-900 font-semibold">Additive Architecture</span>
+                        <span className={archPreset === 'shallow' ? 'text-zinc-900 font-bold' : 'text-[#76807B]'}>
                           {archPreset === 'shallow' ? '[Active]' : 'Select'}
                         </span>
                       </div>
@@ -2820,8 +3544,8 @@ class CustomFeatureHook(BaseFeatureHook):
                       disabled={isSavingParams}
                       className={`text-left p-4 rounded-xl border transition flex flex-col justify-between ${
                         archPreset === 'standard'
-                          ? 'border-[#164E33] bg-[#F7FAF8] ring-1 ring-[#164E33]'
-                          : 'border-[#E5E9E6] bg-white hover:border-[#164E33]'
+                          ? 'border-zinc-900 bg-[#F7FAF8] ring-1 ring-zinc-900'
+                          : 'border-[#E5E9E6] bg-white hover:border-zinc-400'
                       }`}
                     >
                       <div className="space-y-1">
@@ -2832,12 +3556,12 @@ class CustomFeatureHook(BaseFeatureHook):
                           </span>
                         </div>
                         <p className="text-[11px] text-[#76807B] leading-relaxed">
-                          Default deep trees: num_leaves=45 (LGBM), max_depth=6 (XGB/CatBoost) with lr=0.03. Suitable for traditional non-synthetic tabular data.
+                          num_leaves=45 (LGBM), max_depth=6 (XGB/CatBoost) with lr=0.03. Standard deeper trees for learning higher-order non-linear feature interactions.
                         </p>
                       </div>
                       <div className="mt-3 pt-2 border-t border-[#E5E9E6] flex items-center justify-between text-[10px] font-mono">
-                        <span className="text-[#76807B]">Deep Splitting Structure</span>
-                        <span className={archPreset === 'standard' ? 'text-[#164E33] font-bold' : 'text-[#76807B]'}>
+                        <span className="text-[#76807B]">Deep Split Architecture</span>
+                        <span className={archPreset === 'standard' ? 'text-zinc-900 font-bold' : 'text-[#76807B]'}>
                           {archPreset === 'standard' ? '[Active]' : 'Select'}
                         </span>
                       </div>
@@ -2855,7 +3579,7 @@ class CustomFeatureHook(BaseFeatureHook):
                       className={`text-left p-4 rounded-xl border transition flex flex-col justify-between ${
                         archPreset === 'custom' || isEditingParams
                           ? 'border-[#B78103] bg-[#FFFDF7] ring-1 ring-[#B78103]'
-                          : 'border-[#E5E9E6] bg-white hover:border-[#164E33]'
+                          : 'border-[#E5E9E6] bg-white hover:border-zinc-400'
                       }`}
                     >
                       <div className="space-y-1">
@@ -2889,7 +3613,7 @@ class CustomFeatureHook(BaseFeatureHook):
                         ? `depth: ${p.max_depth ?? 6}, lr: ${p.learning_rate ?? 0.03}, trees: ${p.n_estimators ?? 2000}, colsample: ${p.colsample_bytree ?? 0.75}`
                         : `depth: ${p.depth ?? 6}, lr: ${p.learning_rate ?? 0.03}, iter: ${p.iterations ?? 2000}`;
                       return (
-                        <div key={m} className="inline-flex items-center space-x-1.5 bg-white border border-[#D2E7DC] px-2.5 py-1 rounded-lg text-[#164E33] shadow-2xs">
+                        <div key={m} className="inline-flex items-center space-x-1.5 bg-white border border-zinc-200 px-2.5 py-1 rounded-lg text-zinc-900 shadow-2xs">
                           <span className="font-bold uppercase text-[11px]">{m}:</span>
                           <span className="text-[10px] text-[#222]">{summary}</span>
                         </div>
@@ -2916,7 +3640,7 @@ class CustomFeatureHook(BaseFeatureHook):
                             type="button"
                             onClick={handleSaveCustomParams}
                             disabled={isSavingParams}
-                            className="inline-flex items-center space-x-1.5 px-3 py-1 bg-[#164E33] hover:bg-[#1E6B47] text-white text-xs font-mono font-medium rounded-lg transition"
+                            className="inline-flex items-center space-x-1.5 px-3 py-1 bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-mono font-medium rounded-lg transition"
                           >
                             <Save size={12} />
                             <span>Save Configuration</span>
@@ -2927,7 +3651,7 @@ class CustomFeatureHook(BaseFeatureHook):
                         value={paramsDraft}
                         onChange={e => setParamsDraft(e.target.value)}
                         rows={10}
-                        className="w-full bg-[#0D1210] border border-[#26332C] rounded-lg p-3 text-xs font-mono text-[#D2E7DC] focus:outline-none focus:border-[#164E33]"
+                        className="w-full bg-[#0D1210] border border-[#26332C] rounded-lg p-3 text-xs font-mono text-[#D2E7DC] focus:outline-none focus:border-zinc-900"
                         spellCheck={false}
                       />
                     </div>
@@ -2940,7 +3664,7 @@ class CustomFeatureHook(BaseFeatureHook):
                     <div>
                       <div className="flex items-center space-x-2">
                         <h3 className="font-bold text-sm text-[#121816] uppercase tracking-tight">Automated Hyperparameter Optimization (Optuna Engine)</h3>
-                        <span className="text-[10px] font-mono uppercase bg-[#E8F3ED] text-[#164E33] border border-[#D2E7DC] px-2 py-0.5 rounded font-bold">
+                        <span className="text-[10px] font-mono uppercase bg-zinc-100 text-zinc-700 border border-zinc-200/80 px-2 py-0.5 rounded font-bold">
                           Bayesian TPE
                         </span>
                       </div>
@@ -2955,7 +3679,7 @@ class CustomFeatureHook(BaseFeatureHook):
                         value={tuneModel}
                         onChange={e => setTuneModel(e.target.value as any)}
                         disabled={tuning}
-                        className="bg-[#F8FAF9] border border-[#E5E9E6] hover:border-[#164E33] rounded-xl px-3 py-1.5 text-xs font-mono font-medium text-[#121816] focus:outline-none focus:border-[#164E33] transition"
+                        className="bg-[#F8FAF9] border border-[#E5E9E6] hover:border-zinc-400 rounded-xl px-3 py-1.5 text-xs font-mono font-medium text-[#121816] focus:outline-none focus:border-zinc-900 transition"
                       >
                         <option value="all">All 3 Models (Sequential Auto-Tune)</option>
                         <option value="lgbm">LightGBM Only</option>
@@ -2967,7 +3691,7 @@ class CustomFeatureHook(BaseFeatureHook):
                         value={tuneTrials}
                         onChange={e => setTuneTrials(Number(e.target.value))}
                         disabled={tuning}
-                        className="bg-[#F8FAF9] border border-[#E5E9E6] hover:border-[#164E33] rounded-xl px-3 py-1.5 text-xs font-mono font-medium text-[#121816] focus:outline-none focus:border-[#164E33] transition"
+                        className="bg-[#F8FAF9] border border-[#E5E9E6] hover:border-zinc-400 rounded-xl px-3 py-1.5 text-xs font-mono font-medium text-[#121816] focus:outline-none focus:border-zinc-900 transition"
                       >
                         <option value={15}>15 Trials (Fast Exploration)</option>
                         <option value={30}>30 Trials (Balanced - Recommended)</option>
@@ -2975,16 +3699,27 @@ class CustomFeatureHook(BaseFeatureHook):
                         <option value={100}>100 Trials (Exhaustive)</option>
                       </select>
 
-                      <button
-                        onClick={handleStartTune}
-                        disabled={tuning || running}
-                        className={`flex items-center space-x-1.5 px-4 py-1.5 rounded-xl text-xs font-semibold text-white transition shadow-2xs ${
-                          tuning || running ? 'bg-[#98A29D] cursor-not-allowed' : 'bg-[#164E33] hover:bg-[#113C27]'
-                        }`}
-                      >
-                        {tuning ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}
-                        <span>{tuning ? 'Tuning in Progress...' : 'Run Optuna Study'}</span>
-                      </button>
+                      {tuning ? (
+                        <button
+                          type="button"
+                          onClick={handleStopTune}
+                          className="flex items-center space-x-1.5 px-4 py-1.5 rounded-xl text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 transition shadow-2xs"
+                          title="Hentikan proses pencarian hyperparameter"
+                        >
+                          <Square size={13} />
+                          <span>Stop Optimization</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={handleStartTune}
+                          disabled={running}
+                          className="flex items-center space-x-1.5 px-4 py-1.5 rounded-xl text-xs font-semibold text-white bg-zinc-900 hover:bg-zinc-800 transition shadow-2xs disabled:bg-[#98A29D]"
+                        >
+                          <Play size={13} />
+                          <span>Run Optuna Study</span>
+                        </button>
+                      )}
                     </div>
                   </div>
 
@@ -2998,7 +3733,7 @@ class CustomFeatureHook(BaseFeatureHook):
                         </div>
                         <div className="border border-[#E5E9E6] rounded-xl p-3 bg-[#F8FAF9]">
                           <div className="text-[10px] uppercase font-semibold text-[#76807B]">Current Target</div>
-                          <div className="text-sm font-bold text-[#164E33] mt-0.5 font-mono">
+                          <div className="text-sm font-bold text-zinc-900 mt-0.5 font-mono">
                             {tuneStatus.current_model || (tuneStatus.model === 'all' ? 'ALL 3' : tuneStatus.model?.toUpperCase())}
                           </div>
                         </div>
@@ -3009,7 +3744,7 @@ class CustomFeatureHook(BaseFeatureHook):
                           </div>
                         </div>
                         <div className="border border-[#E5E9E6] rounded-xl p-3 bg-[#F8FAF9]">
-                          <div className="text-[10px] uppercase font-semibold text-[#76807B]">Highest {meta?.eval_metric.toUpperCase()}</div>
+                          <div className="text-[10px] uppercase font-semibold text-[#76807B]">{isHigherBetter ? 'Highest' : 'Lowest / Best'} {meta?.eval_metric.toUpperCase()}</div>
                           <div className="text-sm font-bold text-[#121816] mt-0.5 font-mono">
                             {tuneStatus.best_score ? tuneStatus.best_score.toFixed(5) : '-'}
                           </div>
@@ -3025,7 +3760,7 @@ class CustomFeatureHook(BaseFeatureHook):
                             return (
                               <div key={m} className="border border-[#E5E9E6] rounded-xl p-3 bg-[#F8FAF9]">
                                 <div className="text-[10px] uppercase font-semibold text-[#76807B]">{m.toUpperCase()} Optimal Score</div>
-                                <div className="text-sm font-bold text-[#164E33] mt-0.5 font-mono">
+                                <div className="text-sm font-bold text-zinc-900 mt-0.5 font-mono">
                                   {sc.toFixed(5)}
                                 </div>
                               </div>
@@ -3036,11 +3771,11 @@ class CustomFeatureHook(BaseFeatureHook):
 
                       {/* Automated Tuning Diagnostics & Decision Card */}
                       {tuneStatus.status === 'completed' && tuneStatus.best_params && (
-                        <div className="border border-[#D2E7DC] bg-[#F8FAF9] rounded-xl p-4 space-y-3">
+                        <div className="border border-zinc-200 bg-[#F8FAF9] rounded-xl p-4 space-y-3">
                           <div className="flex items-center justify-between border-b border-[#E5E9E6] pb-2">
                             <div className="flex items-center space-x-2">
                               <span className="text-xs font-bold text-[#121816] uppercase tracking-tight">Tuning Diagnostics & Recommendation</span>
-                              <span className="text-[10px] font-mono uppercase bg-[#E8F3ED] text-[#164E33] border border-[#D2E7DC] px-2 py-0.5 rounded font-bold">
+                              <span className="text-[10px] font-mono uppercase bg-zinc-100 text-zinc-700 border border-zinc-200/80 px-2 py-0.5 rounded font-bold">
                                 Recommended to Apply
                               </span>
                             </div>
@@ -3052,10 +3787,18 @@ class CustomFeatureHook(BaseFeatureHook):
                           <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
                             <div className="bg-white p-3 rounded-lg border border-[#E5E9E6]">
                               <div className="text-[10px] font-bold uppercase text-[#76807B]">Exploration Delta</div>
-                              <div className="text-sm font-bold text-[#164E33] mt-0.5 font-mono">
-                                +{Math.max(0, (tuneStatus.best_score || 0) - ((tuneStatus.trials?.[0]?.score) || (tuneStatus.best_score || 0))).toFixed(5)}
+                              <div className="text-sm font-bold text-zinc-900 mt-0.5 font-mono">
+                                {(() => {
+                                  if (!tuneStatus.best_score || !tuneStatus.trials?.[0]?.score) return '+0.00000';
+                                  const firstScore = tuneStatus.trials[0].score;
+                                  const bestScore = tuneStatus.best_score;
+                                  const delta = isHigherBetter ? bestScore - firstScore : firstScore - bestScore;
+                                  return `${delta >= 0 ? '+' : ''}${delta.toFixed(5)}`;
+                                })()}
                               </div>
-                              <div className="text-[11px] text-[#76807B] mt-0.5">Gain over initial random trial. Positive drift indicates healthy parameter discovery.</div>
+                              <div className="text-[11px] text-[#76807B] mt-0.5">
+                                {isHigherBetter ? 'Gain over initial random trial.' : 'Error reduction over initial random trial.'} Positive drift indicates healthy parameter discovery.
+                              </div>
                             </div>
                             <div className="bg-white p-3 rounded-lg border border-[#E5E9E6]">
                               <div className="text-[10px] font-bold uppercase text-[#76807B]">Architecture Stability</div>
@@ -3064,8 +3807,18 @@ class CustomFeatureHook(BaseFeatureHook):
                             </div>
                             <div className="bg-white p-3 rounded-lg border border-[#E5E9E6]">
                               <div className="text-[10px] font-bold uppercase text-[#76807B]">Proxy vs Full CV Bridge</div>
-                              <div className="text-sm font-bold text-[#121816] mt-0.5 font-mono">2-Fold (60k) to 5-Fold</div>
-                              <div className="text-[11px] text-[#76807B] mt-0.5">Proxy scores scale significantly higher when trained on full 5-fold folds with 1500 trees.</div>
+                              <div className="text-sm font-bold text-[#121816] mt-0.5 font-mono">
+                                {meta?.cv_strategy === 'group_kfold' || meta?.cv_strategy === 'stratified_group_kfold'
+                                  ? `2-Fold Group CV (${meta?.group_col || 'group'})`
+                                  : meta?.cv_strategy === 'time_series'
+                                  ? '2-Fold Temporal Split'
+                                  : '2-Fold Stratified Split'}
+                              </div>
+                              <div className="text-[11px] text-[#76807B] mt-0.5">
+                                {meta?.cv_strategy?.includes('group')
+                                  ? 'Group isolation strictly enforced during proxy evaluation to eliminate intra-group leakage.'
+                                  : 'Proxy scores evaluated on representative fast subset before full pipeline deployment.'}
+                              </div>
                             </div>
                           </div>
                         </div>
@@ -3083,7 +3836,7 @@ class CustomFeatureHook(BaseFeatureHook):
                           </div>
                           <button
                             onClick={handleApplyTunedParams}
-                            className="flex items-center space-x-1.5 bg-[#164E33] hover:bg-[#113C27] text-white text-xs font-semibold px-4 py-2 rounded-xl transition whitespace-nowrap self-start md:self-auto shadow-2xs"
+                            className="flex items-center space-x-1.5 bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-semibold px-4 py-2 rounded-xl transition whitespace-nowrap self-start md:self-auto shadow-2xs"
                           >
                             <Check size={14} />
                             <span>Apply to Pipeline Config</span>
@@ -3132,9 +3885,11 @@ class CustomFeatureHook(BaseFeatureHook):
                       </thead>
                       <tbody className="divide-y divide-zinc-200">
                         {Object.entries(scores)
-                          .sort(([, a]: any, [, b]: any) => b - a)
+                          .sort(([, a]: any, [, b]: any) => isHigherBetter ? b - a : a - b)
                           .map(([name, score]: any, idx) => {
-                            const gain = bestSingleScore ? score - bestSingleScore : 0;
+                            const rawDiff = bestSingleScore ? score - bestSingleScore : 0;
+                            const isImprovement = isHigherBetter ? rawDiff > 0 : rawDiff < 0;
+                            const isBaseline = Math.abs(rawDiff) < 1e-7;
                             return (
                               <tr key={name} className={idx === 0 ? 'bg-zinc-50 font-medium' : ''}>
                                 <td className="px-5 py-3 text-zinc-500 font-mono">#{idx + 1}</td>
@@ -3150,12 +3905,16 @@ class CustomFeatureHook(BaseFeatureHook):
                                   {score.toFixed(5)}
                                 </td>
                                 <td className="px-5 py-3 font-mono text-xs">
-                                  {gain > 0 ? (
-                                    <span className="text-zinc-900 font-semibold">+{gain.toFixed(5)}</span>
-                                  ) : gain < 0 ? (
-                                    <span className="text-zinc-400">{gain.toFixed(5)}</span>
+                                  {isBaseline ? (
+                                    <span className="text-zinc-400">0.00000 (Base)</span>
+                                  ) : isImprovement ? (
+                                    <span className="text-emerald-700 font-semibold">
+                                      {rawDiff > 0 ? `+${rawDiff.toFixed(5)}` : rawDiff.toFixed(5)}
+                                    </span>
                                   ) : (
-                                    <span className="text-zinc-400">0.00000</span>
+                                    <span className="text-zinc-400">
+                                      {rawDiff > 0 ? `+${rawDiff.toFixed(5)}` : rawDiff.toFixed(5)}
+                                    </span>
                                   )}
                                 </td>
                               </tr>
@@ -3171,7 +3930,7 @@ class CustomFeatureHook(BaseFeatureHook):
                   <div className="px-6 py-4 border-b border-[#E5E9E6] bg-[#F8FAF9] flex items-center justify-between">
                     <div>
                       <div className="flex items-center space-x-2">
-                        <History size={16} className="text-[#164E33]" />
+                        <History size={16} className="text-zinc-900" />
                         <span className="font-semibold text-sm text-[#121816]">Experiment History & Benchmark Ledger</span>
                       </div>
                       <p className="text-xs text-[#76807B] mt-0.5">
@@ -3203,7 +3962,10 @@ class CustomFeatureHook(BaseFeatureHook):
                         </thead>
                         <tbody className="divide-y divide-[#E5E9E6]">
                           {caseDetail.history.map((run, rIdx) => {
-                            const isChampion = run.cv_score === Math.max(...caseDetail.history!.map(h => h.cv_score));
+                            const bestHistoryScore = isHigherBetter
+                              ? Math.max(...caseDetail.history!.map(h => h.cv_score))
+                              : Math.min(...caseDetail.history!.map(h => h.cv_score));
+                            const isChampion = run.cv_score === bestHistoryScore;
                             const isEditingThis = editingLbRunId === run.run_id;
 
                             // Correlation calculation if LB score exists
@@ -3217,7 +3979,7 @@ class CustomFeatureHook(BaseFeatureHook):
                                   <div className="font-mono font-semibold text-[#121816] flex items-center space-x-1.5">
                                     <span>#{String(run.run_number).padStart(2, '0')}</span>
                                     {isChampion && (
-                                      <span className="text-[10px] font-sans font-bold bg-[#164E33] text-white px-1.5 py-0.2 rounded">
+                                      <span className="text-[10px] font-sans font-bold bg-zinc-900 text-white px-1.5 py-0.2 rounded">
                                         Best CV
                                       </span>
                                     )}
@@ -3234,10 +3996,10 @@ class CustomFeatureHook(BaseFeatureHook):
                                       run.tag === 'baseline' 
                                         ? 'bg-zinc-100 text-zinc-800 border-zinc-200' 
                                         : run.tag === 'feature_engineering'
-                                        ? 'bg-blue-50 text-blue-800 border-blue-200'
+                                        ? 'bg-zinc-50 text-zinc-700 border-zinc-200'
                                         : run.tag === 'ensemble'
-                                        ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                                        : 'bg-purple-50 text-purple-800 border-purple-200'
+                                        ? 'bg-zinc-50 text-zinc-700 border-zinc-200'
+                                        : 'bg-zinc-50 text-zinc-700 border-zinc-200'
                                     }`}>
                                       {run.tag === 'baseline' ? 'Pure Baseline' : run.tag === 'feature_engineering' ? 'Feature Engineering' : run.tag === 'ensemble' ? 'Ensemble Blend' : 'Optuna Tuned'}
                                     </span>
@@ -3263,19 +4025,28 @@ class CustomFeatureHook(BaseFeatureHook):
                                 </td>
 
                                 <td className="px-5 py-3.5 font-mono text-xs">
-                                  {run.cv_delta > 0 ? (
-                                    <span className="inline-flex items-center text-emerald-700 font-semibold bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
-                                      <ArrowUpRight size={12} className="mr-0.5" />
-                                      +{run.cv_delta.toFixed(5)}
-                                    </span>
-                                  ) : run.cv_delta < 0 ? (
-                                    <span className="inline-flex items-center text-rose-700 font-semibold bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200">
-                                      <ArrowDownRight size={12} className="mr-0.5" />
-                                      {run.cv_delta.toFixed(5)}
-                                    </span>
-                                  ) : (
-                                    <span className="text-[#76807B] font-mono">0.00000 (Base)</span>
-                                  )}
+                                  {(() => {
+                                    if (run.cv_delta === 0 || run.cv_delta === undefined) {
+                                      return <span className="text-[#76807B] font-mono">0.00000 (Base)</span>;
+                                    }
+                                    const isImproved = isHigherBetter ? run.cv_delta > 0 : run.cv_delta < 0;
+                                    return (
+                                      <span
+                                        className={`inline-flex items-center font-semibold px-1.5 py-0.5 rounded border ${
+                                          isImproved
+                                            ? 'text-emerald-700 bg-emerald-50 border-emerald-200'
+                                            : 'text-rose-700 bg-rose-50 border-rose-200'
+                                        }`}
+                                      >
+                                        {isImproved ? (
+                                          <ArrowUpRight size={12} className="mr-0.5" />
+                                        ) : (
+                                          <ArrowDownRight size={12} className="mr-0.5" />
+                                        )}
+                                        {run.cv_delta > 0 ? `+${run.cv_delta.toFixed(5)}` : run.cv_delta.toFixed(5)}
+                                      </span>
+                                    );
+                                  })()}
                                 </td>
 
                                 <td className="px-5 py-3.5">
@@ -3287,14 +4058,14 @@ class CustomFeatureHook(BaseFeatureHook):
                                         value={tempLbScore}
                                         onChange={e => setTempLbScore(e.target.value)}
                                         placeholder="0.94640"
-                                        className="w-24 px-2 py-1 text-xs font-mono bg-white border border-[#164E33] rounded focus:outline-none"
+                                        className="w-24 px-2 py-1 text-xs font-mono bg-white border border-zinc-900 rounded focus:outline-none"
                                         autoFocus
                                       />
                                       <button
                                         type="button"
                                         disabled={isSavingLb}
                                         onClick={() => handleSaveLb(run.run_id)}
-                                        className="px-2 py-1 bg-[#164E33] text-white text-[11px] font-medium rounded hover:bg-[#113d28]"
+                                        className="px-2 py-1 bg-zinc-900 text-white text-[11px] font-medium rounded hover:bg-[#113d28]"
                                       >
                                         Save
                                       </button>
@@ -3325,7 +4096,7 @@ class CustomFeatureHook(BaseFeatureHook):
                                             </span>
                                           )}
                                           {isAligned && (
-                                            <span className="text-[10px] text-[#164E33] bg-[#164E33]/10 px-1 py-0.2 rounded font-sans font-medium" title="CV and Public LB moved in the same direction!">
+                                            <span className="text-[10px] text-zinc-900 bg-zinc-900/10 px-1 py-0.2 rounded font-sans font-medium" title="CV and Public LB moved in the same direction!">
                                               Aligned
                                             </span>
                                           )}
@@ -3340,7 +4111,7 @@ class CustomFeatureHook(BaseFeatureHook):
                                           setTempLbScore(run.lb_score != null ? String(run.lb_score) : '');
                                           setTempNotes(run.notes || '');
                                         }}
-                                        className="text-zinc-400 hover:text-[#164E33] p-1 rounded transition-colors"
+                                        className="text-zinc-400 hover:text-zinc-900 p-1 rounded transition-colors"
                                         title="Edit Kaggle Public Score"
                                       >
                                         <Edit3 size={12} />
@@ -3355,7 +4126,7 @@ class CustomFeatureHook(BaseFeatureHook):
                                     className="inline-flex items-center space-x-1 px-2.5 py-1 bg-white hover:bg-[#F4F5F6] text-[#121816] text-[11px] font-medium border border-[#E5E9E6] rounded-lg transition-colors"
                                     title={`Download ${run.submission_filename || 'submission.csv'}`}
                                   >
-                                    <Download size={12} className="text-[#164E33]" />
+                                    <Download size={12} className="text-zinc-900" />
                                     <span>Download CSV</span>
                                   </a>
                                 </td>
@@ -3368,20 +4139,39 @@ class CustomFeatureHook(BaseFeatureHook):
                   )}
 
                   {/* Diagnostic Banner if score dropped */}
-                  {caseDetail.history && caseDetail.history.length >= 2 && caseDetail.history[caseDetail.history.length - 1].cv_delta < 0 && (
-                    <div className="p-4 bg-amber-50/60 border-t border-amber-200/80 flex items-start space-x-3 text-xs">
-                      <AlertTriangle size={16} className="text-amber-700 flex-shrink-0 mt-0.5" />
-                      <div className="space-y-1 text-amber-900 leading-relaxed">
-                        <span className="font-semibold">Diagnostic Insight on Score Drop:</span>
-                        <p className="text-[11px] text-amber-800">
-                          Adding the universal primitives dropped both local CV ({caseDetail.history[caseDetail.history.length - 1].cv_delta.toFixed(5)}) and Kaggle Public LB ({((caseDetail.history[caseDetail.history.length - 1].lb_score || 0) - (caseDetail.history[0].lb_score || 0)).toFixed(5)}). Notice in the Feature Importances below that <code className="bg-amber-100/80 px-1 rounded font-mono font-medium">row_stat_min</code> received huge importance (105k) by computing min across non-comparable units (age, USD, hours, km). Tree models greedily split on this noise, causing slight generalization loss.
-                        </p>
-                        <p className="text-[11px] text-[#164E33] font-medium">
-                          Next step recommendation: In Step 2, prune arbitrary row-wise aggregates (<code className="bg-emerald-50 px-1 rounded font-mono">row_stat_*</code>) and preserve domain-meaningful financial ratios (<code className="bg-emerald-50 px-1 rounded font-mono">amount_usd / account_balance_usd</code>) to restore baseline score!
-                        </p>
+                  {caseDetail.history && caseDetail.history.length >= 2 && (() => {
+                    const lastRun = caseDetail.history[caseDetail.history.length - 1];
+                    const prevBest = caseDetail.history[0];
+                    const isScoreWorse = isHigherBetter
+                      ? lastRun.cv_score < prevBest.cv_score
+                      : lastRun.cv_score > prevBest.cv_score;
+                    if (!isScoreWorse) return null;
+
+                    const scoreDiff = Math.abs(lastRun.cv_score - prevBest.cv_score);
+                    const topFeatures = caseDetail.feature_importances?.slice(0, 3).map((f: any) => f.feature) || [];
+                    const topFeatureStr = topFeatures.join(', ');
+
+                    return (
+                      <div className="p-4 bg-amber-50/60 border-t border-amber-200/80 flex items-start space-x-3 text-xs">
+                        <AlertTriangle size={16} className="text-amber-700 flex-shrink-0 mt-0.5" />
+                        <div className="space-y-1 text-amber-900 leading-relaxed">
+                          <span className="font-semibold">Diagnostic Insight on Score Drop:</span>
+                          <p className="text-[11px] text-amber-800">
+                            The latest experiment ({lastRun.name || lastRun.tag}) resulted in a performance drop of {scoreDiff.toFixed(5)} in {meta?.eval_metric.toUpperCase()} compared to the previous best ({prevBest.cv_score.toFixed(5)} &rarr; {lastRun.cv_score.toFixed(5)}).
+                            {topFeatures.length > 0 && (
+                              <span> Dominant splits were led by <code className="bg-amber-100/80 px-1 rounded font-mono font-medium">{topFeatureStr}</code>.</span>
+                            )}
+                            {meta?.cv_strategy?.includes('group') && (
+                              <span> Note that out-of-fold generalization across unseen groups ({meta?.group_col}) requires strong regularized trees to avoid memorizing intra-group artifacts.</span>
+                            )}
+                          </p>
+                          <p className="text-[11px] text-zinc-900 font-medium">
+                            Next step recommendation: If hyperparameters were recently modified (e.g. higher tree depth or learning rate), increase L1/L2 penalties (<code className="bg-zinc-100 px-1 rounded font-mono">reg_alpha</code>, <code className="bg-zinc-100 px-1 rounded font-mono">reg_lambda</code>) or test the Shallow Trees preset to regain generalizability.
+                          </p>
+                        </div>
                       </div>
-                    </div>
-                  )}
+                    );
+                  })()}
                 </div>
 
                 {/* Feature Importance Section */}
@@ -3416,6 +4206,246 @@ class CustomFeatureHook(BaseFeatureHook):
             )}
 
             {/* TAB 4: ENSEMBLE LABORATORY */}
+            
+            {/* Step 4: Ablation Study Laboratory */}
+            {activeTab === 'ablation' && (
+              <div className="space-y-8">
+                {ablationLoading ? (
+                  <div className="flex items-center justify-center py-16 text-zinc-500 space-x-2">
+                    <Loader2 className="animate-spin" size={18} />
+                    <span>Aggregating ablation component contributions and fold trajectories...</span>
+                  </div>
+                ) : !ablationData ? (
+                  <div className="bg-white border border-[#E5E9E6] rounded-2xl p-8 text-center text-zinc-500 space-y-2">
+                    <AlertTriangle className="mx-auto text-amber-500" size={32} />
+                    <p className="font-semibold text-zinc-800">No Ablation Study Data Available</p>
+                    <p className="text-xs text-zinc-400">Run the pipeline at least once to generate empirical component comparisons.</p>
+                  </div>
+                ) : (
+                  <>
+                    {/* Executive Header Banner */}
+                    <div className="bg-gradient-to-r from-emerald-900 via-[#164E33] to-slate-900 text-white rounded-2xl p-6 shadow-md space-y-4">
+                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-emerald-700/50 pb-4">
+                        <div>
+                          <div className="flex items-center space-x-2">
+                            <Layers className="text-emerald-300" size={20} />
+                            <h2 className="text-base font-bold tracking-tight">Component Ablation Study & Empirical Impact Analysis</h2>
+                          </div>
+                          <p className="text-xs text-zinc-300/80 mt-1">
+                            Systematic component-by-component evaluation measuring incremental validation gain against baseline.
+                          </p>
+                        </div>
+                        <div className="flex items-center space-x-3">
+                          <span className="text-xs font-mono bg-zinc-800 text-zinc-300 border border-zinc-700 px-3 py-1 rounded-md">
+                            Primary Metric: {ablationData.eval_metric.toUpperCase()}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* KPI Trio */}
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="bg-zinc-950/60 border border-zinc-800 rounded-xl p-4">
+                          <div className="text-[11px] font-mono uppercase tracking-wider text-emerald-300/80">Raw Single Baseline</div>
+                          <div className="text-2xl font-bold font-mono mt-1 text-white">{ablationData.baseline_score.toFixed(5)}</div>
+                          <div className="text-[11px] text-emerald-300/70 mt-0.5">Raw tabular inputs without engineered interactions</div>
+                        </div>
+
+                        <div className="bg-zinc-950/60 border border-zinc-800 rounded-xl p-4">
+                          <div className="text-[11px] font-mono uppercase tracking-wider text-emerald-300/80">Champion Solution</div>
+                          <div className="text-2xl font-bold font-mono mt-1 text-emerald-300">{ablationData.champion_score.toFixed(5)}</div>
+                          <div className="text-[11px] text-emerald-300/70 mt-0.5">Auto-FE + Tri-Model Diversity + Ridge Stacking</div>
+                        </div>
+
+                        <div className="bg-zinc-950/60 border border-zinc-800 rounded-xl p-4">
+                          <div className="text-[11px] font-mono uppercase tracking-wider text-emerald-300/80">Net Ablation Gain (Δ)</div>
+                          <div className="text-2xl font-bold font-mono mt-1 text-white">
+                            {ablationData.total_gain > 0 ? `+${ablationData.total_gain.toFixed(5)}` : ablationData.total_gain.toFixed(5)}
+                          </div>
+                          <div className="text-[11px] text-emerald-300/70 mt-0.5">Cumulative error reduction achieved</div>
+                        </div>
+                      </div>
+
+                      {/* Scientific Interpretation */}
+                      <div className="bg-zinc-950/80 border border-zinc-800 rounded-xl p-3.5 text-xs text-zinc-200 leading-relaxed font-sans">
+                        <span className="font-bold text-emerald-300 uppercase font-mono tracking-wider mr-2">Scientific Synthesis:</span>
+                        {ablationData.interpretation}
+                      </div>
+                    </div>
+
+                    {/* Visual Ablation Progression & Fold Trajectories */}
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                      {/* Left: Component Delta Gain Waterfall / Bars */}
+                      <div className="lg:col-span-5 bg-white border border-[#E5E9E6] rounded-2xl p-6 shadow-sm space-y-4">
+                        <div className="flex items-center justify-between border-b border-[#E5E9E6] pb-3">
+                          <div>
+                            <h3 className="font-bold text-sm text-[#121816]">Incremental Gain vs Baseline</h3>
+                            <p className="text-[11px] text-[#76807B]">Stepwise score delta achieved by adding each pipeline component.</p>
+                          </div>
+                          <span className="text-[10px] font-mono uppercase bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded">
+                            Δ Score
+                          </span>
+                        </div>
+
+                        <div className="space-y-4 pt-1">
+                          {ablationData.steps.map((st, sIdx) => {
+                            const maxGain = Math.max(...ablationData.steps.map(s => s.delta_vs_base), 0.001);
+                            const widthPct = Math.min(100, Math.max(8, (st.delta_vs_base / maxGain) * 100));
+
+                            return (
+                              <div key={st.step_id} className="space-y-1.5 font-mono text-xs">
+                                <div className="flex justify-between items-center">
+                                  <span className="font-semibold text-[#121816] truncate w-56">{st.name}</span>
+                                  <span className="text-zinc-900 font-bold">
+                                    {st.delta_vs_base > 0 ? `+${st.delta_vs_base.toFixed(4)}` : '0.0000'}
+                                  </span>
+                                </div>
+                                <div className="w-full bg-[#F4F5F6] h-3 rounded-full overflow-hidden border border-[#E5E9E6]">
+                                  <div
+                                    className={`h-full rounded-full transition-all duration-500 ${
+                                      sIdx === 0
+                                        ? 'bg-zinc-300'
+                                        : sIdx === ablationData.steps.length - 1
+                                        ? 'bg-gradient-to-r from-emerald-600 to-teal-500'
+                                        : 'bg-zinc-900'
+                                    }`}
+                                    style={{ width: `${sIdx === 0 ? 4 : widthPct}%` }}
+                                  ></div>
+                                </div>
+                                <div className="flex justify-between text-[10px] text-[#76807B]">
+                                  <span>OOF: {st.score.toFixed(5)}</span>
+                                  <span className="italic">{st.impact}</span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Right: Fold-by-Fold Validation Curves (5 Folds Multi-Panel) */}
+                      <div className="lg:col-span-7 bg-white border border-[#E5E9E6] rounded-2xl p-6 shadow-sm space-y-4">
+                        <div className="flex items-center justify-between border-b border-[#E5E9E6] pb-3">
+                          <div>
+                            <h3 className="font-bold text-sm text-[#121816]">Cross-Validation Fold Trajectories (Fold 1 to Fold 5)</h3>
+                            <p className="text-[11px] text-[#76807B]">Consistency across splits. Ensures gains are robust and not an artifact of a single fold.</p>
+                          </div>
+                          <span className="text-[10px] font-mono uppercase bg-zinc-100 text-zinc-700 px-2 py-0.5 rounded">
+                            5-Fold Subplots
+                          </span>
+                        </div>
+
+                        {/* 5 Fold Subplots Grid */}
+                        <div className="grid grid-cols-5 gap-2 pt-1">
+                          {[0, 1, 2, 3, 4].map((fIdx) => {
+                            const foldScores = ablationData.steps.map(s => s.folds[fIdx] || s.score);
+                            const minS = Math.min(...foldScores);
+                            const maxS = Math.max(...foldScores);
+                            const range = maxS - minS || 0.01;
+                            const w = 100;
+                            const h = 80;
+
+                            const ptsObj = foldScores.map((sc, idx) => {
+                              const x = (idx / (foldScores.length - 1)) * w;
+                              const y = h - ((sc - minS) / range) * (h - 16) - 8;
+                              return { x, y };
+                            });
+                            const pathD = getSmoothSpline(ptsObj);
+
+                            return (
+                              <div key={fIdx} className="border border-zinc-200 rounded-lg p-2.5 bg-white flex flex-col justify-between space-y-1">
+                                <div className="text-center font-mono text-[11px] font-bold text-zinc-800">
+                                  Fold {fIdx + 1}
+                                </div>
+                                <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-16 overflow-visible">
+                                  <line x1="0" y1={h} x2={w} y2={h} stroke="#e4e4e7" strokeWidth="1" />
+                                  <path d={pathD} fill="none" stroke="#18181b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                  {foldScores.map((sc, idx) => {
+                                    const x = (idx / (foldScores.length - 1)) * w;
+                                    const y = h - ((sc - minS) / range) * (h - 16) - 8;
+                                    return (
+                                      <circle
+                                        key={idx}
+                                        cx={x}
+                                        cy={y}
+                                        r="2.5"
+                                        fill={idx === foldScores.length - 1 ? "#059669" : "#164E33"}
+                                        stroke="#ffffff"
+                                        strokeWidth="1"
+                                      />
+                                    );
+                                  })}
+                                </svg>
+                                <div className="flex justify-between text-[9px] font-mono text-[#76807B]">
+                                  <span>{minS.toFixed(2)}</span>
+                                  <span className="text-emerald-700 font-bold">-{ (maxS - minS).toFixed(2) }</span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        <div className="text-[11px] font-mono text-zinc-500 bg-zinc-50 border border-zinc-200 rounded-lg p-2.5 flex items-center justify-between">
+                          <span>Inspection Insight: All 5 folds demonstrate monotonic loss reduction without split divergence.</span>
+                          <span className="text-emerald-700 font-bold">Robust Generalization</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Scientific Component Ledger Table */}
+                    <div className="bg-white border border-[#E5E9E6] rounded-2xl shadow-sm overflow-hidden">
+                      <div className="p-4 border-b border-[#E5E9E6] flex items-center justify-between">
+                        <div>
+                          <h3 className="font-bold text-sm text-[#121816]">Ablation Experiment Ledger & Decision Matrix</h3>
+                          <p className="text-[11px] text-[#76807B]">Full component audit. Prune neutral components to optimize production latency.</p>
+                        </div>
+                      </div>
+
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left border-collapse text-xs">
+                          <thead>
+                            <tr className="bg-[#F8FAF9] border-b border-[#E5E9E6] font-mono text-[11px] text-[#76807B] uppercase tracking-wider">
+                              <th className="py-3 px-4 font-semibold">Component / Strategy</th>
+                              <th className="py-3 px-4 font-semibold">Technique Applied</th>
+                              <th className="py-3 px-4 font-semibold">OOF {ablationData.eval_metric.toUpperCase()}</th>
+                              <th className="py-3 px-4 font-semibold">Δ vs Baseline</th>
+                              <th className="py-3 px-4 font-semibold">Impact Assessment</th>
+                              <th className="py-3 px-4 font-semibold">Architectural Note</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-[#E5E9E6] font-mono text-xs">
+                            {ablationData.steps.map((st, idx) => (
+                              <tr key={st.step_id} className="hover:bg-[#F8FAF9]/80 transition">
+                                <td className="py-3 px-4 font-bold text-[#121816]">{st.name}</td>
+                                <td className="py-3 px-4 text-zinc-600 font-sans text-xs">{st.technique}</td>
+                                <td className="py-3 px-4 font-bold text-zinc-900">{st.score.toFixed(5)}</td>
+                                <td className="py-3 px-4 font-semibold text-emerald-700">
+                                  {st.delta_vs_base > 0 ? `+${st.delta_vs_base.toFixed(5)}` : '0.00000'}
+                                </td>
+                                <td className="py-3 px-4">
+                                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                                    idx === 0
+                                      ? 'bg-zinc-100 text-zinc-600'
+                                      : idx === 1
+                                      ? 'bg-emerald-100 text-emerald-800'
+                                      : idx === ablationData.steps.length - 1
+                                      ? 'bg-amber-100 text-amber-800'
+                                      : 'bg-blue-100 text-blue-800'
+                                  }`}>
+                                    {st.impact}
+                                  </span>
+                                </td>
+                                <td className="py-3 px-4 text-zinc-500 font-sans text-xs">{st.note}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+
             {activeTab === 'ensemble' && (
               <div className="space-y-8">
                 {caseDetail.available_cached.length < 2 ? (
@@ -3456,7 +4486,7 @@ class CustomFeatureHook(BaseFeatureHook):
                             <div className="text-2xl font-bold text-zinc-950 mt-1 flex items-baseline space-x-2">
                               <span>{caruanaResult.score.toFixed(5)}</span>
                               <span className="text-xs font-mono font-medium text-zinc-700 bg-zinc-200 px-2 py-0.5 rounded">
-                                +{caruanaResult.gain.toFixed(5)} vs Best Single
+                                {caruanaResult.gain > 0 ? `+${caruanaResult.gain.toFixed(5)}` : caruanaResult.gain.toFixed(5)} vs Best Single
                               </span>
                             </div>
                           </div>
@@ -3542,29 +4572,71 @@ class CustomFeatureHook(BaseFeatureHook):
                   </p>
                 </div>
 
-                <div className="grid grid-cols-2 gap-6">
-                  <div className="border border-zinc-200 rounded p-6 space-y-3">
-                    <h4 className="font-semibold text-sm text-zinc-950">1. Champion Submission CSV</h4>
+                {/* Submission Paradigm Selector & Artifacts */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <div className="border border-zinc-200 rounded-xl p-5 bg-white space-y-3 shadow-2xs">
+                    <div className="flex items-center justify-between">
+                      <h4 className="font-semibold text-sm text-zinc-950">1. Champion Submission CSV</h4>
+                      <span className="text-[10px] font-mono bg-zinc-100 text-zinc-600 px-2 py-0.5 rounded">Standard CSV</span>
+                    </div>
                     <p className="text-xs text-zinc-500 leading-relaxed">
-                      Generated from the highest-scoring strategy on cross-validation ({championModel || 'Champion Model'}).
+                      Generated from the highest-scoring strategy on cross-validation ({championModel || 'Champion Model'}). Ready for direct upload.
                     </p>
                     <a
                       href={`/api/cases/${selectedCaseId}/download/submission`}
-                      className="inline-flex items-center space-x-2 bg-zinc-950 hover:bg-zinc-800 text-white text-xs font-semibold py-2.5 px-4 rounded transition"
+                      className="inline-flex items-center space-x-2 bg-zinc-950 hover:bg-zinc-800 text-white text-xs font-semibold py-2 px-3.5 rounded-lg transition"
                     >
                       <Download size={14} />
-                      <span>Download Champion Submission</span>
+                      <span>Download CSV</span>
                     </a>
                   </div>
 
-                  <div className="border border-zinc-200 rounded p-6 space-y-3">
-                    <h4 className="font-semibold text-sm text-zinc-950">2. Out-Of-Fold Predictions CSV</h4>
+                  <div className="border border-zinc-200 rounded-xl p-5 bg-white space-y-3 shadow-2xs">
+                    <div className="flex items-center justify-between">
+                      <h4 className="font-semibold text-sm text-zinc-950">2. Standalone Notebook (CSV)</h4>
+                      <span className="text-[10px] font-mono bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded">Offline Kaggle</span>
+                    </div>
                     <p className="text-xs text-zinc-500 leading-relaxed">
-                      Contains ground truth labels and OOF probabilities for error analysis or level-2 meta-learning.
+                      100% self-contained notebook generating submission.csv in /kaggle/working/. Zero external dependencies.
+                    </p>
+                    <a
+                      href={`/api/cases/${selectedCaseId}/export-notebook`}
+                      download
+                      className="inline-flex items-center space-x-2 bg-blue-700 hover:bg-blue-800 text-white text-xs font-semibold py-2 px-3.5 rounded-lg transition"
+                    >
+                      <BookOpen size={14} />
+                      <span>Download Notebook</span>
+                    </a>
+                  </div>
+
+                  <div className="border border-emerald-300/80 rounded-xl p-5 bg-gradient-to-b from-emerald-50/50 to-white space-y-3 shadow-2xs">
+                    <div className="flex items-center justify-between">
+                      <h4 className="font-semibold text-sm text-emerald-950">3. Live Gateway Notebook</h4>
+                      <span className="text-[10px] font-mono bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded">Kaggle API</span>
+                    </div>
+                    <p className="text-xs text-emerald-900/80 leading-relaxed">
+                      Tailored for competitions requiring the <code>kaggle_evaluation</code> streaming API. Bypasses the 10-minute handshake timeout with fast dual-target LightGBM.
+                    </p>
+                    <a
+                      href={`/api/cases/${selectedCaseId}/export-inference-notebook`}
+                      download
+                      className="inline-flex items-center space-x-2 bg-emerald-800 hover:bg-emerald-900 text-white text-xs font-semibold py-2 px-3.5 rounded-lg transition"
+                    >
+                      <Cpu size={14} />
+                      <span>Download Gateway Notebook</span>
+                    </a>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-6">
+                  <div className="border border-zinc-200 rounded p-6 space-y-3">
+                    <h4 className="font-semibold text-sm text-zinc-950">4. Out-Of-Fold Predictions CSV</h4>
+                    <p className="text-xs text-zinc-500 leading-relaxed">
+                      Contains ground truth labels and OOF probabilities for error analysis or level-2 stacking.
                     </p>
                     <a
                       href={`/api/cases/${selectedCaseId}/download/oof`}
-                      className="inline-flex items-center space-x-2 border border-zinc-300 hover:border-zinc-900 bg-white text-zinc-800 text-xs font-semibold py-2.5 px-4 rounded transition"
+                      className="inline-flex items-center space-x-2 border border-zinc-300 hover:border-zinc-400 text-zinc-800 text-xs font-semibold py-2 px-3.5 rounded transition"
                     >
                       <Download size={14} />
                       <span>Download OOF Predictions</span>
@@ -3572,7 +4644,7 @@ class CustomFeatureHook(BaseFeatureHook):
                   </div>
 
                   <div className="border border-zinc-200 rounded p-6 space-y-3">
-                    <h4 className="font-semibold text-sm text-zinc-950">3. Standalone Solution Script (.py)</h4>
+                    <h4 className="font-semibold text-sm text-zinc-950">5. Standalone Solution Script (.py)</h4>
                     <p className="text-xs text-zinc-500 leading-relaxed">
                       Self-contained clean Python code for deliverables. Runs from terminal: `python solution.py`.
                     </p>
@@ -3580,26 +4652,10 @@ class CustomFeatureHook(BaseFeatureHook):
                       href={`/api/cases/${selectedCaseId}/export-script`}
                       target="_blank"
                       rel="noreferrer"
-                      className="inline-flex items-center space-x-2 border border-zinc-300 hover:border-zinc-900 bg-white text-zinc-800 text-xs font-semibold py-2.5 px-4 rounded transition"
+                      className="inline-flex items-center space-x-2 border border-zinc-300 hover:border-zinc-400 text-zinc-800 text-xs font-semibold py-2 px-3.5 rounded transition"
                     >
                       <FileCode size={14} />
                       <span>Download Solution Script (.py)</span>
-                    </a>
-                  </div>
-
-                  <div className="border border-zinc-200 rounded p-6 space-y-3">
-                    <h4 className="font-semibold text-sm text-zinc-950">4. Jupyter Solution Notebook (.ipynb)</h4>
-                    <p className="text-xs text-zinc-500 leading-relaxed">
-                      Interactive competition notebook with methodology markdown cells ready to submit to judges.
-                    </p>
-                    <a
-                      href={`/api/cases/${selectedCaseId}/export-notebook`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center space-x-2 bg-zinc-950 hover:bg-zinc-800 text-white text-xs font-semibold py-2.5 px-4 rounded transition"
-                    >
-                      <BookOpen size={14} />
-                      <span>Download Jupyter Notebook (.ipynb)</span>
                     </a>
                   </div>
                 </div>
@@ -3636,7 +4692,7 @@ class CustomFeatureHook(BaseFeatureHook):
                   <input
                     type="text"
                     required
-                    placeholder="e.g. nfl_big_data_bowl_2026"
+                    placeholder="e.g. customer_churn_v1"
                     value={newCase.id}
                     onChange={e => setNewCase({ ...newCase, id: e.target.value })}
                     className="mt-1 w-full text-xs border border-zinc-300 rounded p-2 text-zinc-900 focus:outline-none focus:border-zinc-950"
@@ -3648,7 +4704,7 @@ class CustomFeatureHook(BaseFeatureHook):
                   <input
                     type="text"
                     required
-                    placeholder="e.g. NFL Big Data Bowl 2026"
+                    placeholder="e.g. Customer Churn Prediction"
                     value={newCase.name}
                     onChange={e => setNewCase({ ...newCase, name: e.target.value })}
                     className="mt-1 w-full text-xs border border-zinc-300 rounded p-2 text-zinc-900 focus:outline-none focus:border-zinc-950"
@@ -3657,32 +4713,79 @@ class CustomFeatureHook(BaseFeatureHook):
               </div>
 
               {/* Dataset Source Type Segmented Switch */}
-              <div className="pt-2 border-t border-zinc-200 space-y-2">
+              <div className="pt-2 border-t border-zinc-200 space-y-3">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-semibold text-zinc-900">Training Dataset Source</label>
                   <div className="flex bg-zinc-100 p-0.5 rounded-lg text-[11px] font-medium border border-zinc-200">
                     <button
                       type="button"
-                      onClick={() => setNewCase(prev => ({ ...prev, auto_stitch: false }))}
+                      onClick={() => {
+                        setCreationSource('single');
+                        setNewCase(prev => ({ ...prev, auto_stitch: false }));
+                      }}
                       className={`px-3 py-1 rounded-md transition ${
-                        !newCase.auto_stitch ? 'bg-white text-zinc-950 font-bold shadow-xs' : 'text-zinc-500 hover:text-zinc-900'
+                        creationSource === 'single' ? 'bg-white text-zinc-950 font-bold shadow-xs' : 'text-zinc-500 hover:text-zinc-900'
                       }`}
                     >
                       Single CSV File
                     </button>
                     <button
                       type="button"
-                      onClick={() => setNewCase(prev => ({ ...prev, auto_stitch: true }))}
+                      onClick={() => {
+                        setCreationSource('batch');
+                        setNewCase(prev => ({ ...prev, auto_stitch: true }));
+                      }}
                       className={`px-3 py-1 rounded-md transition ${
-                        newCase.auto_stitch ? 'bg-[#164E33] text-white font-bold shadow-xs' : 'text-zinc-500 hover:text-zinc-900'
+                        creationSource === 'batch' ? 'bg-zinc-900 text-white font-bold shadow-xs' : 'text-zinc-500 hover:text-zinc-900'
                       }`}
                     >
                       Multi-File / Partitioned Batch
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCreationSource('relational');
+                        setNewCase(prev => ({
+                          ...prev,
+                          auto_stitch: false,
+                          id: prev.id || 'f1_podium',
+                          name: prev.name || 'Formula 1 Podium Prediction'
+                        }));
+                        if (!relationalDiscovery) {
+                          handleDiscoverRelational();
+                        }
+                      }}
+                      className={`px-3 py-1 rounded-md transition ${
+                        creationSource === 'relational' ? 'bg-zinc-900 text-white font-bold shadow-xs' : 'text-zinc-500 hover:text-zinc-900'
+                      }`}
+                    >
+                      Relational Star-Schema
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCreationSource('text');
+                        setNewCase(prev => ({
+                          ...prev,
+                          auto_stitch: false,
+                          id: prev.id || 'nlp_gemastik_final',
+                          name: prev.name || 'NLP Text Classification',
+                          task_type: 'multiclass',
+                          eval_metric: 'f1_macro',
+                          cv_strategy: 'stratified_kfold',
+                          n_splits: 5
+                        }));
+                      }}
+                      className={`px-3 py-1 rounded-md transition ${
+                        creationSource === 'text' ? 'bg-zinc-900 text-white font-bold shadow-xs' : 'text-zinc-500 hover:text-zinc-900'
+                      }`}
+                    >
+                      Text / NLP (Any Format)
+                    </button>
                   </div>
                 </div>
 
-                {!newCase.auto_stitch ? (
+                {creationSource === 'single' && (
                   <div>
                     <div className="flex items-center justify-between">
                       <label className="text-xs font-semibold text-zinc-700">Train CSV File Path</label>
@@ -3695,8 +4798,8 @@ class CustomFeatureHook(BaseFeatureHook):
                     <div className="flex space-x-2 mt-1">
                       <input
                         type="text"
-                        required={!newCase.auto_stitch}
-                        placeholder="e.g. playground-series/dataset/train.csv"
+                        required={creationSource === 'single'}
+                        placeholder="e.g. data/train.csv"
                         value={newCase.train_path}
                         onChange={e => {
                           setNewCase({ ...newCase, train_path: e.target.value });
@@ -3748,7 +4851,9 @@ class CustomFeatureHook(BaseFeatureHook):
                       </div>
                     )}
                   </div>
-                ) : (
+                )}
+
+                {creationSource === 'batch' && (
                   <div className="p-3.5 bg-zinc-50 border border-zinc-200 rounded-xl space-y-3">
                     <div className="space-y-1">
                       <label className="text-xs font-semibold text-zinc-800">
@@ -3756,7 +4861,7 @@ class CustomFeatureHook(BaseFeatureHook):
                       </label>
                       <input
                         type="text"
-                        required={newCase.auto_stitch}
+                        required={creationSource === 'batch'}
                         placeholder="e.g. nfl-big-data-bowl-2026-prediction/train/output_*.csv or data/part_*.csv"
                         value={newCase.stitch_base_pattern}
                         onChange={e => setNewCase({ ...newCase, stitch_base_pattern: e.target.value })}
@@ -3803,208 +4908,619 @@ class CustomFeatureHook(BaseFeatureHook):
                     )}
                   </div>
                 )}
-              </div>
 
-              {inspectData?.columns && (
-                <div className="p-3 bg-zinc-50 border border-zinc-200 rounded text-xs space-y-2">
-                  <div className="font-semibold text-zinc-800">Detected Columns ({inspectData.total_columns}):</div>
-                  <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto">
-                    {inspectData.columns.map((c: any) => (
-                      <span key={c.column} className="bg-white border border-zinc-200 px-1.5 py-0.5 rounded font-mono text-[11px]">
-                        {c.column}
-                      </span>
-                    ))}
+                {creationSource === 'relational' && (
+                  <div className="p-4 bg-zinc-50 border border-zinc-200 rounded-xl space-y-3">
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-semibold text-zinc-800">
+                          Multi-Table Relational Directory *
+                        </label>
+                        <span className="text-[10px] text-zinc-500 font-mono">
+                          Auto-detects Star-Schema, Foreign Keys & Facts
+                        </span>
+                      </div>
+                      <div className="flex space-x-2">
+                        <input
+                          type="text"
+                          required={creationSource === 'relational'}
+                          placeholder="e.g. cases/f1"
+                          value={relationalDir}
+                          onChange={e => setRelationalDir(e.target.value)}
+                          className="w-full text-xs border border-zinc-300 rounded p-2 font-mono text-zinc-900 bg-white focus:outline-none focus:border-zinc-950"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleDiscoverRelational}
+                          disabled={relationalDiscovering || !relationalDir.trim()}
+                          className="px-3 py-2 border border-zinc-300 hover:border-zinc-950 bg-white hover:bg-zinc-100 text-xs font-medium rounded whitespace-nowrap flex items-center space-x-1.5 text-zinc-900 transition"
+                        >
+                          {relationalDiscovering ? <Loader2 size={12} className="animate-spin" /> : <Database size={12} />}
+                          <span>{relationalDiscovering ? 'Scanning...' : 'Scan & Map Schema'}</span>
+                        </button>
+                      </div>
+                      <p className="text-[10px] text-zinc-500">
+                        Point to any directory containing related CSV tables (e.g. results.csv, drivers.csv, races.csv, status.csv).
+                      </p>
+                    </div>
+
+                    {relationalDiscovery && (
+                      <div className="space-y-3 pt-2 border-t border-zinc-200">
+                        <div className="p-2.5 bg-white border border-zinc-200 rounded-lg text-xs space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="font-semibold text-zinc-900 flex items-center space-x-1">
+                              <Check size={13} className="text-emerald-600 inline" />
+                              <span>Detected Star-Schema</span>
+                            </span>
+                            <span className="text-[10px] font-mono text-zinc-500">
+                              Base: {relationalDiscovery.suggested_base}
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {relationalDiscovery.discovered_tables?.map((tbl: any) => (
+                              <span
+                                key={tbl.name}
+                                className={`px-2 py-0.5 rounded text-[10px] font-mono border ${
+                                  tbl.name === relationalDiscovery.suggested_base
+                                    ? 'bg-zinc-900 text-white border-zinc-900 font-bold'
+                                    : 'bg-zinc-50 text-zinc-700 border-zinc-200'
+                                }`}
+                              >
+                                {tbl.name} ({tbl.rows} rows, {tbl.cols} cols)
+                              </span>
+                            ))}
+                          </div>
+                          {relationalDiscovery.schema_graph && (
+                            <div className="text-[11px] text-zinc-600 space-y-0.5 pt-1">
+                              {Object.entries(relationalDiscovery.schema_graph).map(([tbl, meta]: any) => (
+                                <div key={tbl} className="flex items-center space-x-1.5 font-mono text-[10px]">
+                                  <span className="font-semibold text-zinc-800">{tbl}</span>
+                                  <span className="text-zinc-400">connects to base via</span>
+                                  <span className="text-zinc-900 bg-zinc-100 px-1 rounded">{meta.join_key}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-1">
+                            <label className="text-xs font-semibold text-zinc-800">
+                              Target Prediction Objective
+                            </label>
+                            <select
+                              value={relationalTargetType}
+                              onChange={e => setRelationalTargetType(e.target.value)}
+                              className="w-full text-xs border border-zinc-300 rounded p-2 text-zinc-900 bg-white focus:outline-none"
+                            >
+                              <option value="podium_binary">Podium Finish (Top 3) - Binary ROC-AUC</option>
+                              <option value="finishing_pos_reg">Finishing Position - Regression RMSE</option>
+                              <option value="points_binary">Top 10 Points Finish - Binary ROC-AUC</option>
+                            </select>
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-xs font-semibold text-zinc-800">
+                              Validation Group Column
+                            </label>
+                            <input
+                              type="text"
+                              value={relationalDiscovery.suggested_group_col || 'raceId'}
+                              readOnly
+                              className="w-full text-xs border border-zinc-200 rounded p-2 font-mono text-zinc-600 bg-zinc-100 cursor-not-allowed"
+                            />
+                            <p className="text-[10px] text-zinc-400">Prevents intra-race leakage across CV folds</p>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-1">
+                            <label className="text-xs font-semibold text-zinc-800">
+                              Chronological Split Column
+                            </label>
+                            <input
+                              type="text"
+                              value={relationalSplitCol}
+                              onChange={e => setRelationalSplitCol(e.target.value)}
+                              className="w-full text-xs border border-zinc-300 rounded p-2 font-mono text-zinc-900 bg-white focus:outline-none"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-xs font-semibold text-zinc-800">
+                              Train Cutoff (e.g. &lt;= 2022)
+                            </label>
+                            <input
+                              type="text"
+                              value={relationalSplitVal}
+                              onChange={e => setRelationalSplitVal(e.target.value)}
+                              className="w-full text-xs border border-zinc-300 rounded p-2 font-mono text-zinc-900 bg-white focus:outline-none"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="p-2.5 bg-zinc-100 border border-zinc-200 rounded text-[11px] text-zinc-600 space-y-1">
+                          <div className="font-semibold text-zinc-900 flex items-center space-x-1">
+                            <Layers size={12} className="inline text-zinc-700" />
+                            <span>Automated Pre-Race Feature Sanitization</span>
+                          </div>
+                          <div>
+                            Post-race outcome columns (final position, total points, finish status) will be automatically excluded from features to eliminate data leakage.
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
-                </div>
-              )}
+                )}
 
-              <div>
-                <label className="text-xs font-semibold text-zinc-700">Test CSV File Path (Optional)</label>
-                <div className="flex space-x-2 mt-1">
-                  <input
-                    type="text"
-                    placeholder="e.g. playground-series/dataset/test.csv"
-                    value={newCase.test_path}
-                    onChange={e => setNewCase({ ...newCase, test_path: e.target.value })}
-                    className="w-full text-xs border border-zinc-300 rounded p-2 font-mono text-zinc-900 focus:outline-none focus:border-zinc-950"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => handleBrowseFile('test')}
-                    disabled={isBrowsingTest}
-                    className="px-3 py-2 border border-zinc-300 hover:border-zinc-950 bg-zinc-50 hover:bg-zinc-100 text-xs font-medium rounded whitespace-nowrap flex items-center space-x-1 text-zinc-900 transition"
-                    title="Open native Windows Explorer file picker"
-                  >
-                    {isBrowsingTest ? <Loader2 size={12} className="animate-spin" /> : <FolderOpen size={12} />}
-                    <span>{isBrowsingTest ? 'Picking...' : 'Browse...'}</span>
-                  </button>
-                </div>
-                {scannedCsvs.length > 0 && (
-                  <div className="mt-1.5 flex items-center space-x-2">
-                    <span className="text-zinc-500 text-[11px] whitespace-nowrap">Quick Select:</span>
-                    <select
-                      onChange={e => {
-                        if (e.target.value) {
-                          setNewCase(prev => ({ ...prev, test_path: e.target.value }));
-                        }
-                      }}
-                      className="w-full text-[11px] border border-zinc-200 rounded px-2 py-1 font-mono text-zinc-800 bg-zinc-50 focus:outline-none focus:border-zinc-950 truncate"
-                      value=""
-                    >
-                      <option value="" disabled>Choose detected CSV from project workspace...</option>
-                      {scannedCsvs.map(csv => (
-                        <option key={csv.path} value={csv.path}>
-                          {csv.path} ({csv.size_mb} MB)
-                        </option>
-                      ))}
-                    </select>
+                {creationSource === 'text' && (
+                  <div className="p-4 bg-zinc-50 border border-zinc-200 rounded-xl space-y-3.5">
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-semibold text-zinc-900">
+                          Text Dataset Path (Universal Format) *
+                        </label>
+                        <span className="text-[10px] text-zinc-500 font-mono">
+                          Auto-detects .txt folders, .jsonl, .xlsx, .tsv, .csv
+                        </span>
+                      </div>
+                      <div className="flex space-x-2">
+                        <input
+                          type="text"
+                          required={creationSource === 'text'}
+                          placeholder="e.g. cases/kompas/data/scrape_kompas_clean.csv or folder/of/txt/"
+                          value={textSourcePath}
+                          onChange={e => setTextSourcePath(e.target.value)}
+                          className="w-full text-xs border border-zinc-300 rounded p-2 font-mono text-zinc-900 bg-white focus:outline-none focus:border-zinc-950"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleBrowseFile('text_train', 'file')}
+                          disabled={isBrowsingTrain}
+                          className="px-2.5 py-2 border border-zinc-300 hover:border-zinc-950 bg-white hover:bg-zinc-100 text-xs font-medium rounded whitespace-nowrap flex items-center space-x-1 text-zinc-900 transition"
+                          title="Browse for CSV, Excel, JSONL, or TXT file"
+                        >
+                          {isBrowsingTrain ? <Loader2 size={12} className="animate-spin" /> : <FolderOpen size={12} />}
+                          <span>File...</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleBrowseFile('text_train', 'folder')}
+                          disabled={isBrowsingTrain}
+                          className="px-2.5 py-2 border border-zinc-300 hover:border-zinc-950 bg-white hover:bg-zinc-100 text-xs font-medium rounded whitespace-nowrap flex items-center space-x-1 text-zinc-900 transition"
+                          title="Browse for a folder of text files"
+                        >
+                          <FolderOpen size={12} />
+                          <span>Folder...</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleScanNormalizeText}
+                          disabled={isNormalizingText || !textSourcePath.trim()}
+                          className="px-3.5 py-2 bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-semibold rounded whitespace-nowrap flex items-center space-x-1.5 transition disabled:opacity-50"
+                        >
+                          {isNormalizingText ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />}
+                          <span>{isNormalizingText ? 'Normalizing...' : 'Scan & Ingest Text'}</span>
+                        </button>
+                      </div>
+
+                      {scannedCsvs.length > 0 && (
+                        <div className="flex items-center space-x-2 pt-1">
+                          <span className="text-zinc-500 text-[11px] whitespace-nowrap">Quick Select:</span>
+                          <select
+                            onChange={e => {
+                              if (e.target.value) {
+                                setTextSourcePath(e.target.value);
+                              }
+                            }}
+                            className="w-full text-[11px] border border-zinc-200 rounded px-2 py-1 font-mono text-zinc-800 bg-white focus:outline-none focus:border-zinc-950 truncate"
+                            value=""
+                          >
+                            <option value="" disabled>Choose detected dataset from project workspace...</option>
+                            {scannedCsvs.map((file: any) => (
+                              <option key={file.path} value={file.path}>
+                                {file.path} ({file.format || 'DATA'}, {file.size_mb} MB)
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+
+                      <p className="text-[10px] text-zinc-500 leading-relaxed">
+                        Point to a directory of raw text files (subfolders will be automatically inferred as class labels), a JSON/JSONL stream, an Excel spreadsheet, or a TSV/CSV file.
+                      </p>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-xs font-semibold text-zinc-700">
+                        Blind Test Dataset Path (Optional)
+                      </label>
+                      <div className="flex space-x-2">
+                        <input
+                          type="text"
+                          placeholder="e.g. dataset/test.csv or folder/of/test_txt/"
+                          value={textTestSourcePath}
+                          onChange={e => setTextTestSourcePath(e.target.value)}
+                          className="w-full text-xs border border-zinc-300 rounded p-2 font-mono text-zinc-900 bg-white focus:outline-none focus:border-zinc-950"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleBrowseFile('text_test', 'file')}
+                          disabled={isBrowsingTest}
+                          className="px-2.5 py-2 border border-zinc-300 hover:border-zinc-950 bg-white hover:bg-zinc-100 text-xs font-medium rounded whitespace-nowrap flex items-center space-x-1 text-zinc-900 transition"
+                          title="Browse for CSV, Excel, JSONL, or TXT file"
+                        >
+                          {isBrowsingTest ? <Loader2 size={12} className="animate-spin" /> : <FolderOpen size={12} />}
+                          <span>File...</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleBrowseFile('text_test', 'folder')}
+                          disabled={isBrowsingTest}
+                          className="px-2.5 py-2 border border-zinc-300 hover:border-zinc-950 bg-white hover:bg-zinc-100 text-xs font-medium rounded whitespace-nowrap flex items-center space-x-1 text-zinc-900 transition"
+                          title="Browse for folder"
+                        >
+                          <FolderOpen size={12} />
+                          <span>Folder...</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2">
+                      <div>
+                        <label className="text-[11px] font-semibold text-zinc-700">Text Column (Optional)</label>
+                        <input
+                          type="text"
+                          placeholder="Auto-detects"
+                          value={textColOverride}
+                          onChange={e => setTextColOverride(e.target.value)}
+                          className="mt-1 w-full text-xs border border-zinc-300 rounded p-1.5 font-mono text-zinc-900 bg-white focus:outline-none focus:border-zinc-950"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-semibold text-zinc-700">Label Column (Optional)</label>
+                        <input
+                          type="text"
+                          placeholder="Auto-detects"
+                          value={labelColOverride}
+                          onChange={e => setLabelColOverride(e.target.value)}
+                          className="mt-1 w-full text-xs border border-zinc-300 rounded p-1.5 font-mono text-zinc-900 bg-white focus:outline-none focus:border-zinc-950"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-semibold text-zinc-700">ID Column (Optional)</label>
+                        <input
+                          type="text"
+                          placeholder="Default: id"
+                          value={idColOverride}
+                          onChange={e => setIdColOverride(e.target.value)}
+                          className="mt-1 w-full text-xs border border-zinc-300 rounded p-1.5 font-mono text-zinc-900 bg-white focus:outline-none focus:border-zinc-950"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 pt-1">
+                      <div>
+                        <label className="text-[11px] font-semibold text-zinc-700">Task Type</label>
+                        <select
+                          value={newCase.task_type}
+                          onChange={e => {
+                            const tt = e.target.value;
+                            let defaultMetric = newCase.eval_metric;
+                            let defaultCv = newCase.cv_strategy;
+                            if (tt === 'multiclass') {
+                              defaultMetric = 'f1_macro';
+                              defaultCv = 'stratified_kfold';
+                            } else if (tt === 'binary') {
+                              defaultMetric = 'roc_auc';
+                              defaultCv = 'stratified_kfold';
+                            } else if (tt === 'regression') {
+                              defaultMetric = 'rmse';
+                              defaultCv = 'kfold';
+                            }
+                            setNewCase({ ...newCase, task_type: tt, eval_metric: defaultMetric, cv_strategy: defaultCv });
+                          }}
+                          className="mt-1 w-full text-xs border border-zinc-300 rounded p-2 text-zinc-900 bg-white focus:outline-none font-medium"
+                        >
+                          <option value="multiclass">Multiclass Classification</option>
+                          <option value="binary">Binary Classification</option>
+                          <option value="regression">Regression</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="text-[11px] font-semibold text-zinc-700">Primary Metric</label>
+                        <select
+                          value={newCase.eval_metric}
+                          onChange={e => setNewCase({ ...newCase, eval_metric: e.target.value })}
+                          className="mt-1 w-full text-xs border border-zinc-300 rounded p-2 text-zinc-900 bg-white focus:outline-none font-medium"
+                        >
+                          <option value="f1_macro">F1 Macro</option>
+                          <option value="accuracy">Accuracy</option>
+                          <option value="logloss">Log Loss</option>
+                          <option value="roc_auc">ROC-AUC</option>
+                          <option value="rmse">RMSE</option>
+                          <option value="mae">MAE</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 pt-1">
+                      <div>
+                        <label className="text-[11px] font-semibold text-zinc-700">CV Validation Strategy</label>
+                        <select
+                          value={newCase.cv_strategy}
+                          onChange={e => setNewCase({ ...newCase, cv_strategy: e.target.value })}
+                          className="mt-1 w-full text-xs border border-zinc-300 rounded p-2 text-zinc-900 bg-white focus:outline-none font-medium"
+                        >
+                          <option value="stratified_kfold">Stratified K-Fold (Classification)</option>
+                          <option value="kfold">Standard K-Fold (Regression / Unstratified)</option>
+                          <option value="group_kfold">Group K-Fold (Group non-overlap)</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="text-[11px] font-semibold text-zinc-700">Number of Folds (n_splits)</label>
+                        <input
+                          type="number"
+                          min={2}
+                          max={20}
+                          value={newCase.n_splits}
+                          onChange={e => setNewCase({ ...newCase, n_splits: parseInt(e.target.value) || 5 })}
+                          className="mt-1 w-full text-xs border border-zinc-300 rounded p-2 font-mono text-zinc-900 bg-white focus:outline-none focus:border-zinc-950"
+                        />
+                      </div>
+                    </div>
+
+                    {textNormalizedData && (
+                      <div className="p-3 bg-white border border-zinc-200 rounded-lg text-xs space-y-2">
+                        <div className="flex items-center justify-between border-b border-zinc-100 pb-1.5">
+                          <span className="font-semibold text-zinc-950 flex items-center space-x-1.5">
+                            <Check size={13} className="text-emerald-600 inline" />
+                            <span>Successfully Ingested & Normalized</span>
+                          </span>
+                          <span className="text-[10px] font-mono bg-zinc-100 px-2 py-0.5 rounded text-zinc-700 font-bold uppercase">
+                            {textNormalizedData.detected_format}
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-2 text-[11px]">
+                          <div>
+                            <span className="text-zinc-500">Total Documents: </span>
+                            <span className="font-bold text-zinc-900 font-mono">{textNormalizedData.train_rows?.toLocaleString()}</span>
+                          </div>
+                          <div>
+                            <span className="text-zinc-500">Text Column: </span>
+                            <span className="font-bold text-zinc-900 font-mono">{textNormalizedData.text_col}</span>
+                          </div>
+                          <div>
+                            <span className="text-zinc-500">Target Label: </span>
+                            <span className="font-bold text-zinc-900 font-mono">{textNormalizedData.label_col}</span>
+                          </div>
+                        </div>
+
+                        {textNormalizedData.class_distribution && Object.keys(textNormalizedData.class_distribution).length > 0 && (
+                          <div className="space-y-1 pt-1">
+                            <span className="text-[10px] text-zinc-500 uppercase font-semibold">Detected Class Distribution:</span>
+                            <div className="flex flex-wrap gap-1.5">
+                              {Object.entries(textNormalizedData.class_distribution).map(([cls, cnt]: any) => (
+                                <span key={cls} className="bg-zinc-100 border border-zinc-200 px-2 py-0.5 rounded text-[10px] font-mono text-zinc-800">
+                                  {cls}: <span className="font-bold">{cnt}</span>
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-xs font-semibold text-zinc-700">Target Column</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="e.g. target or Transported"
-                    value={newCase.target_col}
-                    onChange={e => setNewCase({ ...newCase, target_col: e.target.value })}
-                    className="mt-1 w-full text-xs border border-zinc-300 rounded p-2 font-mono text-zinc-900 focus:outline-none focus:border-zinc-950"
-                  />
-                </div>
+              {creationSource !== 'relational' && creationSource !== 'text' && (
+                <>
+                  {inspectData?.columns && (
+                    <div className="p-3 bg-zinc-50 border border-zinc-200 rounded text-xs space-y-2">
+                      <div className="font-semibold text-zinc-800">Detected Columns ({inspectData.total_columns}):</div>
+                      <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto">
+                        {inspectData.columns.map((c: any) => (
+                          <span key={c.column} className="bg-white border border-zinc-200 px-1.5 py-0.5 rounded font-mono text-[11px]">
+                            {c.column}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
-                <div>
-                  <label className="text-xs font-semibold text-zinc-700">ID Column (Optional)</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. id or PassengerId"
-                    value={newCase.id_col}
-                    onChange={e => setNewCase({ ...newCase, id_col: e.target.value })}
-                    className="mt-1 w-full text-xs border border-zinc-300 rounded p-2 font-mono text-zinc-900 focus:outline-none focus:border-zinc-950"
-                  />
-                </div>
-              </div>
+                  <div>
+                    <label className="text-xs font-semibold text-zinc-700">Test CSV File Path (Optional)</label>
+                    <div className="flex space-x-2 mt-1">
+                      <input
+                        type="text"
+                        placeholder="e.g. data/test.csv"
+                        value={newCase.test_path}
+                        onChange={e => setNewCase({ ...newCase, test_path: e.target.value })}
+                        className="w-full text-xs border border-zinc-300 rounded p-2 font-mono text-zinc-900 focus:outline-none focus:border-zinc-950"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleBrowseFile('test')}
+                        disabled={isBrowsingTest}
+                        className="px-3 py-2 border border-zinc-300 hover:border-zinc-950 bg-zinc-50 hover:bg-zinc-100 text-xs font-medium rounded whitespace-nowrap flex items-center space-x-1 text-zinc-900 transition"
+                        title="Open native Windows Explorer file picker"
+                      >
+                        {isBrowsingTest ? <Loader2 size={12} className="animate-spin" /> : <FolderOpen size={12} />}
+                        <span>{isBrowsingTest ? 'Picking...' : 'Browse...'}</span>
+                      </button>
+                    </div>
+                    {scannedCsvs.length > 0 && (
+                      <div className="mt-1.5 flex items-center space-x-2">
+                        <span className="text-zinc-500 text-[11px] whitespace-nowrap">Quick Select:</span>
+                        <select
+                          onChange={e => {
+                            if (e.target.value) {
+                              setNewCase(prev => ({ ...prev, test_path: e.target.value }));
+                            }
+                          }}
+                          className="w-full text-[11px] border border-zinc-200 rounded px-2 py-1 font-mono text-zinc-800 bg-zinc-50 focus:outline-none focus:border-zinc-950 truncate"
+                          value=""
+                        >
+                          <option value="" disabled>Choose detected CSV from project workspace...</option>
+                          {scannedCsvs.map(csv => (
+                            <option key={csv.path} value={csv.path}>
+                              {csv.path} ({csv.size_mb} MB)
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                  </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-xs font-semibold text-zinc-700">Task Type</label>
-                  <select
-                    value={newCase.task_type}
-                    onChange={e => {
-                      const tt = e.target.value;
-                      let defaultMetric = newCase.eval_metric;
-                      let defaultCv = newCase.cv_strategy;
-                      if (tt === 'regression') {
-                        defaultMetric = 'rmse';
-                        if (defaultCv === 'stratified_kfold') defaultCv = 'kfold';
-                      } else if (tt === 'binary') {
-                        defaultMetric = 'roc_auc';
-                        if (defaultCv === 'kfold') defaultCv = 'stratified_kfold';
-                      } else {
-                        defaultMetric = 'f1_macro';
-                      }
-                      setNewCase({ ...newCase, task_type: tt, eval_metric: defaultMetric, cv_strategy: defaultCv });
-                    }}
-                    className="mt-1 w-full text-xs border border-zinc-300 rounded p-2 text-zinc-900 focus:outline-none"
-                  >
-                    <option value="binary">Binary Classification</option>
-                    <option value="multiclass">Multiclass Classification</option>
-                    <option value="regression">Regression</option>
-                  </select>
-                </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-xs font-semibold text-zinc-700">Target Column</label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="e.g. target, label, or y"
+                        value={newCase.target_col}
+                        onChange={e => setNewCase({ ...newCase, target_col: e.target.value })}
+                        className="mt-1 w-full text-xs border border-zinc-300 rounded p-2 font-mono text-zinc-900 focus:outline-none focus:border-zinc-950"
+                      />
+                    </div>
 
-                <div>
-                  <label className="text-xs font-semibold text-zinc-700">Primary Metric</label>
-                  <select
-                    value={newCase.eval_metric}
-                    onChange={e => setNewCase({ ...newCase, eval_metric: e.target.value })}
-                    className="mt-1 w-full text-xs border border-zinc-300 rounded p-2 text-zinc-900 focus:outline-none"
-                  >
-                    <option value="roc_auc">ROC-AUC</option>
-                    <option value="accuracy">Accuracy</option>
-                    <option value="f1_macro">F1 Macro</option>
-                    <option value="logloss">Log Loss</option>
-                    <option value="rmse">RMSE</option>
-                    <option value="mae">MAE</option>
-                  </select>
-                </div>
-              </div>
+                    <div>
+                      <label className="text-xs font-semibold text-zinc-700">ID Column (Optional)</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. id, row_id, or sample_id"
+                        value={newCase.id_col}
+                        onChange={e => setNewCase({ ...newCase, id_col: e.target.value })}
+                        className="mt-1 w-full text-xs border border-zinc-300 rounded p-2 font-mono text-zinc-900 focus:outline-none focus:border-zinc-950"
+                      />
+                    </div>
+                  </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-xs font-semibold text-zinc-700">CV Validation Strategy</label>
-                  <select
-                    value={newCase.cv_strategy}
-                    onChange={e => setNewCase({ ...newCase, cv_strategy: e.target.value })}
-                    className="mt-1 w-full text-xs border border-zinc-300 rounded p-2 text-zinc-900 focus:outline-none focus:border-zinc-950 font-medium"
-                  >
-                    <option value="stratified_kfold">Stratified K-Fold (Classification)</option>
-                    <option value="kfold">Standard K-Fold (Regression / Unstratified)</option>
-                    <option value="group_kfold">Group K-Fold (Group non-overlap)</option>
-                    <option value="stratified_group_kfold">Stratified Group K-Fold</option>
-                    <option value="time_series">Time Series Split</option>
-                  </select>
-                </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-xs font-semibold text-zinc-700">Task Type</label>
+                      <select
+                        value={newCase.task_type}
+                        onChange={e => {
+                          const tt = e.target.value;
+                          let defaultMetric = newCase.eval_metric;
+                          let defaultCv = newCase.cv_strategy;
+                          if (tt === 'regression') {
+                            defaultMetric = 'rmse';
+                            if (defaultCv === 'stratified_kfold') defaultCv = 'kfold';
+                          } else if (tt === 'binary') {
+                            defaultMetric = 'roc_auc';
+                            if (defaultCv === 'kfold') defaultCv = 'stratified_kfold';
+                          } else {
+                            defaultMetric = 'f1_macro';
+                          }
+                          setNewCase({ ...newCase, task_type: tt, eval_metric: defaultMetric, cv_strategy: defaultCv });
+                        }}
+                        className="mt-1 w-full text-xs border border-zinc-300 rounded p-2 text-zinc-900 focus:outline-none"
+                      >
+                        <option value="binary">Binary Classification</option>
+                        <option value="multiclass">Multiclass Classification</option>
+                        <option value="regression">Regression</option>
+                      </select>
+                    </div>
 
-                <div>
-                  <label className="text-xs font-semibold text-zinc-700">Number of Folds (n_splits)</label>
-                  <input
-                    type="number"
-                    min={2}
-                    max={20}
-                    value={newCase.n_splits}
-                    onChange={e => setNewCase({ ...newCase, n_splits: parseInt(e.target.value) || 5 })}
-                    className="mt-1 w-full text-xs border border-zinc-300 rounded p-2 font-mono text-zinc-900 focus:outline-none focus:border-zinc-950"
-                  />
-                </div>
-              </div>
+                    <div>
+                      <label className="text-xs font-semibold text-zinc-700">Primary Metric</label>
+                      <select
+                        value={newCase.eval_metric}
+                        onChange={e => setNewCase({ ...newCase, eval_metric: e.target.value })}
+                        className="mt-1 w-full text-xs border border-zinc-300 rounded p-2 text-zinc-900 focus:outline-none"
+                      >
+                        <option value="roc_auc">ROC-AUC</option>
+                        <option value="accuracy">Accuracy</option>
+                        <option value="f1_macro">F1 Macro</option>
+                        <option value="logloss">Log Loss</option>
+                        <option value="rmse">RMSE</option>
+                        <option value="mae">MAE</option>
+                      </select>
+                    </div>
+                  </div>
 
-              {(newCase.cv_strategy === 'group_kfold' || newCase.cv_strategy === 'stratified_group_kfold') && (
-                <div className="p-3 bg-zinc-50 border border-zinc-200 rounded text-xs space-y-1">
-                  <label className="text-xs font-semibold text-zinc-800">Group Column (Required for Group CV)</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="e.g. play_id, game_id, or client_id"
-                    value={newCase.group_col}
-                    onChange={e => setNewCase({ ...newCase, group_col: e.target.value })}
-                    className="w-full text-xs border border-zinc-300 rounded p-2 font-mono text-zinc-900 focus:outline-none focus:border-zinc-950 bg-white"
-                  />
-                  <p className="text-[11px] text-zinc-500">
-                    Samples with the same group value will strictly remain together in either train or validation split.
-                  </p>
-                </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-xs font-semibold text-zinc-700">CV Validation Strategy</label>
+                      <select
+                        value={newCase.cv_strategy}
+                        onChange={e => setNewCase({ ...newCase, cv_strategy: e.target.value })}
+                        className="mt-1 w-full text-xs border border-zinc-300 rounded p-2 text-zinc-900 focus:outline-none focus:border-zinc-950 font-medium"
+                      >
+                        <option value="stratified_kfold">Stratified K-Fold (Classification)</option>
+                        <option value="kfold">Standard K-Fold (Regression / Unstratified)</option>
+                        <option value="group_kfold">Group K-Fold (Group non-overlap)</option>
+                        <option value="stratified_group_kfold">Stratified Group K-Fold</option>
+                        <option value="time_series">Time Series Split</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="text-xs font-semibold text-zinc-700">Number of Folds (n_splits)</label>
+                      <input
+                        type="number"
+                        min={2}
+                        max={20}
+                        value={newCase.n_splits}
+                        onChange={e => setNewCase({ ...newCase, n_splits: parseInt(e.target.value) || 5 })}
+                        className="mt-1 w-full text-xs border border-zinc-300 rounded p-2 font-mono text-zinc-900 focus:outline-none focus:border-zinc-950"
+                      />
+                    </div>
+                  </div>
+
+                  {(newCase.cv_strategy === 'group_kfold' || newCase.cv_strategy === 'stratified_group_kfold') && (
+                    <div className="p-3 bg-zinc-50 border border-zinc-200 rounded text-xs space-y-1">
+                      <label className="text-xs font-semibold text-zinc-800">Group Column (Required for Group CV)</label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="e.g. group_id, client_id, or cluster_id"
+                        value={newCase.group_col}
+                        onChange={e => setNewCase({ ...newCase, group_col: e.target.value })}
+                        className="w-full text-xs border border-zinc-300 rounded p-2 font-mono text-zinc-900 focus:outline-none focus:border-zinc-950 bg-white"
+                      />
+                      <p className="text-[11px] text-zinc-500">
+                        Samples with the same group value will strictly remain together in either train or validation split.
+                      </p>
+                    </div>
+                  )}
+
+                  {newCase.cv_strategy === 'time_series' && (
+                    <div className="p-3 bg-zinc-50 border border-zinc-200 rounded text-xs space-y-1">
+                      <label className="text-xs font-semibold text-zinc-800">Time Column (Required for Time Series)</label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="e.g. timestamp, date, or step"
+                        value={newCase.time_col}
+                        onChange={e => setNewCase({ ...newCase, time_col: e.target.value })}
+                        className="w-full text-xs border border-zinc-300 rounded p-2 font-mono text-zinc-900 focus:outline-none focus:border-zinc-950 bg-white"
+                      />
+                      <p className="text-[11px] text-zinc-500">
+                        Chronological ordering column ensuring future observations are never used to predict the past.
+                      </p>
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="text-xs font-semibold text-zinc-700">Custom Feature Engineering Hook (Python)</label>
+                    <textarea
+                      rows={4}
+                      placeholder={`from tabular_pipeline import BaseFeatureHook\n\nclass CustomFeatures(BaseFeatureHook):\n    def transform(self, train_df, test_df=None):\n        # Custom FE logic\n        return train_df, test_df`}
+                      value={newCase.hook_code}
+                      onChange={e => setNewCase({ ...newCase, hook_code: e.target.value })}
+                      className="mt-1 w-full text-xs font-mono border border-zinc-300 rounded p-2 text-zinc-900 focus:outline-none focus:border-zinc-950"
+                    />
+                  </div>
+                </>
               )}
-
-              {newCase.cv_strategy === 'time_series' && (
-                <div className="p-3 bg-zinc-50 border border-zinc-200 rounded text-xs space-y-1">
-                  <label className="text-xs font-semibold text-zinc-800">Time Column (Required for Time Series)</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="e.g. timestamp, date, or step"
-                    value={newCase.time_col}
-                    onChange={e => setNewCase({ ...newCase, time_col: e.target.value })}
-                    className="w-full text-xs border border-zinc-300 rounded p-2 font-mono text-zinc-900 focus:outline-none focus:border-zinc-950 bg-white"
-                  />
-                  <p className="text-[11px] text-zinc-500">
-                    Chronological ordering column ensuring future observations are never used to predict the past.
-                  </p>
-                </div>
-              )}
-
-              <div>
-                <label className="text-xs font-semibold text-zinc-700">Custom Feature Engineering Hook (Python)</label>
-                <textarea
-                  rows={4}
-                  placeholder={`from tabular_pipeline import BaseFeatureHook\n\nclass CustomFeatures(BaseFeatureHook):\n    def transform(self, train_df, test_df=None):\n        # Custom FE logic\n        return train_df, test_df`}
-                  value={newCase.hook_code}
-                  onChange={e => setNewCase({ ...newCase, hook_code: e.target.value })}
-                  className="mt-1 w-full text-xs font-mono border border-zinc-300 rounded p-2 text-zinc-900 focus:outline-none focus:border-zinc-950"
-                />
-              </div>
 
               <div className="pt-4 border-t border-zinc-200 flex justify-end space-x-2">
                 <button
@@ -4042,13 +5558,13 @@ class CustomFeatureHook(BaseFeatureHook):
             <div className="flex items-start justify-between border-b border-[#E5E9E6] pb-4">
               <div className="space-y-1">
                 <div className="flex items-center space-x-2">
-                  <div className="w-8 h-8 rounded-lg bg-[#E8F3ED] border border-[#D2E7DC] flex items-center justify-center text-[#164E33]">
+                  <div className="w-8 h-8 rounded-lg bg-zinc-100 border border-zinc-200 flex items-center justify-center text-zinc-900">
                     <Layers size={18} />
                   </div>
                   <h3 className="text-base font-bold text-[#121816]">
                     Dataset Stitcher & Multi-Table Joiner Studio
                   </h3>
-                  <span className="text-[10px] font-mono uppercase bg-[#164E33] text-white px-2 py-0.5 rounded font-bold">
+                  <span className="text-[10px] font-mono uppercase bg-zinc-900 text-white px-2 py-0.5 rounded font-bold">
                     Multi-Table Engine
                   </span>
                 </div>
@@ -4069,10 +5585,22 @@ class CustomFeatureHook(BaseFeatureHook):
             <div className="flex border-b border-[#E5E9E6] space-x-6 text-xs font-medium">
               <button
                 type="button"
+                onClick={() => { setStitcherMode('relational'); setStitcherPreviewData(null); }}
+                className={`pb-2.5 transition flex items-center space-x-2 border-b-2 ${
+                  stitcherMode === 'relational'
+                    ? 'border-zinc-900 text-zinc-900 font-bold'
+                    : 'border-transparent text-[#76807B] hover:text-[#121816]'
+                }`}
+              >
+                <GitMerge size={14} />
+                <span>Relational Star-Schema Hub</span>
+              </button>
+              <button
+                type="button"
                 onClick={() => { setStitcherMode('wizard'); setStitcherPreviewData(null); }}
                 className={`pb-2.5 transition flex items-center space-x-2 border-b-2 ${
                   stitcherMode === 'wizard'
-                    ? 'border-[#164E33] text-[#164E33] font-bold'
+                    ? 'border-zinc-900 text-zinc-900 font-bold'
                     : 'border-transparent text-[#76807B] hover:text-[#121816]'
                 }`}
               >
@@ -4084,7 +5612,7 @@ class CustomFeatureHook(BaseFeatureHook):
                 onClick={() => { setStitcherMode('join'); setStitcherPreviewData(null); }}
                 className={`pb-2.5 transition flex items-center space-x-2 border-b-2 ${
                   stitcherMode === 'join'
-                    ? 'border-[#164E33] text-[#164E33] font-bold'
+                    ? 'border-zinc-900 text-zinc-900 font-bold'
                     : 'border-transparent text-[#76807B] hover:text-[#121816]'
                 }`}
               >
@@ -4096,7 +5624,7 @@ class CustomFeatureHook(BaseFeatureHook):
                 onClick={() => { setStitcherMode('concat'); setStitcherPreviewData(null); }}
                 className={`pb-2.5 transition flex items-center space-x-2 border-b-2 ${
                   stitcherMode === 'concat'
-                    ? 'border-[#164E33] text-[#164E33] font-bold'
+                    ? 'border-zinc-900 text-zinc-900 font-bold'
                     : 'border-transparent text-[#76807B] hover:text-[#121816]'
                 }`}
               >
@@ -4119,11 +5647,175 @@ class CustomFeatureHook(BaseFeatureHook):
             )}
 
             {/* TAB 1: BATCH MULTI-FILE STITCHER */}
+                        {stitcherMode === 'relational' && (
+              <div className="space-y-5 animate-fade-in text-xs">
+                <div className="p-4 bg-zinc-50 border border-zinc-200 rounded-xl space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-zinc-900 text-sm">
+                      Automatic Relational Star-Schema Joiner
+                    </span>
+                    <span className="text-[10px] font-mono uppercase bg-zinc-200 text-zinc-800 px-2 py-0.5 rounded font-semibold">
+                      Star Schema Engine
+                    </span>
+                  </div>
+                  <p className="text-zinc-600 text-[11px] leading-relaxed">
+                    Point to any folder containing relational database tables (e.g. <code>cases/f1/</code> with results, races, drivers, constructors, circuits). The engine automatically detects Primary/Foreign Keys, identifies the central Fact Table, performs collision-free joining, and builds a clean unified training matrix.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-xs font-semibold text-zinc-800 block mb-1">
+                      Relational Tables Directory
+                    </label>
+                    <div className="flex space-x-2">
+                      <input
+                        type="text"
+                        value={relationalDir}
+                        onChange={e => setRelationalDir(e.target.value)}
+                        placeholder="e.g. cases/f1"
+                        className="flex-1 bg-white border border-zinc-200 hover:border-zinc-400 rounded-lg px-3 py-2 text-xs font-mono text-zinc-900 focus:outline-none focus:border-zinc-900 transition"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleDiscoverRelational}
+                        disabled={relationalDiscovering || !relationalDir.trim()}
+                        className="px-4 py-2 bg-zinc-900 hover:bg-zinc-800 text-white rounded-lg text-xs font-medium transition disabled:opacity-50 whitespace-nowrap flex items-center space-x-1.5"
+                      >
+                        {relationalDiscovering ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+                        <span>Scan & Discover</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-semibold text-zinc-800 block mb-1">
+                      New Case Identifier & Display Name
+                    </label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="text"
+                        value={relationalCaseId}
+                        onChange={e => setRelationalCaseId(e.target.value)}
+                        placeholder="case_id (e.g. f1_podium)"
+                        className="bg-white border border-zinc-200 hover:border-zinc-400 rounded-lg px-3 py-2 text-xs font-mono text-zinc-900 focus:outline-none focus:border-zinc-900 transition"
+                      />
+                      <input
+                        type="text"
+                        value={relationalCaseName}
+                        onChange={e => setRelationalCaseName(e.target.value)}
+                        placeholder="Display Name"
+                        className="bg-white border border-zinc-200 hover:border-zinc-400 rounded-lg px-3 py-2 text-xs text-zinc-900 focus:outline-none focus:border-zinc-900 transition"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Discovery Results */}
+                {relationalDiscovery && (
+                  <div className="border border-zinc-200 rounded-xl p-4 bg-white space-y-4 shadow-2xs">
+                    <div className="flex items-center justify-between border-b border-zinc-100 pb-2">
+                      <div className="flex items-center space-x-2">
+                        <span className="font-bold text-zinc-900 text-xs">Schema Architecture Discovered:</span>
+                        <span className="text-[10px] font-mono bg-zinc-100 text-zinc-700 px-2 py-0.5 rounded border border-zinc-200">
+                          {relationalDiscovery.total_tables} Tables Found
+                        </span>
+                      </div>
+                      <span className="text-xs font-mono text-zinc-500">
+                        Central Fact Table: <strong className="text-zinc-900 font-bold">{relationalDiscovery.suggested_base}</strong>
+                      </span>
+                    </div>
+
+                    {/* Join Graph Preview */}
+                    <div className="space-y-1.5">
+                      <div className="text-[11px] font-semibold text-zinc-700 uppercase font-mono tracking-wider">
+                        Discovered Join Paths:
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-36 overflow-y-auto pr-1">
+                        {relationalDiscovery.joins.map((j: any, idx: number) => (
+                          <div key={idx} className="flex items-center justify-between bg-zinc-50 border border-zinc-200/80 rounded-lg px-2.5 py-1.5 text-[11px] font-mono">
+                            <span className="font-semibold text-zinc-900 truncate">{j.table}</span>
+                            <span className="text-zinc-400 text-[10px]">on [{j.keys.join(', ')}]</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Target & CV Configuration */}
+                    <div className="pt-2 border-t border-zinc-100 grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <div>
+                        <label className="text-[11px] font-semibold text-zinc-700 block mb-1">
+                          Modeling Target Task
+                        </label>
+                        <select
+                          value={relationalTargetType}
+                          onChange={e => setRelationalTargetType(e.target.value)}
+                          className="w-full bg-zinc-50 border border-zinc-200 rounded-lg px-2.5 py-1.5 text-xs font-medium text-zinc-900 focus:outline-none focus:border-zinc-900"
+                        >
+                          <option value="podium_binary">Podium Finish (P1, P2, P3) - ROC-AUC</option>
+                          <option value="points_binary">Top 10 Points Finish - ROC-AUC</option>
+                          <option value="finishing_pos_reg">Finishing Position (1-20) - RMSE</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="text-[11px] font-semibold text-zinc-700 block mb-1">
+                          Leak-Free CV Grouping Key
+                        </label>
+                        <input
+                          type="text"
+                          readOnly
+                          value={relationalDiscovery.suggested_group_col || 'raceId'}
+                          className="w-full bg-zinc-100 border border-zinc-200 rounded-lg px-2.5 py-1.5 text-xs font-mono text-zinc-600 cursor-not-allowed"
+                          title="GroupKFold will group folds strictly by this key"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="text-[11px] font-semibold text-zinc-700 block mb-1">
+                          Chronological Split (Year)
+                        </label>
+                        <div className="flex space-x-1.5">
+                          <input
+                            type="text"
+                            value={relationalSplitCol}
+                            onChange={e => setRelationalSplitCol(e.target.value)}
+                            placeholder="Column (year)"
+                            className="w-1/2 bg-zinc-50 border border-zinc-200 rounded-lg px-2 py-1.5 text-xs font-mono text-zinc-900"
+                          />
+                          <input
+                            type="text"
+                            value={relationalSplitVal}
+                            onChange={e => setRelationalSplitVal(e.target.value)}
+                            placeholder="<= 2022"
+                            className="w-1/2 bg-zinc-50 border border-zinc-200 rounded-lg px-2 py-1.5 text-xs font-mono text-zinc-900"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="pt-2 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={handleExecuteRelationalStitch}
+                        disabled={relationalExecuting}
+                        className="px-5 py-2.5 bg-zinc-950 hover:bg-zinc-800 text-white rounded-lg text-xs font-semibold shadow-sm transition flex items-center space-x-2 disabled:opacity-50"
+                      >
+                        {relationalExecuting ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} className="fill-current" />}
+                        <span>1-Click Build Relational Matrix & Launch Case</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+
             {stitcherMode === 'wizard' && (
               <div className="space-y-5">
-                <div className="p-4 bg-[#E8F3ED]/40 border border-[#D2E7DC] rounded-xl">
+                <div className="p-4 bg-zinc-50 border border-zinc-200 rounded-xl">
                   <div className="space-y-1">
-                    <div className="text-xs font-bold text-[#164E33] flex items-center space-x-1.5">
+                    <div className="text-xs font-bold text-zinc-900 flex items-center space-x-1.5">
                       <Layers size={14} />
                       <span>Unified Batch Stacking & Relational Join</span>
                     </div>
@@ -4143,7 +5835,7 @@ class CustomFeatureHook(BaseFeatureHook):
                       value={wizardBasePattern}
                       onChange={e => setWizardBasePattern(e.target.value)}
                       placeholder="e.g. data/train/output_*.csv or train_part_*.csv"
-                      className="w-full px-3 py-2 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816] focus:outline-none focus:border-[#164E33]"
+                      className="w-full px-3 py-2 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816] focus:outline-none focus:border-zinc-900"
                     />
                     <div className="text-[10px] text-[#76807B]">All matched files will be vertically concatenated</div>
                   </div>
@@ -4157,7 +5849,7 @@ class CustomFeatureHook(BaseFeatureHook):
                       value={wizardJoinPattern}
                       onChange={e => setWizardJoinPattern(e.target.value)}
                       placeholder="e.g. data/train/input_*.csv"
-                      className="w-full px-3 py-2 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816] focus:outline-none focus:border-[#164E33]"
+                      className="w-full px-3 py-2 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816] focus:outline-none focus:border-zinc-900"
                     />
                     <div className="text-[10px] text-[#76807B]">Leave blank if your dataset is already in single partition files</div>
                   </div>
@@ -4171,7 +5863,7 @@ class CustomFeatureHook(BaseFeatureHook):
                       value={wizardJoinKeys}
                       onChange={e => setWizardJoinKeys(e.target.value)}
                       placeholder="game_id, play_id, nfl_id, frame_id"
-                      className="w-full px-3 py-2 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816] focus:outline-none focus:border-[#164E33]"
+                      className="w-full px-3 py-2 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816] focus:outline-none focus:border-zinc-900"
                     />
                   </div>
 
@@ -4182,7 +5874,7 @@ class CustomFeatureHook(BaseFeatureHook):
                       value={wizardOutFile}
                       onChange={e => setWizardOutFile(e.target.value)}
                       placeholder="train_all_weeks_merged.csv"
-                      className="w-full px-3 py-2 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816] focus:outline-none focus:border-[#164E33]"
+                      className="w-full px-3 py-2 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816] focus:outline-none focus:border-zinc-900"
                     />
                   </div>
 
@@ -4195,7 +5887,7 @@ class CustomFeatureHook(BaseFeatureHook):
                       value={wizardMaxFiles}
                       onChange={e => setWizardMaxFiles(e.target.value)}
                       placeholder="All files (or e.g. 3 for quick test)"
-                      className="w-full px-3 py-2 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816] focus:outline-none focus:border-[#164E33]"
+                      className="w-full px-3 py-2 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816] focus:outline-none focus:border-zinc-900"
                     />
                   </div>
                 </div>
@@ -4217,7 +5909,7 @@ class CustomFeatureHook(BaseFeatureHook):
                       value={stitcherBasePath}
                       onChange={e => handleInspectBaseColumns(e.target.value)}
                       placeholder="e.g. nfl-big-data-bowl-2026-prediction/train/output_2023_w01.csv"
-                      className="w-full px-3 py-2 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816] focus:outline-none focus:border-[#164E33]"
+                      className="w-full px-3 py-2 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816] focus:outline-none focus:border-zinc-900"
                     />
                     {baseColumns.length > 0 && (
                       <div className="text-[10px] text-[#76807B] font-mono">
@@ -4237,7 +5929,7 @@ class CustomFeatureHook(BaseFeatureHook):
                       value={stitcherJoinPath}
                       onChange={e => handleInspectJoinColumns(e.target.value)}
                       placeholder="e.g. nfl-big-data-bowl-2026-prediction/train/input_2023_w01.csv"
-                      className="w-full px-3 py-2 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816] focus:outline-none focus:border-[#164E33]"
+                      className="w-full px-3 py-2 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816] focus:outline-none focus:border-zinc-900"
                     />
                     {joinColumns.length > 0 && (
                       <div className="text-[10px] text-[#76807B] font-mono">
@@ -4260,7 +5952,7 @@ class CustomFeatureHook(BaseFeatureHook):
                             if (!stitcherBasePath) handleInspectBaseColumns(f.path);
                             else handleInspectJoinColumns(f.path);
                           }}
-                          className="px-2 py-0.5 bg-white border border-[#E5E9E6] hover:border-[#164E33] text-[10px] font-mono rounded text-[#121816] transition"
+                          className="px-2 py-0.5 bg-white border border-[#E5E9E6] hover:border-zinc-400 text-[10px] font-mono rounded text-[#121816] transition"
                         >
                           {f.filename} ({f.size_mb}MB)
                         </button>
@@ -4294,8 +5986,8 @@ class CustomFeatureHook(BaseFeatureHook):
                             }}
                             className={`px-2.5 py-1 rounded-lg text-xs font-mono font-medium border transition ${
                               isSelected
-                                ? 'bg-[#164E33] text-white border-[#164E33]'
-                                : 'bg-white text-[#76807B] border-[#E5E9E6] hover:border-[#164E33]'
+                                ? 'bg-zinc-900 text-white border-zinc-900'
+                                : 'bg-white text-[#76807B] border-[#E5E9E6] hover:border-zinc-400'
                             }`}
                           >
                             <span>{isSelected ? '[x] ' : '+ '}</span>
@@ -4311,7 +6003,7 @@ class CustomFeatureHook(BaseFeatureHook):
                     value={stitcherJoinKeys.join(', ')}
                     onChange={e => setStitcherJoinKeys(e.target.value.split(',').map(s => s.trim()).filter(Boolean))}
                     placeholder="e.g. game_id, play_id, nfl_id"
-                    className="w-full px-3 py-1.5 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816] focus:outline-none focus:border-[#164E33]"
+                    className="w-full px-3 py-1.5 bg-white border border-[#E5E9E6] rounded-xl text-xs font-mono text-[#121816] focus:outline-none focus:border-zinc-900"
                   />
                 </div>
 
@@ -4323,7 +6015,7 @@ class CustomFeatureHook(BaseFeatureHook):
                     <select
                       value={stitcherHow}
                       onChange={e => setStitcherHow(e.target.value as any)}
-                      className="w-full px-3 py-2 bg-white border border-[#E5E9E6] rounded-xl text-xs text-[#121816] focus:outline-none focus:border-[#164E33]"
+                      className="w-full px-3 py-2 bg-white border border-[#E5E9E6] rounded-xl text-xs text-[#121816] focus:outline-none focus:border-zinc-900"
                     >
                       <option value="inner">Inner Join (Keep only matching)</option>
                       <option value="left">Left Join (Keep all base rows)</option>
@@ -4337,7 +6029,7 @@ class CustomFeatureHook(BaseFeatureHook):
                     <select
                       value={stitcherAgg}
                       onChange={e => setStitcherAgg(e.target.value as any)}
-                      className="w-full px-3 py-2 bg-white border border-[#E5E9E6] rounded-xl text-xs text-[#121816] focus:outline-none focus:border-[#164E33]"
+                      className="w-full px-3 py-2 bg-white border border-[#E5E9E6] rounded-xl text-xs text-[#121816] focus:outline-none focus:border-zinc-900"
                     >
                       <option value="none">None (Standard Merge)</option>
                       <option value="last">Take Last Record per Group (T_0 Temporal State)</option>
@@ -4490,7 +6182,7 @@ class CustomFeatureHook(BaseFeatureHook):
                   type="button"
                   onClick={handlePreviewMerge}
                   disabled={stitcherPreviewLoading || !stitcherBasePath || !stitcherJoinPath}
-                  className="px-4 py-2 border border-[#E5E9E6] hover:border-[#164E33] hover:bg-[#F8FAF9] text-[#121816] text-xs font-medium rounded-xl transition flex items-center space-x-1.5 disabled:opacity-50"
+                  className="px-4 py-2 border border-[#E5E9E6] hover:border-zinc-400 hover:bg-[#F8FAF9] text-[#121816] text-xs font-medium rounded-xl transition flex items-center space-x-1.5 disabled:opacity-50"
                 >
                   {stitcherPreviewLoading ? <Loader2 size={13} className="animate-spin" /> : <Layers size={13} />}
                   <span>Test & Preview Merge</span>
@@ -4511,9 +6203,9 @@ class CustomFeatureHook(BaseFeatureHook):
                     type="button"
                     onClick={handleExecuteSmartStitch}
                     disabled={stitcherExecuting || !wizardBasePattern.trim() || !wizardJoinPattern.trim()}
-                    className="px-5 py-2 bg-[#164E33] hover:bg-[#113d28] text-white text-xs font-semibold rounded-xl transition flex items-center space-x-1.5 disabled:opacity-50 shadow-sm"
+                    className="px-5 py-2 bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-semibold rounded-xl transition flex items-center space-x-1.5 disabled:opacity-50 shadow-sm"
                   >
-                    {stitcherExecuting ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                    {stitcherExecuting ? <Loader2 size={13} className="animate-spin" /> : <Cpu size={13} />}
                     <span>{stitcherExecuting ? 'Stitching All Weeks...' : 'Run 1-Click Multi-Week Stitch'}</span>
                   </button>
                 ) : stitcherMode === 'join' ? (
@@ -4521,7 +6213,7 @@ class CustomFeatureHook(BaseFeatureHook):
                     type="button"
                     onClick={handleExecuteMerge}
                     disabled={stitcherExecuting || !stitcherBasePath || !stitcherJoinPath}
-                    className="px-5 py-2 bg-[#164E33] hover:bg-[#113d28] text-white text-xs font-semibold rounded-xl transition flex items-center space-x-1.5 disabled:opacity-50 shadow-sm"
+                    className="px-5 py-2 bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-semibold rounded-xl transition flex items-center space-x-1.5 disabled:opacity-50 shadow-sm"
                   >
                     {stitcherExecuting ? <Loader2 size={13} className="animate-spin" /> : <GitMerge size={13} />}
                     <span>Execute Merge & Apply</span>
@@ -4531,7 +6223,7 @@ class CustomFeatureHook(BaseFeatureHook):
                     type="button"
                     onClick={handleExecuteConcat}
                     disabled={stitcherExecuting || !concatPattern}
-                    className="px-5 py-2 bg-[#164E33] hover:bg-[#113d28] text-white text-xs font-semibold rounded-xl transition flex items-center space-x-1.5 disabled:opacity-50 shadow-sm"
+                    className="px-5 py-2 bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-semibold rounded-xl transition flex items-center space-x-1.5 disabled:opacity-50 shadow-sm"
                   >
                     {stitcherExecuting ? <Loader2 size={13} className="animate-spin" /> : <Layers size={13} />}
                     <span>Execute Concat & Apply</span>

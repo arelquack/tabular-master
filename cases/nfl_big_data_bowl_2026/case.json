@@ -2,11 +2,14 @@
     "id": "nfl_big_data_bowl_2026",
     "name": "NFL Big Data Bowl 2026",
     "description": "",
-    "train_path": "D:\\POLBAN\\Semester 7\\gemastik-final\\cases\\nfl_big_data_bowl_2026\\train_all_weeks_merged.csv",
-    "test_path": "D:\\POLBAN\\Semester 7\\gemastik-final\\nfl-big-data-bowl-2026-prediction\\test.csv",
+    "train_path": "cases/nfl_big_data_bowl_2026/train_stitched.csv",
+    "test_path": "cases/nfl_big_data_bowl_2026/test_stitched.csv",
     "auxiliary_paths": [],
-    "id_col": "frame_id",
-    "target_col": "x_base",
+    "id_col": "",
+    "target_col": "x",
+    "drop_cols": [
+        "y"
+    ],
     "task_type": "regression",
     "eval_metric": "rmse",
     "cv_strategy": "group_kfold",
@@ -19,5 +22,28 @@
         "xgb",
         "catboost"
     ],
-    "output_dir": "experiments/nfl_big_data_bowl_2026_run"
+    "output_dir": "experiments/nfl_big_data_bowl_2026_run",
+    "model_params": {
+        "lgbm": {
+            "num_leaves": 45,
+            "learning_rate": 0.03,
+            "n_estimators": 2000,
+            "colsample_bytree": 0.75,
+            "subsample": 0.8
+        },
+        "xgb": {
+            "max_depth": 6,
+            "learning_rate": 0.03,
+            "n_estimators": 2000,
+            "colsample_bytree": 0.75,
+            "subsample": 0.8
+        },
+        "catboost": {
+            "depth": 6,
+            "learning_rate": 0.03,
+            "iterations": 2000,
+            "l2_leaf_reg": 5.0
+        }
+    },
+    "architecture_preset": "standard"
 }

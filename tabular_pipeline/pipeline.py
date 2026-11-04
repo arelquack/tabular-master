@@ -142,7 +142,20 @@ class TabularPipeline:
         drop_cols_clean = [clean_name_map.get(c, c) for c in drop_cols]
         feature_cols = [c for c in train.columns if c not in drop_cols_clean]
         X_train = train[feature_cols].copy()
-        X_test = test[feature_cols].copy() if test is not None else None
+        
+        if test is not None:
+            matching_test_cols = [c for c in feature_cols if c in test.columns]
+            if len(matching_test_cols) == len(feature_cols):
+                X_test = test[feature_cols].copy()
+            elif len(matching_test_cols) > 0:
+                print(f"  [Warning] Test set is missing {len(feature_cols) - len(matching_test_cols)} feature columns. Missing columns aligned as NaN.")
+                X_test = test.reindex(columns=feature_cols).copy()
+            else:
+                print(f"  [Warning] Test set does not share any feature columns with training set. Test predictions will be skipped.")
+                X_test = None
+        else:
+            X_test = None
+
         print(f"  Total Final Features for Training: {X_train.shape[1]}")
 
         # Re-detect categorical columns for encoder

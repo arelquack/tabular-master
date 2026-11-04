@@ -21,15 +21,25 @@ class AdversarialValidator:
             from sklearn.ensemble import RandomForestClassifier
             use_lgbm = False
 
+        # Defensively filter feature_cols to common columns between train and test
+        valid_cols = [c for c in feature_cols if c in train_df.columns and c in test_df.columns]
+        if len(valid_cols) < 2:
+            return {
+                "adversarial_auc": 0.5,
+                "status": "Skipped (Insufficient overlapping features between train and test)",
+                "is_shifted": False,
+                "top_drift_features": [],
+            }
+
         # Prepare dataset
-        train_feat = train_df[feature_cols].copy()
-        test_feat = test_df[feature_cols].copy()
+        train_feat = train_df[valid_cols].copy()
+        test_feat = test_df[valid_cols].copy()
 
         train_feat["__is_test__"] = 0
         test_feat["__is_test__"] = 1
 
         combined = pd.concat([train_feat, test_feat], ignore_index=True)
-        X = combined[feature_cols].copy()
+        X = combined[valid_cols].copy()
         y = combined["__is_test__"].values
 
         # Simple categorical encoding for adversarial check

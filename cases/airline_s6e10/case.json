@@ -22,39 +22,28 @@
     "output_dir": "experiments/s6e10_champion_run",
     "model_params": {
         "lgbm": {
-            "learning_rate": 0.0381144855282193,
-            "num_leaves": 61,
-            "max_depth": 12,
-            "min_child_samples": 30,
-            "subsample": 0.8055599366160748,
-            "colsample_bytree": 0.613620865823216,
-            "reg_alpha": 0.13014634466951383,
-            "reg_lambda": 4.850276495197483,
-            "n_estimators": 1500,
-            "n_jobs": -1,
-            "random_state": 2026,
-            "verbose": -1
+            "num_leaves": 4,
+            "max_depth": 3,
+            "learning_rate": 0.04,
+            "n_estimators": 5000,
+            "min_child_samples": 100,
+            "colsample_bytree": 0.5,
+            "subsample": 0.8
         },
         "xgb": {
-            "learning_rate": 0.042719722098255274,
-            "max_depth": 8,
-            "min_child_weight": 16,
-            "subsample": 0.7404314477054951,
-            "colsample_bytree": 0.5936039409799653,
-            "reg_alpha": 0.2512876890017527,
-            "reg_lambda": 3.853142072043197,
-            "n_estimators": 1500,
-            "tree_method": "hist",
-            "n_jobs": -1,
-            "random_state": 2026
+            "max_depth": 2,
+            "learning_rate": 0.04,
+            "n_estimators": 5000,
+            "min_child_weight": 20,
+            "colsample_bytree": 0.5,
+            "subsample": 0.8
         },
         "catboost": {
-            "learning_rate": 0.07519385999585917,
-            "depth": 7,
-            "l2_leaf_reg": 4.915324721801447,
-            "iterations": 1500,
-            "random_seed": 2026,
-            "verbose": false
+            "depth": 3,
+            "learning_rate": 0.05,
+            "iterations": 4000,
+            "l2_leaf_reg": 5.0
         }
-    }
+    },
+    "architecture_preset": "shallow"
 }
