@@ -25,6 +25,13 @@ from tabular_pipeline import PipelineConfig, TabularPipeline, BaseFeatureHook, H
 from tabular_pipeline.ensemble import EnsembleOptimizer
 from tabular_pipeline.metrics import MetricEvaluator
 
+def is_numeric_type(dtype_or_series) -> bool:
+    """Safely check if dtype or series is numeric and not boolean, compatible with pandas ExtensionDtypes."""
+    try:
+        return pd.api.types.is_numeric_dtype(dtype_or_series) and not pd.api.types.is_bool_dtype(dtype_or_series)
+    except Exception:
+        return False
+
 app = FastAPI(title="Tabular Mining Studio API", version="2.0.0")
 
 app.add_middleware(
@@ -53,6 +60,7 @@ job_state = {}
 eda_cache = {}
 tune_state = {}
 stop_events = {}
+indobert_state: Dict[str, Any] = {}
 
 class CreateCaseRequest(BaseModel):
     id: str
@@ -184,6 +192,35 @@ class NLPCleanRequest(BaseModel):
     title_col: Optional[str] = None
     keywords_col: Optional[str] = None
     content_col: Optional[str] = None
+
+class IndoBertExtractRequest(BaseModel):
+    text_col: Optional[str] = None
+    model_name: Optional[str] = "indobenchmark/indobert-base-p1"
+    batch_size: Optional[int] = 32
+    max_length: Optional[int] = 256
+    pooling: Optional[str] = "cls"
+    use_gpu: Optional[bool] = True
+    force_recompute: Optional[bool] = False
+
+class IndoBertTrainRequest(BaseModel):
+    text_col: Optional[str] = None
+    text_cols: Optional[List[str]] = None
+    feature_extractor: Optional[str] = "indobert"
+    tfidf_max_features: Optional[int] = 15000
+    tfidf_ngram_min: Optional[int] = 1
+    tfidf_ngram_max: Optional[int] = 2
+    target_col: Optional[str] = None
+    models: Optional[List[str]] = ["lgbm", "catboost", "xgb"]
+    n_splits: Optional[int] = 5
+    seed: Optional[int] = 2026
+    batch_size: Optional[int] = 32
+    max_length: Optional[int] = 256
+    pooling: Optional[str] = "cls"
+    use_gpu: Optional[bool] = True
+
+class IndoBertPredictRequest(BaseModel):
+    text: Optional[str] = None
+    texts: Optional[Dict[str, str]] = None
 
 
 class DiscoverRelationalRequest(BaseModel):
@@ -563,9 +600,10 @@ def get_case_eda(case_id: str):
 
     # 5. Correlations with Target
     correlations = []
+    y_num = None
     if target_col and target_col in df_sample.columns:
         y_s = df_sample[target_col]
-        if y_s.dtype == bool or not np.issubdtype(y_s.dtype, np.number):
+        if not is_numeric_type(y_s.dtype):
             y_num = pd.Series(y_s).astype("category").cat.codes
         else:
             y_num = y_s
@@ -585,7 +623,7 @@ def get_case_eda(case_id: str):
     columns_profile = []
     for c in df_sample.columns:
         s = df_sample[c]
-        is_num = np.issubdtype(s.dtype, np.number)
+        is_num = is_numeric_type(s.dtype)
         missing_count = int(s.isna().sum())
         missing_rate = round((missing_count / len(s)) * 100, 2)
         nunique = int(s.nunique())
@@ -682,7 +720,8 @@ def get_case_eda(case_id: str):
                 groups = {g_names[i]: df_sample[df_sample[target_col] == u_vals[i]] for i in range(min(len(u_vals), 3))}
 
             # Sort numeric features by correlation magnitude with target
-            scored_nums = sorted(valid_numeric, key=lambda c: abs(float(df_sample[c].corr(y_clean))) if pd.notnull(df_sample[c].corr(y_clean)) else 0, reverse=True)
+            y_target_for_corr = y_num if y_num is not None else y_clean
+            scored_nums = sorted(valid_numeric, key=lambda c: abs(float(df_sample[c].corr(y_target_for_corr))) if pd.notnull(df_sample[c].corr(y_target_for_corr)) else 0, reverse=True)
 
             for col in scored_nums[:12]:
                 s = df_sample[col].dropna()
@@ -727,10 +766,10 @@ def get_case_eda(case_id: str):
 
             # 8. Spearman Rank vs Pearson Linear Correlation Divergence
             for c in scored_nums:
-                valid = df_sample[[c, target_col]].dropna()
+                valid = pd.DataFrame({"feat": df_sample[c], "target": y_target_for_corr}).dropna()
                 if len(valid) > 10:
-                    s_corr, _ = stats.spearmanr(valid[c], valid[target_col])
-                    p_corr = float(valid[c].corr(valid[target_col]))
+                    s_corr, _ = stats.spearmanr(valid["feat"], valid["target"])
+                    p_corr = float(valid["feat"].corr(valid["target"]))
                     spearman_correlations.append({
                         "feature": c,
                         "spearman": round(float(s_corr), 4),
@@ -1756,6 +1795,363 @@ def execute_nlp_clean(case_id: str, req: NLPCleanRequest):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+# -------------------------------------------------------------
+# IndoBERT Studio Endpoints & Hardware GPU Acceleration
+# -------------------------------------------------------------
+@app.get("/api/system/gpu-status")
+def get_system_gpu_status():
+    from tabular_pipeline.indobert_engine import IndoBERTEngine
+    return IndoBERTEngine.get_gpu_status()
+
+@app.get("/api/cases/{case_id}/indobert/state")
+def get_indobert_state(case_id: str):
+    case_dir = os.path.join(CASES_DIR, case_id)
+    saved_res_path = os.path.join(case_dir, "indobert_results.json")
+    
+    current = indobert_state.get(case_id, {
+        "status": "completed" if os.path.exists(saved_res_path) else "idle",
+        "stage": "ready",
+        "progress": 100 if os.path.exists(saved_res_path) else 0,
+        "logs": [],
+        "results": None
+    })
+    
+    if current.get("results") is None and os.path.exists(saved_res_path):
+        try:
+            with open(saved_res_path, "r", encoding="utf-8") as f:
+                current["results"] = json.load(f)
+        except Exception:
+            pass
+    return current
+
+@app.post("/api/cases/{case_id}/indobert/train")
+def run_indobert_pipeline_task(case_id: str, req: IndoBertTrainRequest, background_tasks: BackgroundTasks):
+    case_dir = os.path.join(CASES_DIR, case_id)
+    if not os.path.exists(case_dir):
+        raise HTTPException(status_code=404, detail=f"Case not found: {case_id}")
+
+    # Prioritize official train_path from case.json
+    train_path = None
+    case_json = os.path.join(case_dir, "case.json")
+    if os.path.exists(case_json):
+        with open(case_json, "r") as f:
+            meta = json.load(f)
+        train_path = resolve_dataset_path(meta.get("train_path", ""), case_id=case_id)
+
+    if not train_path or not os.path.exists(train_path):
+        train_path = resolve_dataset_path(os.path.join(case_dir, "train.csv"), case_id=case_id)
+    
+    if not train_path or not os.path.exists(train_path):
+        raise HTTPException(status_code=404, detail="Training dataset not found for this case.")
+
+    if indobert_state.get(case_id, {}).get("status") == "running":
+        raise HTTPException(status_code=409, detail="IndoBERT training is already running for this case.")
+
+    indobert_state[case_id] = {
+        "status": "running",
+        "stage": "starting",
+        "progress": 0,
+        "logs": [f"[{time.strftime('%H:%M:%S')}] Initializing IndoBERT Studio pipeline..."],
+        "results": None
+    }
+
+    def _worker():
+        from tabular_pipeline.indobert_engine import IndoBERTEngine
+        def log(msg: str):
+            indobert_state[case_id]["logs"].append(f"[{time.strftime('%H:%M:%S')}] {msg}")
+
+        try:
+            log(f"Reading dataset from {os.path.basename(train_path)}...")
+            df = pd.read_csv(train_path)
+
+            # Auto-resolve text columns and target_col
+            text_cols = [c for c in (req.text_cols or []) if c]
+            if not text_cols and req.text_col:
+                text_cols = [req.text_col]
+            target_col = req.target_col
+            meta_json = os.path.join(case_dir, "case.json")
+            if os.path.exists(meta_json):
+                with open(meta_json, "r") as f:
+                    meta = json.load(f)
+                if not text_cols:
+                    legacy_text_col = meta.get("text_column")
+                    if legacy_text_col:
+                        text_cols = [legacy_text_col]
+                if not target_col or target_col not in df.columns:
+                    target_col = meta.get("target_col") or meta.get("target_column")
+
+            if not text_cols:
+                for c in ["clean_text", "content", "text", "title", "body", "headline"]:
+                    if c in df.columns:
+                        text_cols = [c]
+                        break
+
+            if not text_cols:
+                text_cols = [df.columns[0]]
+
+            missing_cols = [c for c in text_cols if c not in df.columns]
+            if missing_cols:
+                raise ValueError(f"Kolom teks {missing_cols} tidak ditemukan dalam dataset. Kolom yang tersedia: {list(df.columns)}")
+
+            if not target_col or target_col not in df.columns:
+                for c in ["category", "label", "target", "class", "sentiment"]:
+                    if c in df.columns:
+                        target_col = c
+                        break
+                if not target_col or target_col not in df.columns:
+                    target_col = df.columns[-1]
+
+            if target_col not in df.columns:
+                raise ValueError(f"Kolom target '{target_col}' tidak ditemukan dalam dataset. Kolom yang tersedia: {list(df.columns)}")
+
+            feature_extractor = (req.feature_extractor or "indobert").lower().strip()
+            if feature_extractor not in ["indobert", "tfidf", "both"]:
+                raise ValueError(f"Feature extractor tidak dikenal: {feature_extractor}. Pilih 'indobert', 'tfidf', atau 'both'.")
+
+            log(f"Configured Text Feature Columns: {text_cols}")
+            log(f"Feature Extractor: {feature_extractor.upper()}")
+            log(f"Configured Classification Target Column: '{target_col}'")
+
+            out_dir = os.path.join(ROOT_DIR, f"experiments/{case_id}_indobert")
+            os.makedirs(out_dir, exist_ok=True)
+
+            embeddings = None
+            tfidf_vectorizers = None
+            engine = None
+
+            if feature_extractor in ["indobert", "both"]:
+                # Check / Create embeddings cache
+                cols_key = re.sub(r"[^A-Za-z0-9]+", "_", "_".join(text_cols)).strip("_")
+                emb_cache_path = os.path.join(out_dir, f"embeddings_{cols_key}_{len(df)}_{req.pooling}_{req.max_length}.npy")
+
+                engine = IndoBERTEngine(use_gpu=req.use_gpu)
+
+                if os.path.exists(emb_cache_path):
+                    log(f"Found cached IndoBERT embeddings on disk: {os.path.basename(emb_cache_path)}! Skipping neural inference...")
+                    embeddings = np.load(emb_cache_path)
+                    indobert_state[case_id]["progress"] = 40
+                else:
+                    indobert_state[case_id]["stage"] = "extracting_embeddings"
+                    log(f"Extracting IndoBERT 768-dim embeddings from {len(df):,} rows across {len(text_cols)} column(s) using '{req.pooling}' pooling...")
+                    column_embeddings = []
+                    for col_idx, col in enumerate(text_cols):
+                        log(f"[Embedding] Column {col_idx + 1}/{len(text_cols)}: '{col}'")
+                        def prog_cb(curr, tot, _col_idx=col_idx):
+                            overall = (_col_idx * tot + curr) / max(len(text_cols) * tot, 1)
+                            indobert_state[case_id]["progress"] = int(overall * 40)
+
+                        column_embeddings.append(engine.extract_embeddings(
+                            texts=df[col].tolist(),
+                            batch_size=req.batch_size or 32,
+                            max_length=req.max_length or 256,
+                            pooling=req.pooling or "cls",
+                            log_callback=log,
+                            progress_callback=prog_cb
+                        ))
+                    embeddings = np.hstack(column_embeddings)
+                    np.save(emb_cache_path, embeddings)
+                    log(f"Cached IndoBERT embeddings to {emb_cache_path} ({os.path.getsize(emb_cache_path)/(1024*1024):.1f} MB)")
+
+            if feature_extractor in ["tfidf", "both"]:
+                from tabular_pipeline.text_engine import TextFeatureExtractor
+                indobert_state[case_id]["stage"] = "extracting_tfidf"
+                indobert_state[case_id]["progress"] = 40 if feature_extractor == "both" else 25
+                log(f"Extracting TF-IDF features from {len(df):,} rows across {len(text_cols)} column(s)...")
+                tfidf_matrix, tfidf_vectorizers = TextFeatureExtractor.extract_tfidf(
+                    df=df,
+                    text_cols=text_cols,
+                    max_features=req.tfidf_max_features or 15000,
+                    ngram_range=(req.tfidf_ngram_min or 1, req.tfidf_ngram_max or 2),
+                    log_callback=log,
+                    return_vectorizers=True
+                )
+                if embeddings is None:
+                    embeddings = tfidf_matrix
+                else:
+                    import scipy.sparse as sp
+                    embeddings = sp.hstack([sp.csr_matrix(embeddings), tfidf_matrix]).tocsr()
+                log(f"TF-IDF matrix ready: {tfidf_matrix.shape[0]:,} rows x {tfidf_matrix.shape[1]:,} features")
+
+            if engine is not None:
+                engine.release()
+                log("Released IndoBERT model from GPU memory before GBDT training.")
+
+            indobert_state[case_id]["stage"] = "training_classifiers"
+            indobert_state[case_id]["progress"] = 60
+            y_raw = df[target_col].values
+
+            models_selected = req.models if req.models else ["lgbm", "catboost", "xgb"]
+            log(f"Fitting downstream tree classifiers: {[m.upper() for m in models_selected]} with {req.n_splits}-fold CV...")
+
+            results = IndoBERTEngine.train_downstream_classifiers(
+                X_emb=embeddings,
+                y_raw=y_raw,
+                models_to_train=models_selected,
+                n_splits=req.n_splits or 5,
+                seed=req.seed or 2026,
+                log_callback=log
+            )
+
+            # Metadata info
+            feature_label = {"tfidf": "TF-IDF", "both": "IndoBERT + TF-IDF"}.get(feature_extractor, "IndoBERT")
+            if results.get("ensemble"):
+                results["ensemble"]["name"] = results["ensemble"]["name"].replace("IndoBERT", feature_label)
+
+            results["meta"] = {
+                "case_id": case_id,
+                "text_col": text_cols[0],
+                "text_cols": text_cols,
+                "feature_extractor": feature_extractor,
+                "target_col": target_col,
+                "total_samples": len(df),
+                "n_features": int(embeddings.shape[1]),
+                "model_name": "indobenchmark/indobert-base-p1" if feature_extractor != "tfidf" else "TF-IDF",
+                "pooling": req.pooling or "cls",
+                "max_length": req.max_length or 256,
+                "batch_size": req.batch_size or 32,
+                "trained_at": time.strftime("%Y-%m-%d %H:%M:%S")
+            }
+
+            # Fit final models on all rows and persist them for the inference sandbox
+            indobert_state[case_id]["stage"] = "fitting_final_models"
+            indobert_state[case_id]["progress"] = 90
+            final_bundle = IndoBERTEngine.fit_full_classifiers(
+                X=embeddings,
+                y_raw=y_raw,
+                models_to_train=models_selected,
+                seed=req.seed or 2026,
+                log_callback=log
+            )
+            import joblib
+            artifact_path = os.path.join(out_dir, "inference_model.joblib")
+            joblib.dump({
+                "feature_extractor": feature_extractor,
+                "text_cols": text_cols,
+                "classes": final_bundle["classes"],
+                "label2idx": final_bundle["label2idx"],
+                "models": final_bundle["models"],
+                "tfidf_vectorizers": tfidf_vectorizers,
+                "model_name": "indobenchmark/indobert-base-p1",
+                "pooling": req.pooling or "cls",
+                "max_length": req.max_length or 256,
+                "batch_size": req.batch_size or 32,
+            }, artifact_path)
+            log(f"Saved inference artifact: {artifact_path} ({os.path.getsize(artifact_path)/(1024*1024):.1f} MB)")
+
+            # Save results to disk
+            saved_json = os.path.join(case_dir, "indobert_results.json")
+            with open(saved_json, "w", encoding="utf-8") as f:
+                json.dump(results, f, indent=2)
+
+            indobert_state[case_id]["status"] = "completed"
+            indobert_state[case_id]["stage"] = "done"
+            indobert_state[case_id]["progress"] = 100
+            indobert_state[case_id]["results"] = results
+            log("🎉 IndoBERT pipeline execution completed successfully!")
+
+        except Exception as err:
+            import traceback
+            log(f"ERROR: {str(err)}\n{traceback.format_exc()}")
+            indobert_state[case_id]["status"] = "error"
+            indobert_state[case_id]["stage"] = "failed"
+
+    background_tasks.add_task(_worker)
+    return {"status": "started", "case_id": case_id}
+
+@app.post("/api/cases/{case_id}/indobert/predict")
+def predict_indobert_text(case_id: str, req: IndoBertPredictRequest):
+    case_dir = os.path.join(CASES_DIR, case_id)
+    artifact_path = os.path.join(ROOT_DIR, f"experiments/{case_id}_indobert", "inference_model.joblib")
+    if not os.path.exists(artifact_path):
+        raise HTTPException(status_code=400, detail="Model inference belum tersedia untuk case ini. Jalankan ulang training IndoBERT Studio.")
+
+    try:
+        import joblib
+        artifact = joblib.load(artifact_path)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Gagal memuat model inference: {e}")
+
+    text_cols = artifact.get("text_cols", [])
+    classes = artifact.get("classes", [])
+    models = artifact.get("models", {})
+    if not classes or not models:
+        raise HTTPException(status_code=400, detail="Artefak model tidak lengkap. Jalankan ulang training.")
+
+    input_texts = req.texts or {}
+    if req.text and text_cols and text_cols[0] not in input_texts:
+        input_texts[text_cols[0]] = req.text
+
+    def text_for(col: str) -> str:
+        value = input_texts.get(col, "")
+        return str(value) if value is not None else ""
+
+    feature_extractor = artifact.get("feature_extractor", "indobert")
+    try:
+        import scipy.sparse as sp
+
+        indobert_matrix = None
+        tfidf_matrix = None
+
+        if feature_extractor in ["indobert", "both"]:
+            from tabular_pipeline.indobert_engine import IndoBERTEngine
+            engine = IndoBERTEngine(model_name=artifact.get("model_name", "indobenchmark/indobert-base-p1"), use_gpu=True)
+            column_embeddings = [
+                engine.extract_embeddings(
+                    texts=[text_for(col)],
+                    batch_size=artifact.get("batch_size", 32),
+                    max_length=artifact.get("max_length", 256),
+                    pooling=artifact.get("pooling", "cls"),
+                    log_callback=None,
+                )
+                for col in text_cols
+            ]
+            indobert_matrix = np.hstack(column_embeddings)
+            engine.release()
+
+        if feature_extractor in ["tfidf", "both"]:
+            mats = [
+                vec.transform([text_for(col)])
+                for col, vec in artifact.get("tfidf_vectorizers", [])
+            ]
+            if not mats:
+                raise ValueError("Tidak ada vectorizer TF-IDF pada artefak model.")
+            tfidf_matrix = sp.hstack(mats).tocsr()
+
+        if indobert_matrix is not None and tfidf_matrix is not None:
+            X = sp.hstack([sp.csr_matrix(indobert_matrix), tfidf_matrix]).tocsr()
+        else:
+            X = indobert_matrix if indobert_matrix is not None else tfidf_matrix
+
+        predictions = {}
+        prob_rows = []
+        for m_key, clf in models.items():
+            proba = clf.predict_proba(X)[0]
+            row = np.zeros(len(classes))
+            for cls_code, prob in zip(clf.classes_, proba):
+                row[int(cls_code)] = float(prob)
+            prob_rows.append(row)
+            predictions[m_key] = {
+                "top_class": classes[int(np.argmax(row))],
+                "confidence": round(float(np.max(row)), 4),
+            }
+
+        if prob_rows:
+            ensemble = np.mean(prob_rows, axis=0)
+            predictions["ensemble"] = {
+                "top_class": classes[int(np.argmax(ensemble))],
+                "confidence": round(float(np.max(ensemble)), 4),
+            }
+
+        return {
+            "feature_extractor": feature_extractor,
+            "text_cols": text_cols,
+            "texts": input_texts,
+            "classes": classes,
+            "predictions": predictions,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Prediksi gagal: {e}")
+
 
 @app.post("/api/tools/merge-datasets")
 def execute_merge_datasets(req: MergeDatasetsRequest):
@@ -2283,10 +2679,17 @@ def run_tune_thread(case_id: str, model_name: str, n_trials: int, meta: dict, ca
         id_col = meta.get("id_col")
         y_raw = train_df[target_col].values
         if meta["task_type"] == "binary":
-            y = (y_raw == 1) | (y_raw == True) | (y_raw == "True") if y_raw.dtype == bool or not np.issubdtype(y_raw.dtype, np.number) else y_raw
-            if not np.issubdtype(y.dtype, np.number):
+            if pd.api.types.is_bool_dtype(y_raw.dtype):
+                y = y_raw.astype(int)
+            elif not is_numeric_type(y_raw.dtype):
                 y = pd.Series(y_raw).astype("category").cat.codes.values
-            y = y.astype(int)
+            else:
+                y = y_raw.astype(int)
+        elif meta["task_type"] == "multiclass":
+            if not is_numeric_type(y_raw.dtype):
+                y = pd.Series(y_raw).astype("category").cat.codes.values
+            else:
+                y = y_raw.astype(int)
         else:
             y = y_raw
 
@@ -2310,8 +2713,8 @@ def run_tune_thread(case_id: str, model_name: str, n_trials: int, meta: dict, ca
         clean_map = {c: re.sub(r'[\[\]<>, "]+', '_', str(c)) for c in X.columns}
         X = X.rename(columns=clean_map)
 
-        # Convert object columns to category codes for speed
-        for col in X.select_dtypes(include=["object"]).columns:
+        # Convert categorical / string / object columns to category codes for speed
+        for col in X.select_dtypes(include=["object", "string", "category"]).columns:
             X[col] = X[col].astype("category").cat.codes
 
         tlog(f"Preparing Optuna search space on {len(X):,} rows x {len(X.columns)} features ({total_trials} total trials scheduled)...")
@@ -2530,7 +2933,7 @@ def run_hill_climb(case_id: str):
             raise HTTPException(status_code=404, detail="Training dataset not found")
         train_df = pd.read_csv(train_path, usecols=[meta["target_col"]])
         y_true = train_df[meta["target_col"]].values
-        if y_true.dtype == bool or not np.issubdtype(y_true.dtype, np.number):
+        if not is_numeric_type(y_true.dtype):
             y_true = pd.Series(y_true).astype("category").cat.codes.values
 
     opt = EnsembleOptimizer(task_type=meta["task_type"], eval_metric=meta["eval_metric"])
@@ -2569,7 +2972,7 @@ def run_custom_blend(case_id: str, req: BlendRequest):
             raise HTTPException(status_code=404, detail="Training dataset not found")
         train_df = pd.read_csv(train_path, usecols=[meta["target_col"]])
         y_true = train_df[meta["target_col"]].values
-        if y_true.dtype == bool or not np.issubdtype(y_true.dtype, np.number):
+        if not is_numeric_type(y_true.dtype):
             y_true = pd.Series(y_true).astype("category").cat.codes.values
 
     total_w = sum(req.weights.values())
@@ -3012,7 +3415,7 @@ def apply_auto_feature_engineering(train_df: pd.DataFrame, test_df: pd.DataFrame
     # 4. Filter near-constant or collinear features
     all_created = [c for c in new_feats if c in train_out.columns]
     if all_created:
-        num_created = [c for c in all_created if np.issubdtype(train_out[c].dtype, np.number)]
+        num_created = [c for c in all_created if is_numeric_type(train_out[c].dtype)]
         valid_num = []
         if num_created:
             variances = train_out[num_created].var()
@@ -3026,7 +3429,7 @@ def apply_auto_feature_engineering(train_df: pd.DataFrame, test_df: pd.DataFrame
                         if f1 not in to_drop and f2 not in to_drop and corr_matrix.loc[f1, f2] >= 0.98:
                             to_drop.add(f2)
                 valid_num = [f for f in valid_num if f not in to_drop]
-        non_num_created = [c for c in all_created if not np.issubdtype(train_out[c].dtype, np.number)]
+        non_num_created = [c for c in all_created if not is_numeric_type(train_out[c].dtype)]
         kept_feats = (valid_num + non_num_created)[:40]
         drop_candidates = [c for c in all_created if c not in kept_feats]
         for df in dfs:
@@ -3651,7 +4054,7 @@ def export_standalone_notebook(case_id: str):
                     "    # 4. Prune collinear / near-constant features\n",
                     "    all_created = [c for c in new_feats if c in train_out.columns]\n",
                     "    if all_created:\n",
-                    "        num_created = [c for c in all_created if np.issubdtype(train_out[c].dtype, np.number)]\n",
+                    "        num_created = [c for c in all_created if pd.api.types.is_numeric_dtype(train_out[c].dtype) and not pd.api.types.is_bool_dtype(train_out[c].dtype)]\n",
                     "        valid_num = []\n",
                     "        if num_created:\n",
                     "            variances = train_out[num_created].var()\n",
@@ -3665,7 +4068,7 @@ def export_standalone_notebook(case_id: str):
                     "                        if f1 not in to_drop and f2 not in to_drop and corr_matrix.loc[f1, f2] >= 0.98:\n",
                     "                            to_drop.add(f2)\n",
                     "                valid_num = [f for f in valid_num if f not in to_drop]\n",
-                    "        non_num_created = [c for c in all_created if not np.issubdtype(train_out[c].dtype, np.number)]\n",
+                    "        non_num_created = [c for c in all_created if not (pd.api.types.is_numeric_dtype(train_out[c].dtype) and not pd.api.types.is_bool_dtype(train_out[c].dtype))]\n",
                     "        kept_feats = (valid_num + non_num_created)[:40]\n",
                     "        drop_candidates = [c for c in all_created if c not in kept_feats]\n",
                     "        for df in dfs:\n",

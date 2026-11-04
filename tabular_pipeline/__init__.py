@@ -8,8 +8,9 @@ from .config import PipelineConfig
 from .pipeline import TabularPipeline
 from .feature_engine import BaseFeatureHook, UniversalAutoFeatureEngine
 from .tuner import HyperparameterTuner
+from .indobert_engine import IndoBERTEngine
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 __all__ = [
     "PipelineConfig",
@@ -17,4 +18,5 @@ __all__ = [
     "BaseFeatureHook",
     "UniversalAutoFeatureEngine",
     "HyperparameterTuner",
+    "IndoBERTEngine",
 ]

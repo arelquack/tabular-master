@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { TextStudio } from './TextStudio';
+import { IndoBertStudio } from './IndoBertStudio';
 import { 
   Play, 
   Download, 
@@ -237,8 +238,8 @@ export default function App() {
   const [caseDetail, setCaseDetail] = useState<CaseDetail | null>(null);
   
   // Data Mining Workflow Tabs
-  // Studio Mode: Tabular vs NLP / Text Studio
-  const [studioMode, setStudioMode] = useState<'tabular' | 'nlp'>('tabular');
+  // Studio Mode: Tabular vs NLP / Text Studio vs IndoBERT Studio
+  const [studioMode, setStudioMode] = useState<'tabular' | 'nlp' | 'indobert'>('tabular');
 
   const [activeTab, setActiveTab] = useState<'eda' | 'fe' | 'training' | 'ablation' | 'ensemble' | 'artifacts'>('eda');
   const [loading, setLoading] = useState<boolean>(true);
@@ -1650,7 +1651,7 @@ class CustomFeatureHook(BaseFeatureHook):
             </div>
           </div>
 
-          {/* Center: Dual-Mode Studio Switcher */}
+          {/* Center: Triple-Mode Studio Switcher */}
           <div className="flex items-center bg-zinc-100 p-0.5 rounded-lg border border-zinc-200">
             <button
               type="button"
@@ -1673,6 +1674,18 @@ class CustomFeatureHook(BaseFeatureHook):
               }`}
             >
               Text &amp; NLP Studio
+            </button>
+            <button
+              type="button"
+              onClick={() => setStudioMode('indobert')}
+              className={`px-3 py-1 rounded-md text-xs font-medium transition-all flex items-center gap-1.5 ${
+                studioMode === 'indobert'
+                  ? 'bg-white text-zinc-950 shadow-xs border border-zinc-200/80 font-semibold'
+                  : 'text-zinc-500 hover:text-zinc-900'
+              }`}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+              IndoBERT Studio
             </button>
           </div>
 
@@ -1819,6 +1832,12 @@ class CustomFeatureHook(BaseFeatureHook):
           </div>
         ) : !caseDetail ? (
           <div className="text-center py-20 text-zinc-500">Select or create a case to begin.</div>
+        ) : studioMode === 'indobert' ? (
+          <IndoBertStudio
+            selectedCaseId={selectedCaseId}
+            caseDetail={caseDetail}
+            onRefreshCase={() => fetchCaseDetail(selectedCaseId)}
+          />
         ) : studioMode === 'nlp' ? (
           <TextStudio
             selectedCaseId={selectedCaseId}

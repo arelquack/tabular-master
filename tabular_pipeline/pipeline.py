@@ -70,15 +70,16 @@ class TabularPipeline:
         groups = train[group_col] if (group_col and group_col in train.columns) else None
 
         # Convert target to numerical format if boolean or string
+        is_target_numeric = pd.api.types.is_numeric_dtype(y_raw.dtype) and not pd.api.types.is_bool_dtype(y_raw.dtype)
         if self.config.task_type == "binary":
-            if y_raw.dtype == bool:
+            if pd.api.types.is_bool_dtype(y_raw.dtype):
                 y_train = y_raw.astype(int)
-            elif not np.issubdtype(y_raw.dtype, np.number):
+            elif not is_target_numeric:
                 y_train = pd.Series(y_raw).astype("category").cat.codes.values
             else:
                 y_train = y_raw.astype(int)
         elif self.config.task_type == "multiclass":
-            if not np.issubdtype(y_raw.dtype, np.number):
+            if not is_target_numeric:
                 y_train = pd.Series(y_raw).astype("category").cat.codes.values
             else:
                 y_train = y_raw.astype(int)
@@ -322,7 +323,7 @@ class TabularPipeline:
                     # Competitions evaluated on ROC-AUC require continuous probability predictions
                     sub_df[target_col] = best_test_preds
                 else:
-                    is_target_bool = train_df[target_col].dtype == bool
+                    is_target_bool = pd.api.types.is_bool_dtype(train_df[target_col].dtype)
                     binary_preds = (best_test_preds >= best_threshold)
                     sub_df[target_col] = binary_preds if is_target_bool else binary_preds.astype(int)
             elif self.config.task_type == "multiclass":

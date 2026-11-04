@@ -101,8 +101,8 @@ class CrossValidatorTrainer:
                 if X_te is not None:
                     X_te = encoder.transform(X_te)
 
-            # Ensure any remaining object columns are converted to codes
-            for col in X_tr.select_dtypes(include=["object"]).columns:
+            # Ensure any remaining object or string columns are converted to codes
+            for col in X_tr.select_dtypes(include=["object", "string", "category"]).columns:
                 unique_vals = X_tr[col].dropna().unique()
                 col_map = {val: idx for idx, val in enumerate(unique_vals)}
                 X_tr[col] = X_tr[col].map(col_map).fillna(-1).astype(float)

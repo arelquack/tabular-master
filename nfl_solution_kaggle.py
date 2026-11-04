@@ -244,7 +244,7 @@ def apply_auto_feature_engineering(train_df: pd.DataFrame, test_df: pd.DataFrame
     # 4. Filter near-constant or collinear features
     all_created = [c for c in new_feats if c in train_out.columns]
     if all_created:
-        num_created = [c for c in all_created if np.issubdtype(train_out[c].dtype, np.number)]
+        num_created = [c for c in all_created if pd.api.types.is_numeric_dtype(train_out[c].dtype) and not pd.api.types.is_bool_dtype(train_out[c].dtype)]
         valid_num = []
         if num_created:
             variances = train_out[num_created].var()
@@ -258,7 +258,7 @@ def apply_auto_feature_engineering(train_df: pd.DataFrame, test_df: pd.DataFrame
                         if f1 not in to_drop and f2 not in to_drop and corr_matrix.loc[f1, f2] >= 0.98:
                             to_drop.add(f2)
                 valid_num = [f for f in valid_num if f not in to_drop]
-        non_num_created = [c for c in all_created if not np.issubdtype(train_out[c].dtype, np.number)]
+        non_num_created = [c for c in all_created if not (pd.api.types.is_numeric_dtype(train_out[c].dtype) and not pd.api.types.is_bool_dtype(train_out[c].dtype))]
         kept_feats = (valid_num + non_num_created)[:40]
         drop_candidates = [c for c in all_created if c not in kept_feats]
         for df in dfs:

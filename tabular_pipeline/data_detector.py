@@ -38,6 +38,11 @@ class DataDetector:
                 datetime_cols.append(col)
                 continue
 
+            # Check if boolean
+            if pd.api.types.is_bool_dtype(series):
+                low_cat_cols.append(col)
+                continue
+
             # Numeric check
             if pd.api.types.is_numeric_dtype(series):
                 # If numeric but only 2 unique values and looks like boolean/binary
@@ -45,11 +50,6 @@ class DataDetector:
                     low_cat_cols.append(col)
                 else:
                     numeric_cols.append(col)
-                continue
-
-            # Check if boolean
-            if pd.api.types.is_bool_dtype(series):
-                low_cat_cols.append(col)
                 continue
 
             # Check for strings/objects/categoricals

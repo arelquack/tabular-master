@@ -44,7 +44,7 @@ class AdversarialValidator:
 
         # Simple categorical encoding for adversarial check
         for col in X.columns:
-            if X[col].dtype == "object" or isinstance(X[col].dtype, pd.CategoricalDtype):
+            if pd.api.types.is_string_dtype(X[col].dtype) or X[col].dtype == "object" or isinstance(X[col].dtype, pd.CategoricalDtype):
                 X[col] = X[col].astype("category").cat.codes
 
         skf = StratifiedKFold(n_splits=self.n_splits, shuffle=True, random_state=self.seed)

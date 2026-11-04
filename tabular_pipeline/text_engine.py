@@ -5,7 +5,7 @@ import json
 import string
 import numpy as np
 import pandas as pd
-from typing import Dict, Any, List, Optional, Tuple, Union
+from typing import Callable, Dict, Any, List, Optional, Tuple, Union
 
 class UniversalTextNormalizer:
     """
@@ -183,7 +183,7 @@ class UniversalTextNormalizer:
             if not text_col:
                 best_len = -1
                 for c in columns:
-                    if df[c].dtype == object or isinstance(df[c].dtype, pd.CategoricalDtype):
+                    if pd.api.types.is_string_dtype(df[c].dtype) or df[c].dtype == object or isinstance(df[c].dtype, pd.CategoricalDtype):
                         lens = df[c].dropna().astype(str).str.len()
                         if len(lens) > 0 and lens.mean() > best_len:
                             best_len = lens.mean()
@@ -361,6 +361,49 @@ class TextFeatureExtractor:
         out[f"{prefix}question_count"] = s.apply(lambda x: x.count("?"))
 
         return out
+
+    @staticmethod
+    def extract_tfidf(
+        df: pd.DataFrame,
+        text_cols: List[str],
+        max_features: int = 15000,
+        ngram_range: Tuple[int, int] = (1, 2),
+        log_callback: Optional[Callable[[str], None]] = None,
+        return_vectorizers: bool = False,
+    ):
+        """Fit one TF-IDF vectorizer per text column and stack the sparse matrices side by side."""
+        import scipy.sparse as sp
+        from sklearn.feature_extraction.text import TfidfVectorizer
+
+        mats = []
+        fitted = []
+        for col in text_cols:
+            series = df[col].fillna("").astype(str)
+            if not series.str.strip().any():
+                if log_callback:
+                    log_callback(f"[TF-IDF] Skipping empty column '{col}'.")
+                continue
+            vec = TfidfVectorizer(
+                max_features=max_features,
+                ngram_range=ngram_range,
+                sublinear_tf=True,
+                strip_accents="unicode",
+            )
+            try:
+                mat = vec.fit_transform(series)
+            except ValueError as e:
+                if log_callback:
+                    log_callback(f"[TF-IDF] Skipping column '{col}': {e}")
+                continue
+            mats.append(mat)
+            fitted.append((col, vec))
+            if log_callback:
+                log_callback(f"[TF-IDF] Column '{col}': {mat.shape[1]:,} features")
+
+        if not mats:
+            raise ValueError("TF-IDF tidak dapat mengekstrak fitur dari kolom teks yang dipilih.")
+        matrix = sp.hstack(mats).tocsr()
+        return (matrix, fitted) if return_vectorizers else matrix
 
     @staticmethod
     def extract_tfidf_lsa(
