@@ -628,6 +628,10 @@ class NLPBaselineTrainer:
 
         X_cv = vec.transform(df_cv[text_col])
         y_cv = df_cv[label_col].values
+        
+        all_classes = sorted(list(set(y_cv)))
+        class_to_idx = {c: i for i, c in enumerate(all_classes)}
+        oof_probs = np.zeros((len(df_cv), len(all_classes)), dtype=np.float32)
 
         for fold, (trn_idx, val_idx) in enumerate(skf.split(X_cv, y_cv)):
             X_tr, y_tr = X_cv[trn_idx], y_cv[trn_idx]
@@ -643,6 +647,12 @@ class NLPBaselineTrainer:
             clf = LogisticRegression(C=c_param, max_iter=300, class_weight="balanced", random_state=random_state + fold)
             clf.fit(X_tr, y_tr)
             preds = clf.predict(X_va)
+            if hasattr(clf, "predict_proba"):
+                probs = clf.predict_proba(X_va)
+                # Map clf classes to all_classes order
+                for ci, c in enumerate(clf.classes_):
+                    if c in class_to_idx:
+                        oof_probs[val_idx, class_to_idx[c]] = probs[:, ci]
 
             acc = float(accuracy_score(y_va, preds))
             macro_f1 = float(f1_score(y_va, preds, average="macro"))
@@ -658,6 +668,10 @@ class NLPBaselineTrainer:
         overall_acc = float(accuracy_score(oof_true, oof_preds)) if oof_true else 0.0
         overall_f1 = float(f1_score(oof_true, oof_preds, average="macro")) if oof_true else 0.0
 
+        # Store oof probabilities
+        oof_indices = df_cv.index.to_numpy()
+        test_probs_matrix = None
+
         # Predict test if provided
         test_predictions_sample = []
         test_pred_df = None
@@ -665,7 +679,15 @@ class NLPBaselineTrainer:
             test_text = test_df[text_col].fillna("").astype(str) if text_col in test_df.columns else test_df.iloc[:, 1].fillna("").astype(str)
             X_test = vec.transform(test_text)
             preds = full_clf.predict(X_test)
-            probs = np.max(full_clf.predict_proba(X_test), axis=1) if hasattr(full_clf, "predict_proba") else [1.0] * len(preds)
+            if hasattr(full_clf, "predict_proba"):
+                test_probs_raw = full_clf.predict_proba(X_test)
+                probs = np.max(test_probs_raw, axis=1)
+                test_probs_matrix = np.zeros((len(test_df), len(all_classes)), dtype=np.float32)
+                for ci, c in enumerate(full_clf.classes_):
+                    if c in class_to_idx:
+                        test_probs_matrix[:, class_to_idx[c]] = test_probs_raw[:, ci]
+            else:
+                probs = [1.0] * len(preds)
             
             t_ids = test_df[id_col].values if id_col in test_df.columns else np.arange(len(test_df))
             test_pred_df = pd.DataFrame({
@@ -686,5 +708,9 @@ class NLPBaselineTrainer:
             "test_predictions_sample": test_predictions_sample,
             "total_train_samples": len(clean_train),
             "rare_classes_shielded": len(rare_df),
-            "test_pred_df": test_pred_df
+            "test_pred_df": test_pred_df,
+            "oof_probs_matrix": oof_probs,
+            "oof_indices": oof_indices,
+            "test_probs_matrix": test_probs_matrix,
+            "class_names": all_classes
         }

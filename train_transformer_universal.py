@@ -187,6 +187,7 @@ def resolve_model_path(model_identifier: str) -> str:
             stratify=df["label"]
         )
 
+    val_orig_indices = val_df.index.to_numpy()
     log(f"Train samples: {len(train_df)} | Validation samples: {len(val_df)}")
 
     # 6. Balanced Class Weights
@@ -287,6 +288,17 @@ def resolve_model_path(model_identifier: str) -> str:
     y_preds = np.argmax(val_preds_raw.predictions, axis=1)
     y_true = val_preds_raw.label_ids
 
+    # Pure numpy softmax to extract calibrated probabilities
+    def softmax_np(x, axis=-1):
+        e_x = np.exp(x - np.max(x, axis=axis, keepdims=True))
+        return e_x / np.sum(e_x, axis=axis, keepdims=True)
+
+    val_probs = softmax_np(val_preds_raw.predictions, axis=1)
+    np.save(os.path.join(case_dir, "transformer_val_probs.npy"), val_probs)
+    np.save(os.path.join(case_dir, "transformer_val_targets.npy"), y_true)
+    np.save(os.path.join(case_dir, "transformer_val_indices.npy"), val_orig_indices)
+    log(f"Saved validation probabilities matrix: {val_probs.shape}")
+
     report_dict = classification_report(
         y_true,
         y_preds,
@@ -320,6 +332,8 @@ def resolve_model_path(model_identifier: str) -> str:
             test_preds_out = trainer.predict(test_tokenized)
             test_pred_indices = np.argmax(test_preds_out.predictions, axis=1)
             test_df["prediction"] = [id2label[i] for i in test_pred_indices]
+            test_probs = softmax_np(test_preds_out.predictions, axis=1)
+            np.save(os.path.join(case_dir, "transformer_test_probs.npy"), test_probs)
 
             id_col = meta.get("id_col") or "id"
             if id_col not in test_df.columns:
@@ -330,7 +344,40 @@ def resolve_model_path(model_identifier: str) -> str:
             log(f"Saved transformer test predictions to '{sub_path}'.")
             test_preds_sample = test_df[[id_col, "prediction"]].head(10).to_dict(orient="records")
 
-    # 14. Save Results JSON
+    # 14. Automated Smart Loss & Sweet Spot Diagnostics
+    eval_loss = float(eval_results.get("eval_loss", 0.0))
+    random_guess_loss = round(float(np.log(num_labels)), 4) if num_labels > 1 else 0.6931
+    loss_reduction_pct = round(float(max(0.0, (1.0 - eval_loss / random_guess_loss) * 100)), 2) if random_guess_loss > 0 else 0.0
+
+    ratio = eval_loss / random_guess_loss if random_guess_loss > 0 else 1.0
+    if ratio < 0.25:
+        learning_phase = "Sweet Spot Optimal"
+        phase_color = "emerald"
+        advice = f"Validation loss ({eval_loss:.4f}) berhasil terpangkas {loss_reduction_pct}% dari tebakan acak ({random_guess_loss:.4f})! Konvergensi model berada di titik optimal. Siap untuk dievaluasi dan di-blend."
+    elif ratio < 0.45:
+        learning_phase = "Healthy Convergence"
+        phase_color = "blue"
+        advice = f"Validation loss ({eval_loss:.4f}) turun {loss_reduction_pct}% dari baseline acak ({random_guess_loss:.4f}) pada {num_labels} kelas. Model belajar dengan sehat dan stabil. Coba naikkan 1-2 epoch untuk mendorong loss lebih dalam jika belum overfit."
+    elif ratio < 0.75:
+        learning_phase = "Moderate Progress"
+        phase_color = "amber"
+        advice = f"Validation loss ({eval_loss:.4f}) turun {loss_reduction_pct}% dari tebakan acak ({random_guess_loss:.4f}). Model sedang belajar membedakan {num_labels} kelas. Disarankan menambah epoch atau menaikkan learning rate sedikit."
+    else:
+        learning_phase = "High Loss / Noise Warning"
+        phase_color = "red"
+        advice = f"Validation loss ({eval_loss:.4f}) masih dekat dengan tebakan acak ({random_guess_loss:.4f}). Periksa apakah ada noise pada label data atau model membutuhkan lebih banyak epoch."
+
+    smart_diagnostics = {
+        "num_classes": num_labels,
+        "eval_loss": round(eval_loss, 4),
+        "random_guess_loss": random_guess_loss,
+        "loss_reduction_pct": loss_reduction_pct,
+        "learning_phase": learning_phase,
+        "phase_color": phase_color,
+        "advice": advice
+    }
+
+    # 15. Save Results JSON
     summary_results = {
         "case_id": case_id,
         "model_name": model_name,
@@ -346,6 +393,7 @@ def resolve_model_path(model_identifier: str) -> str:
         "eval_loss": eval_results.get("eval_loss", 0),
         "classification_report": report_dict,
         "test_predictions_sample": test_preds_sample,
+        "smart_diagnostics": smart_diagnostics,
         "status": "completed"
     }
 

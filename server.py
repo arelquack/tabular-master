@@ -181,6 +181,10 @@ class NLPTransformerTrainRequest(BaseModel):
     learning_rate: Optional[float] = 2e-5
     max_length: Optional[int] = None
 
+class NLPEnsembleRequest(BaseModel):
+    baseline_weight: Optional[float] = 0.3
+    auto_optimize: bool = True
+
 class NLPCleanRequest(BaseModel):
     columns_to_combine: Optional[List[str]] = None
     prefix_with_column_name: bool = False
@@ -1670,6 +1674,21 @@ def execute_nlp_train(case_id: str, req: NLPTrainRequest):
             c_param=req.c_param
         )
 
+        # Pop and save probability arrays for ensemble blending
+        oof_probs_mat = res.pop("oof_probs_matrix", None)
+        oof_idx = res.pop("oof_indices", None)
+        test_probs_mat = res.pop("test_probs_matrix", None)
+        classes_lst = res.pop("class_names", None)
+
+        if oof_probs_mat is not None:
+            np.save(os.path.join(case_dir, "baseline_oof_probs.npy"), np.array(oof_probs_mat, dtype=np.float32))
+        if oof_idx is not None:
+            np.save(os.path.join(case_dir, "baseline_oof_indices.npy"), np.array(oof_idx))
+        if classes_lst is not None:
+            np.save(os.path.join(case_dir, "baseline_classes.npy"), np.array(classes_lst))
+        if test_probs_mat is not None:
+            np.save(os.path.join(case_dir, "baseline_test_probs.npy"), np.array(test_probs_mat, dtype=np.float32))
+
         # Save submission if test predictions were generated
         test_pred_df = res.pop("test_pred_df", None)
         if test_pred_df is not None:
@@ -1778,6 +1797,198 @@ def stop_nlp_transformer_train(case_id: str):
         proc.terminate()
         return {"status": "terminated"}
     return {"status": "not_running"}
+
+@app.post("/api/cases/{case_id}/nlp-ensemble")
+def execute_nlp_ensemble(case_id: str, req: NLPEnsembleRequest):
+    case_dir = os.path.join(CASES_DIR, case_id)
+    if not os.path.exists(case_dir):
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    from sklearn.metrics import accuracy_score, f1_score
+
+    # Load transformer probabilities
+    trans_probs_path = os.path.join(case_dir, "transformer_val_probs.npy")
+    trans_targets_path = os.path.join(case_dir, "transformer_val_targets.npy")
+    trans_indices_path = os.path.join(case_dir, "transformer_val_indices.npy")
+
+    if not os.path.exists(trans_probs_path) or not os.path.exists(trans_targets_path):
+        raise HTTPException(
+            status_code=400, 
+            detail="Transformer validation probabilities not found. Please train Tab 4 (Deep Learning) first."
+        )
+
+    trans_probs = np.load(trans_probs_path)
+    y_true = np.load(trans_targets_path)
+
+    # Load baseline probabilities
+    base_probs_path = os.path.join(case_dir, "baseline_oof_probs.npy")
+    base_indices_path = os.path.join(case_dir, "baseline_oof_indices.npy")
+
+    if os.path.exists(base_probs_path):
+        base_probs_all = np.load(base_probs_path)
+        if os.path.exists(trans_indices_path) and os.path.exists(base_indices_path):
+            trans_idx = np.load(trans_indices_path)
+            base_idx = np.load(base_indices_path)
+            idx_map = {orig: i for i, orig in enumerate(base_idx)}
+            valid_pos = [idx_map[ti] for ti in trans_idx if ti in idx_map]
+            if len(valid_pos) == len(trans_probs):
+                base_probs = base_probs_all[valid_pos]
+            else:
+                base_probs = base_probs_all[:len(trans_probs)]
+        else:
+            base_probs = base_probs_all[:len(trans_probs)]
+    else:
+        # Fallback: create mock uniform baseline if only transformer is present
+        base_probs = np.ones_like(trans_probs) / trans_probs.shape[1]
+
+    # Align number of columns if necessary
+    if base_probs.shape[1] != trans_probs.shape[1]:
+        min_c = min(base_probs.shape[1], trans_probs.shape[1])
+        base_probs = base_probs[:, :min_c]
+        trans_probs = trans_probs[:, :min_c]
+
+    # Evaluate standalone scores
+    pred_base = np.argmax(base_probs, axis=1)
+    score_base = float(f1_score(y_true, pred_base, average="macro", zero_division=0))
+    acc_base = float(accuracy_score(y_true, pred_base))
+
+    pred_trans = np.argmax(trans_probs, axis=1)
+    score_trans = float(f1_score(y_true, pred_trans, average="macro", zero_division=0))
+    acc_trans = float(accuracy_score(y_true, pred_trans))
+
+    best_w = 0.3
+    best_f1 = -1.0
+    best_acc = 0.0
+
+    weight_curve = []
+    # Test blend weights from 0.0 (100% Transformer) to 1.0 (100% TF-IDF) in step 0.05
+    for w in np.linspace(0.0, 1.0, 21):
+        blended = w * base_probs + (1.0 - w) * trans_probs
+        p_blend = np.argmax(blended, axis=1)
+        f1_w = float(f1_score(y_true, p_blend, average="macro", zero_division=0))
+        acc_w = float(accuracy_score(y_true, p_blend))
+        weight_curve.append({
+            "baseline_weight": round(float(w), 2),
+            "transformer_weight": round(float(1.0 - w), 2),
+            "macro_f1": round(f1_w, 4),
+            "accuracy": round(acc_w, 4)
+        })
+        if req.auto_optimize:
+            if f1_w > best_f1:
+                best_f1 = f1_w
+                best_w = float(w)
+                best_acc = acc_w
+
+    if not req.auto_optimize:
+        w_chosen = max(0.0, min(1.0, req.baseline_weight or 0.3))
+        best_w = w_chosen
+        blended = w_chosen * base_probs + (1.0 - w_chosen) * trans_probs
+        p_blend = np.argmax(blended, axis=1)
+        best_f1 = float(f1_score(y_true, p_blend, average="macro", zero_division=0))
+        best_acc = float(accuracy_score(y_true, p_blend))
+
+    higher_single = max(score_base, score_trans)
+    gain_f1 = round((best_f1 - higher_single) * 100, 2)
+
+    # Blend test predictions if blind test set exists
+    sub_saved = False
+    base_test_path = os.path.join(case_dir, "baseline_test_probs.npy")
+    trans_test_path = os.path.join(case_dir, "transformer_test_probs.npy")
+    test_csv_path = os.path.join(case_dir, "test.csv")
+
+    if os.path.exists(trans_test_path) and os.path.exists(test_csv_path):
+        try:
+            t_trans = np.load(trans_test_path)
+            if os.path.exists(base_test_path):
+                t_base = np.load(base_test_path)
+                if t_base.shape == t_trans.shape:
+                    t_blend = best_w * t_base + (1.0 - best_w) * t_trans
+                else:
+                    t_blend = t_trans
+            else:
+                t_blend = t_trans
+
+            test_preds = np.argmax(t_blend, axis=1)
+            test_df = pd.read_csv(test_csv_path)
+            meta_path = os.path.join(case_dir, "case.json")
+            id_col = "id"
+            if os.path.exists(meta_path):
+                with open(meta_path, "r", encoding="utf-8") as mf:
+                    id_col = json.load(mf).get("id_col", "id")
+            if id_col not in test_df.columns:
+                test_df[id_col] = range(len(test_df))
+
+            # Map to string labels
+            results_json_path = os.path.join(case_dir, "transformer_results.json")
+            if os.path.exists(results_json_path):
+                with open(results_json_path, "r", encoding="utf-8") as rf:
+                    cr = json.load(rf).get("classification_report", {})
+                    class_names = [k for k in cr.keys() if k not in ["accuracy", "macro avg", "weighted avg"]]
+                    if len(class_names) == t_blend.shape[1]:
+                        test_df["prediction"] = [class_names[p] for p in test_preds]
+                    else:
+                        test_df["prediction"] = test_preds
+            else:
+                test_df["prediction"] = test_preds
+
+            sub_file = os.path.join(case_dir, "submission_ensemble.csv")
+            test_df[[id_col, "prediction"]].to_csv(sub_file, index=False)
+            sub_saved = True
+        except Exception as e:
+            print(f"[WARN] Error blending test submission: {e}")
+
+    result_payload = {
+        "case_id": case_id,
+        "optimal_baseline_weight": round(best_w, 2),
+        "optimal_transformer_weight": round(1.0 - best_w, 2),
+        "baseline_macro_f1": round(score_base, 4),
+        "baseline_accuracy": round(acc_base, 4),
+        "transformer_macro_f1": round(score_trans, 4),
+        "transformer_accuracy": round(acc_trans, 4),
+        "ensemble_macro_f1": round(best_f1, 4),
+        "ensemble_accuracy": round(best_acc, 4),
+        "f1_gain_pct": gain_f1,
+        "submission_ensemble_created": sub_saved,
+        "weight_curve": weight_curve
+    }
+
+    with open(os.path.join(case_dir, "ensemble_results.json"), "w", encoding="utf-8") as ef:
+        json.dump(result_payload, ef, indent=2)
+
+    return result_payload
+
+@app.get("/api/cases/{case_id}/nlp-ensemble-status")
+def get_nlp_ensemble_status(case_id: str):
+    case_dir = os.path.join(CASES_DIR, case_id)
+    if not os.path.exists(case_dir):
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    ens_file = os.path.join(case_dir, "ensemble_results.json")
+    if os.path.exists(ens_file):
+        try:
+            with open(ens_file, "r", encoding="utf-8") as ef:
+                return json.load(ef)
+        except Exception:
+            pass
+
+    # Check model availabilities
+    base_ready = os.path.exists(os.path.join(case_dir, "baseline_oof_probs.npy")) or os.path.exists(os.path.join(case_dir, "nlp_results.json"))
+    trans_ready = os.path.exists(os.path.join(case_dir, "transformer_val_probs.npy")) or os.path.exists(os.path.join(case_dir, "transformer_results.json"))
+
+    return {
+        "status": "idle",
+        "baseline_ready": base_ready,
+        "transformer_ready": trans_ready,
+        "results": None
+    }
+
+@app.get("/api/cases/{case_id}/download-ensemble-submission")
+def download_ensemble_submission(case_id: str):
+    case_dir = os.path.join(CASES_DIR, case_id)
+    sub_file = os.path.join(case_dir, "submission_ensemble.csv")
+    if not os.path.exists(sub_file):
+        raise HTTPException(status_code=404, detail="Ensemble submission file not found")
+    return FileResponse(sub_file, filename=f"submission_ensemble_{case_id}.csv", media_type="text/csv")
 
 @app.post("/api/cases/{case_id}/nlp-clean")
 def execute_nlp_clean(case_id: str, req: NLPCleanRequest):

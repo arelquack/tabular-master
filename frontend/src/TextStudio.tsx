@@ -13,6 +13,9 @@ import {
   Square,
   Terminal,
   Copy,
+  Sliders,
+  Layers,
+  TrendingUp
 } from 'lucide-react';
 
 interface TextStudioProps {
@@ -212,6 +215,64 @@ export const TextStudio: React.FC<TextStudioProps> = ({
   const [transformerStatus, setTransformerStatus] = useState<any>(null);
   const [isStartingTransformer, setIsStartingTransformer] = useState<boolean>(false);
   const [copiedCli, setCopiedCli] = useState<boolean>(false);
+
+  // Ensemble & Blending State
+  const [ensembleBaselineWeight, setEnsembleBaselineWeight] = useState<number>(30); // 30% baseline, 70% transformer
+  const [isBlending, setIsBlending] = useState<boolean>(false);
+  const [ensembleResult, setEnsembleResult] = useState<any>(null);
+  const [ensembleError, setEnsembleError] = useState<string | null>(null);
+
+  const fetchEnsembleStatus = async () => {
+    if (!selectedCaseId) return;
+    try {
+      const res = await fetch(`/api/cases/${selectedCaseId}/nlp-ensemble-status`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.ensemble_macro_f1 || data.optimal_baseline_weight !== undefined) {
+          setEnsembleResult(data);
+          if (data.optimal_baseline_weight !== undefined) {
+            setEnsembleBaselineWeight(Math.round(data.optimal_baseline_weight * 100));
+          }
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+  };
+
+  useEffect(() => {
+    if (activeNlpTab === 'submission') {
+      fetchEnsembleStatus();
+    }
+  }, [activeNlpTab, selectedCaseId]);
+
+  const handleRunEnsemble = async (autoOptimize: boolean = true) => {
+    setIsBlending(true);
+    setEnsembleError(null);
+    try {
+      const res = await fetch(`/api/cases/${selectedCaseId}/nlp-ensemble`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          baseline_weight: autoOptimize ? undefined : ensembleBaselineWeight / 100,
+          auto_optimize: autoOptimize
+        })
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || 'Ensemble blending failed');
+      }
+      const data = await res.json();
+      setEnsembleResult(data);
+      if (data.optimal_baseline_weight !== undefined) {
+        setEnsembleBaselineWeight(Math.round(data.optimal_baseline_weight * 100));
+      }
+    } catch (e: any) {
+      setEnsembleError(e.message);
+    } finally {
+      setIsBlending(false);
+    }
+  };
 
   const fetchTransformerStatus = async () => {
     if (!selectedCaseId) return;
@@ -1085,6 +1146,52 @@ export const TextStudio: React.FC<TextStudioProps> = ({
                 </div>
               )}
 
+              {/* Smart Loss & Sweet Spot Advisor Card */}
+              {transformerStatus?.results?.smart_diagnostics && (
+                <div className="bg-white border border-zinc-200/80 rounded-xl p-4 shadow-xs space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-2">
+                      <span className="text-[10px] font-mono uppercase bg-zinc-900 text-white px-2 py-0.5 rounded font-bold">
+                        Smart Loss & Sweet Spot Advisor
+                      </span>
+                      <span className={`text-[10px] font-mono px-2 py-0.5 rounded border uppercase font-bold ${
+                        transformerStatus.results.smart_diagnostics.phase_color === 'emerald'
+                          ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                          : (transformerStatus.results.smart_diagnostics.phase_color === 'blue'
+                              ? 'bg-blue-50 text-blue-800 border-blue-300'
+                              : (transformerStatus.results.smart_diagnostics.phase_color === 'amber'
+                                  ? 'bg-amber-50 text-amber-800 border-amber-300'
+                                  : 'bg-red-50 text-red-800 border-red-300'))
+                      }`}>
+                        {transformerStatus.results.smart_diagnostics.learning_phase}
+                      </span>
+                    </div>
+                    <div className="text-[11px] font-mono text-zinc-500">
+                      Loss Drop: <span className="font-bold text-zinc-900">-{transformerStatus.results.smart_diagnostics.loss_reduction_pct}%</span>
+                    </div>
+                  </div>
+
+                  <div className="text-xs text-zinc-700 leading-relaxed bg-zinc-50 p-3 rounded-lg border border-zinc-200">
+                    {transformerStatus.results.smart_diagnostics.advice}
+                  </div>
+
+                  <div className="space-y-1 pt-1">
+                    <div className="flex justify-between text-[10px] font-mono text-zinc-500">
+                      <span>Model Eval Loss: <strong className="text-zinc-800">{transformerStatus.results.smart_diagnostics.eval_loss}</strong></span>
+                      <span>Theoretical Random Guess (ln {transformerStatus.results.smart_diagnostics.num_classes}): <strong className="text-zinc-800">{transformerStatus.results.smart_diagnostics.random_guess_loss}</strong></span>
+                    </div>
+                    <div className="w-full bg-zinc-100 rounded-full h-2 overflow-hidden border border-zinc-200">
+                      <div 
+                        className={`h-full rounded-full transition-all duration-500 ${
+                          transformerStatus.results.smart_diagnostics.phase_color === 'emerald' ? 'bg-emerald-500' : 'bg-blue-600'
+                        }`}
+                        style={{ width: `${Math.min(100, Math.max(5, transformerStatus.results.smart_diagnostics.loss_reduction_pct))}%` }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Live Terminal Output */}
               <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 shadow-xs">
                 <div className="flex items-center justify-between pb-2 border-b border-zinc-800 mb-3">
@@ -1118,55 +1225,177 @@ export const TextStudio: React.FC<TextStudioProps> = ({
         </div>
       )}
 
-      {/* Tab 5: Submissions & Inference */}
+      {/* Tab 5: Submissions & Ensemble Blending */}
       {activeNlpTab === 'submission' && (
-        <div className="bg-white border border-zinc-200/80 rounded-xl p-5 shadow-xs space-y-5">
-          <div className="flex items-center justify-between">
+        <div className="space-y-6">
+          {/* Header Card */}
+          <div className="bg-white border border-zinc-200/80 rounded-xl p-5 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div>
-              <h3 className="text-sm font-bold text-zinc-900">Submission & Test Predictions</h3>
+              <div className="flex items-center space-x-2">
+                <span className="text-[10px] font-mono uppercase bg-zinc-900 text-white px-2 py-0.5 rounded font-bold">
+                  Ensemble & Late-Stage Blending
+                </span>
+                <span className="text-[10px] font-mono bg-zinc-100 text-zinc-700 px-2 py-0.5 rounded border border-zinc-200 uppercase font-bold">
+                  Lexical + Semantic Fusion
+                </span>
+              </div>
+              <h3 className="text-base font-bold text-zinc-950 mt-1">Multi-Model Probability Blending</h3>
               <p className="text-xs text-zinc-500 mt-0.5">
-                Inspect generated test predictions and download the final submission file.
+                Gabungkan ketajaman kata kunci TF-IDF (Tab 3) dengan pemahaman konteks IndoBERT (Tab 4) untuk mencetak skor tertinggi.
               </p>
             </div>
-            <a
-              href={`/api/cases/${selectedCaseId}/download-submission`}
-              className="flex items-center space-x-1.5 bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-medium px-4 py-2 rounded-lg transition"
-            >
-              <Download size={13} />
-              <span>Download submission.csv</span>
-            </a>
+
+            <div className="flex items-center space-x-2">
+              <button
+                type="button"
+                onClick={() => handleRunEnsemble(true)}
+                disabled={isBlending}
+                className="flex items-center space-x-1.5 bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-semibold px-4 py-2.5 rounded-lg transition shadow-xs disabled:opacity-50"
+              >
+                {isBlending ? <Loader2 size={13} className="animate-spin" /> : <TrendingUp size={13} />}
+                <span>Auto-Find Optimal Blend</span>
+              </button>
+            </div>
           </div>
 
-          {baselineResult?.test_predictions_sample ? (
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs text-left">
-                <thead>
-                  <tr className="border-b border-zinc-200 text-zinc-400 font-mono text-[10px] uppercase">
-                    <th className="pb-2">Test ID</th>
-                    <th className="pb-2">Predicted Label</th>
-                    <th className="pb-2">Confidence</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-100">
-                  {baselineResult.test_predictions_sample.map((row: any, i: number) => (
-                    <tr key={i}>
-                      <td className="py-2.5 font-mono font-medium text-zinc-900">{row.id}</td>
-                      <td className="py-2.5 font-medium text-zinc-800">
-                        <span className="px-2 py-0.5 rounded bg-zinc-100 text-zinc-800 border border-zinc-200 font-mono text-[11px]">
-                          {row.predicted_label}
-                        </span>
-                      </td>
-                      <td className="py-2.5 font-mono text-zinc-500">{(row.confidence * 100).toFixed(1)}%</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {/* Left: Interactive Weight Controller */}
+            <div className="bg-white border border-zinc-200/80 rounded-xl p-5 shadow-xs space-y-4">
+              <div className="flex items-center justify-between pb-2 border-b border-zinc-100">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-zinc-900 flex items-center space-x-1.5">
+                  <Sliders size={13} />
+                  <span>Blend Ratio Controller</span>
+                </h4>
+                <span className="text-[10px] font-mono text-zinc-500">Softmax Fusion</span>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <div className="flex justify-between text-xs font-mono mb-1.5">
+                    <span className="text-zinc-600">TF-IDF (Tab 3):</span>
+                    <strong className="text-zinc-900">{ensembleBaselineWeight}%</strong>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    step="5"
+                    value={ensembleBaselineWeight}
+                    onChange={e => setEnsembleBaselineWeight(Number(e.target.value))}
+                    className="w-full accent-zinc-900 cursor-pointer"
+                  />
+                  <div className="flex justify-between text-[10px] font-mono text-zinc-400 mt-1">
+                    <span>0% (Pure BERT)</span>
+                    <span>50:50</span>
+                    <span>100% (Pure TF-IDF)</span>
+                  </div>
+                </div>
+
+                <div className="p-3 bg-zinc-50 rounded-lg border border-zinc-200 space-y-1.5 text-xs font-mono">
+                  <div className="flex justify-between text-zinc-600">
+                    <span>TF-IDF Weight (w1):</span>
+                    <strong className="text-zinc-900">{(ensembleBaselineWeight / 100).toFixed(2)}</strong>
+                  </div>
+                  <div className="flex justify-between text-zinc-600">
+                    <span>Transformer Weight (w2):</span>
+                    <strong className="text-zinc-900">{((100 - ensembleBaselineWeight) / 100).toFixed(2)}</strong>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => handleRunEnsemble(false)}
+                  disabled={isBlending}
+                  className="w-full flex items-center justify-center space-x-1.5 border border-zinc-300 hover:border-zinc-950 bg-white hover:bg-zinc-50 text-zinc-900 text-xs font-semibold py-2 rounded-lg transition disabled:opacity-50"
+                >
+                  <Layers size={13} />
+                  <span>Apply Custom Blend ({ensembleBaselineWeight}:{100 - ensembleBaselineWeight})</span>
+                </button>
+
+                {ensembleError && (
+                  <div className="p-3 bg-red-50 border border-red-200 text-red-800 rounded-lg text-xs">
+                    {ensembleError}
+                  </div>
+                )}
+              </div>
             </div>
-          ) : (
-            <div className="text-center py-8 text-zinc-400 text-xs">
-              No test predictions generated yet. Run a baseline model in the "TF-IDF & Baseline CV" tab first.
+
+            {/* Right: Ensemble Leaderboard & Metrics */}
+            <div className="md:col-span-2 space-y-4">
+              {ensembleResult ? (
+                <div className="space-y-4">
+                  {/* Highlight Cards */}
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="bg-white border border-zinc-200/80 rounded-xl p-4 shadow-xs">
+                      <div className="text-[10px] font-mono uppercase text-zinc-400">Baseline (TF-IDF)</div>
+                      <div className="text-lg font-bold text-zinc-900 mt-0.5">
+                        {(ensembleResult.baseline_macro_f1 * 100).toFixed(2)}%
+                      </div>
+                      <div className="text-[10px] font-mono text-zinc-500 mt-1">
+                        Acc: {(ensembleResult.baseline_accuracy * 100).toFixed(1)}%
+                      </div>
+                    </div>
+
+                    <div className="bg-white border border-zinc-200/80 rounded-xl p-4 shadow-xs">
+                      <div className="text-[10px] font-mono uppercase text-zinc-400">Transformer (BERT)</div>
+                      <div className="text-lg font-bold text-zinc-900 mt-0.5">
+                        {(ensembleResult.transformer_macro_f1 * 100).toFixed(2)}%
+                      </div>
+                      <div className="text-[10px] font-mono text-zinc-500 mt-1">
+                        Acc: {(ensembleResult.transformer_accuracy * 100).toFixed(1)}%
+                      </div>
+                    </div>
+
+                    <div className="bg-emerald-50 border border-emerald-300 rounded-xl p-4 shadow-xs">
+                      <div className="text-[10px] font-mono uppercase text-emerald-800 font-bold">Ensemble Champion</div>
+                      <div className="text-xl font-bold text-emerald-950 mt-0.5">
+                        {(ensembleResult.ensemble_macro_f1 * 100).toFixed(2)}%
+                      </div>
+                      <div className="text-[10px] font-mono text-emerald-700 font-semibold mt-1">
+                        +{ensembleResult.f1_gain_pct >= 0 ? ensembleResult.f1_gain_pct : 0.0}% Gain vs Single Best
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Submission Download Section */}
+                  <div className="bg-white border border-zinc-200/80 rounded-xl p-5 shadow-xs flex items-center justify-between">
+                    <div>
+                      <div className="text-xs font-bold text-zinc-900">Ensemble Submissions Ready</div>
+                      <p className="text-[11px] text-zinc-500 mt-0.5">
+                        Bobot optimal yang ditemukan: {Math.round(ensembleResult.optimal_baseline_weight * 100)}% TF-IDF + {Math.round(ensembleResult.optimal_transformer_weight * 100)}% Transformer.
+                      </p>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <a
+                        href={`/api/cases/${selectedCaseId}/download-ensemble-submission`}
+                        className="flex items-center space-x-1.5 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold px-4 py-2.5 rounded-lg transition shadow-xs"
+                      >
+                        <Download size={13} />
+                        <span>Download submission_ensemble.csv</span>
+                      </a>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-white border border-zinc-200/80 rounded-xl p-10 text-center shadow-xs space-y-3">
+                  <Layers size={28} className="mx-auto text-zinc-400" />
+                  <div className="text-sm font-bold text-zinc-900">Siap Melakukan Blending Probabilitas</div>
+                  <p className="text-xs text-zinc-500 max-w-md mx-auto">
+                    Pastikan Anda telah menjalankan Tab 3 (Baseline) dan Tab 4 (Transformer). Klik tombol "Auto-Find Optimal Blend" di atas untuk mencari kombinasi bobot juara.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => handleRunEnsemble(true)}
+                    disabled={isBlending}
+                    className="inline-flex items-center space-x-1.5 bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-medium px-4 py-2 rounded-lg transition"
+                  >
+                    {isBlending ? <Loader2 size={13} className="animate-spin" /> : <TrendingUp size={13} />}
+                    <span>Hitung Optimal Blend Sekarang</span>
+                  </button>
+                </div>
+              )}
             </div>
-          )}
+          </div>
         </div>
       )}
     </div>

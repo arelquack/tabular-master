@@ -1,0 +1,23 @@
+{
+  "case_id": "nlp_kompas",
+  "model_name": "models/indobert-base-p1",
+  "device": "cuda",
+  "gpu_name": "NVIDIA GeForce RTX 3070",
+  "epochs": 3,
+  "batch_size": 16,
+  "learning_rate": 2e-05,
+  "max_length": 256,
+  "accuracy": 0.825,
+  "macro_f1": 0.685,
+  "eval_loss": 0.8725,
+  "smart_diagnostics": {
+    "num_classes": 28,
+    "eval_loss": 0.8725,
+    "random_guess_loss": 3.3322,
+    "loss_reduction_pct": 73.82,
+    "learning_phase": "Healthy Convergence",
+    "phase_color": "blue",
+    "advice": "Validation loss (0.8725) berhasil terpangkas 73.82% dari baseline acak murni (3.3322) untuk 28 kelas berita! Konvergensi model sangat sehat. Coba naikkan ke 4-5 epoch untuk mendorong F1 lebih dalam, atau langsung kombinasikan dengan TF-IDF di Tab 5."
+  },
+  "status": "completed"
+}
