@@ -1842,6 +1842,17 @@ def execute_nlp_ensemble(case_id: str, req: NLPEnsembleRequest):
     base_classes_path = os.path.join(case_dir, "baseline_classes.npy")
     if os.path.exists(base_classes_path):
         base_classes = list(np.load(base_classes_path))
+    else:
+        nlp_res_path = os.path.join(case_dir, "nlp_results.json")
+        if os.path.exists(nlp_res_path):
+            try:
+                with open(nlp_res_path, "r", encoding="utf-8") as nrf:
+                    nr_data = json.load(nrf)
+                    tw = nr_data.get("top_words_per_class", {})
+                    if tw:
+                        base_classes = list(tw.keys())
+            except Exception:
+                pass
 
     # Load baseline probabilities
     base_probs_path = os.path.join(case_dir, "baseline_oof_probs.npy")
@@ -1907,8 +1918,9 @@ def execute_nlp_ensemble(case_id: str, req: NLPEnsembleRequest):
             if text_col in df_full.columns and label_col in df_full.columns:
                 df_clean = df_full.dropna(subset=[text_col, label_col]).copy()
                 trans_idx = np.load(trans_indices_path)
-                val_df_slice = df_clean.loc[df_clean.index.intersection(trans_idx)]
-                train_df_slice = df_clean.drop(index=val_df_slice.index)
+                # Keep EXACT row sequence of trans_idx so predictions match y_true and trans_probs row-by-row
+                val_df_slice = df_clean.loc[trans_idx]
+                train_df_slice = df_clean.drop(index=trans_idx)
                 
                 if len(val_df_slice) == len(trans_probs):
                     u_labels = trans_classes if trans_classes else sorted(df_clean[label_col].astype(str).unique().tolist())
