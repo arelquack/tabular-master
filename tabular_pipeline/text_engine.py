@@ -590,12 +590,19 @@ class NLPBaselineTrainer:
         clean_train = train_df.dropna(subset=[text_col, label_col]).copy()
         clean_train[text_col] = clean_train[text_col].astype(str)
 
+        # Store original index to ensure exact row alignment with other models
+        clean_train["_orig_idx"] = clean_train.index.values
+
+        # All classes in dataset sorted alphabetically (includes rare classes)
+        all_classes = sorted(clean_train[label_col].astype(str).unique().tolist())
+        class_to_idx = {c: i for i, c in enumerate(all_classes)}
+
         # Identify rare classes
         class_counts = clean_train[label_col].value_counts()
         stratifiable_classes = class_counts[class_counts >= n_splits].index
         
-        df_cv = clean_train[clean_train[label_col].isin(stratifiable_classes)].reset_index(drop=True)
-        rare_df = clean_train[~clean_train[label_col].isin(stratifiable_classes)].reset_index(drop=True)
+        df_cv = clean_train[clean_train[label_col].isin(stratifiable_classes)].copy()
+        rare_df = clean_train[~clean_train[label_col].isin(stratifiable_classes)].copy()
 
         # TF-IDF Vectorizer
         vec = TfidfVectorizer(
@@ -629,9 +636,10 @@ class NLPBaselineTrainer:
         X_cv = vec.transform(df_cv[text_col])
         y_cv = df_cv[label_col].values
         
-        all_classes = sorted(list(set(y_cv)))
-        class_to_idx = {c: i for i, c in enumerate(all_classes)}
-        oof_probs = np.zeros((len(df_cv), len(all_classes)), dtype=np.float32)
+        # Initialize oof_probs for the ENTIRE clean_train dataset with all classes
+        clean_indices = clean_train.index.to_numpy()
+        idx_to_clean_pos = {idx: pos for pos, idx in enumerate(clean_indices)}
+        oof_probs = np.zeros((len(clean_train), len(all_classes)), dtype=np.float32)
 
         for fold, (trn_idx, val_idx) in enumerate(skf.split(X_cv, y_cv)):
             X_tr, y_tr = X_cv[trn_idx], y_cv[trn_idx]
@@ -649,10 +657,12 @@ class NLPBaselineTrainer:
             preds = clf.predict(X_va)
             if hasattr(clf, "predict_proba"):
                 probs = clf.predict_proba(X_va)
+                val_orig_ids = df_cv.iloc[val_idx]["_orig_idx"].values
+                pos_in_clean = [idx_to_clean_pos[oi] for oi in val_orig_ids]
                 # Map clf classes to all_classes order
                 for ci, c in enumerate(clf.classes_):
                     if c in class_to_idx:
-                        oof_probs[val_idx, class_to_idx[c]] = probs[:, ci]
+                        oof_probs[pos_in_clean, class_to_idx[c]] = probs[:, ci]
 
             acc = float(accuracy_score(y_va, preds))
             macro_f1 = float(f1_score(y_va, preds, average="macro"))
@@ -665,11 +675,21 @@ class NLPBaselineTrainer:
             oof_preds.extend(preds)
             oof_true.extend(y_va)
 
+        # Predict rare samples using full_clf so all clean_train rows have probabilities
+        if len(rare_df) > 0 and hasattr(full_clf, "predict_proba"):
+            X_rare = vec.transform(rare_df[text_col])
+            rare_probs = full_clf.predict_proba(X_rare)
+            rare_orig_ids = rare_df["_orig_idx"].values
+            pos_rare = [idx_to_clean_pos[oi] for oi in rare_orig_ids]
+            for ci, c in enumerate(full_clf.classes_):
+                if c in class_to_idx:
+                    oof_probs[pos_rare, class_to_idx[c]] = rare_probs[:, ci]
+
         overall_acc = float(accuracy_score(oof_true, oof_preds)) if oof_true else 0.0
         overall_f1 = float(f1_score(oof_true, oof_preds, average="macro")) if oof_true else 0.0
 
-        # Store oof probabilities
-        oof_indices = df_cv.index.to_numpy()
+        # Store oof probabilities with true original indices
+        oof_indices = clean_indices
         test_probs_matrix = None
 
         # Predict test if provided

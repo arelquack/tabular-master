@@ -297,6 +297,7 @@ def resolve_model_path(model_identifier: str) -> str:
     np.save(os.path.join(case_dir, "transformer_val_probs.npy"), val_probs)
     np.save(os.path.join(case_dir, "transformer_val_targets.npy"), y_true)
     np.save(os.path.join(case_dir, "transformer_val_indices.npy"), val_orig_indices)
+    np.save(os.path.join(case_dir, "transformer_classes.npy"), np.array(unique_labels))
     log(f"Saved validation probabilities matrix: {val_probs.shape}")
 
     report_dict = classification_report(

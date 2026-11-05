@@ -1820,10 +1820,34 @@ def execute_nlp_ensemble(case_id: str, req: NLPEnsembleRequest):
     trans_probs = np.load(trans_probs_path)
     y_true = np.load(trans_targets_path)
 
+    # Discover transformer class names
+    trans_classes = None
+    trans_classes_path = os.path.join(case_dir, "transformer_classes.npy")
+    if os.path.exists(trans_classes_path):
+        trans_classes = list(np.load(trans_classes_path))
+    else:
+        # Check transformer_results.json classification_report
+        t_res_path = os.path.join(case_dir, "transformer_results.json")
+        if os.path.exists(t_res_path):
+            try:
+                with open(t_res_path, "r", encoding="utf-8") as trf:
+                    tr_data = json.load(trf)
+                    cr = tr_data.get("classification_report", {})
+                    trans_classes = [k for k in cr.keys() if k not in ["accuracy", "macro avg", "weighted avg"]]
+            except Exception:
+                pass
+
+    # Discover baseline class names
+    base_classes = None
+    base_classes_path = os.path.join(case_dir, "baseline_classes.npy")
+    if os.path.exists(base_classes_path):
+        base_classes = list(np.load(base_classes_path))
+
     # Load baseline probabilities
     base_probs_path = os.path.join(case_dir, "baseline_oof_probs.npy")
     base_indices_path = os.path.join(case_dir, "baseline_oof_indices.npy")
 
+    base_probs = None
     if os.path.exists(base_probs_path):
         base_probs_all = np.load(base_probs_path)
         if os.path.exists(trans_indices_path) and os.path.exists(base_indices_path):
@@ -1837,20 +1861,80 @@ def execute_nlp_ensemble(case_id: str, req: NLPEnsembleRequest):
                 base_probs = base_probs_all[:len(trans_probs)]
         else:
             base_probs = base_probs_all[:len(trans_probs)]
+
+        # Class column alignment by name (prevents column shifting)
+        if base_classes and trans_classes:
+            aligned_base = np.zeros_like(trans_probs)
+            for t_idx, cname in enumerate(trans_classes):
+                if cname in base_classes:
+                    s_idx = base_classes.index(cname)
+                    if s_idx < base_probs.shape[1]:
+                        aligned_base[:, t_idx] = base_probs[:, s_idx]
+                else:
+                    aligned_base[:, t_idx] = 1e-4
+            r_sums = aligned_base.sum(axis=1, keepdims=True)
+            r_sums[r_sums == 0] = 1.0
+            base_probs = aligned_base / r_sums
+        elif base_probs.shape[1] != trans_probs.shape[1]:
+            min_c = min(base_probs.shape[1], trans_probs.shape[1])
+            base_probs = base_probs[:, :min_c]
+            trans_probs = trans_probs[:, :min_c]
     else:
         # Fallback: create mock uniform baseline if only transformer is present
         base_probs = np.ones_like(trans_probs) / trans_probs.shape[1]
 
-    # Align number of columns if necessary
-    if base_probs.shape[1] != trans_probs.shape[1]:
-        min_c = min(base_probs.shape[1], trans_probs.shape[1])
-        base_probs = base_probs[:, :min_c]
-        trans_probs = trans_probs[:, :min_c]
-
-    # Evaluate standalone scores
+    # Evaluate standalone baseline score
     pred_base = np.argmax(base_probs, axis=1)
     score_base = float(f1_score(y_true, pred_base, average="macro", zero_division=0))
     acc_base = float(accuracy_score(y_true, pred_base))
+
+    # Self-healing fallback: if baseline score is abnormally low (< 20%) due to fold or index mismatch,
+    # fit a fast TF-IDF baseline directly on train_df using the exact held-out transformer validation split!
+    train_csv_path = os.path.join(case_dir, "train.csv")
+    if score_base < 0.20 and os.path.exists(train_csv_path) and os.path.exists(trans_indices_path):
+        try:
+            from sklearn.feature_extraction.text import TfidfVectorizer
+            from sklearn.linear_model import LogisticRegression
+            
+            df_full = pd.read_csv(train_csv_path)
+            meta_path = os.path.join(case_dir, "case.json")
+            text_col, label_col = "clean_text", "category"
+            if os.path.exists(meta_path):
+                with open(meta_path, "r", encoding="utf-8") as mf:
+                    c_meta = json.load(mf)
+                    text_col = c_meta.get("text_column") or "clean_text"
+                    label_col = c_meta.get("target_column") or "category"
+            if text_col in df_full.columns and label_col in df_full.columns:
+                df_clean = df_full.dropna(subset=[text_col, label_col]).copy()
+                trans_idx = np.load(trans_indices_path)
+                val_df_slice = df_clean.loc[df_clean.index.intersection(trans_idx)]
+                train_df_slice = df_clean.drop(index=val_df_slice.index)
+                
+                if len(val_df_slice) == len(trans_probs):
+                    u_labels = trans_classes if trans_classes else sorted(df_clean[label_col].astype(str).unique().tolist())
+                    v_vec = TfidfVectorizer(max_features=15000, ngram_range=(1, 2), sublinear_tf=True)
+                    X_tr_quick = v_vec.fit_transform(train_df_slice[text_col].astype(str))
+                    X_va_quick = v_vec.transform(val_df_slice[text_col].astype(str))
+                    
+                    quick_clf = LogisticRegression(C=1.5, max_iter=300, class_weight="balanced", random_state=42)
+                    quick_clf.fit(X_tr_quick, train_df_slice[label_col].astype(str))
+                    raw_probs = quick_clf.predict_proba(X_va_quick)
+                    
+                    heal_probs = np.zeros_like(trans_probs)
+                    for ci, cname in enumerate(quick_clf.classes_):
+                        if cname in u_labels:
+                            target_col = u_labels.index(cname)
+                            heal_probs[:, target_col] = raw_probs[:, ci]
+                    
+                    r_sums = heal_probs.sum(axis=1, keepdims=True)
+                    r_sums[r_sums == 0] = 1.0
+                    base_probs = heal_probs / r_sums
+                    
+                    pred_base = np.argmax(base_probs, axis=1)
+                    score_base = float(f1_score(y_true, pred_base, average="macro", zero_division=0))
+                    acc_base = float(accuracy_score(y_true, pred_base))
+        except Exception as e:
+            print("Auto-healing baseline fallback failed:", e)
 
     pred_trans = np.argmax(trans_probs, axis=1)
     score_trans = float(f1_score(y_true, pred_trans, average="macro", zero_division=0))
@@ -1900,9 +1984,20 @@ def execute_nlp_ensemble(case_id: str, req: NLPEnsembleRequest):
         try:
             t_trans = np.load(trans_test_path)
             if os.path.exists(base_test_path):
-                t_base = np.load(base_test_path)
-                if t_base.shape == t_trans.shape:
+                t_base_raw = np.load(base_test_path)
+                if base_classes and trans_classes:
+                    aligned_t_base = np.zeros_like(t_trans)
+                    for t_idx, cname in enumerate(trans_classes):
+                        if cname in base_classes:
+                            s_idx = base_classes.index(cname)
+                            if s_idx < t_base_raw.shape[1]:
+                                aligned_t_base[:, t_idx] = t_base_raw[:, s_idx]
+                    r_sums = aligned_t_base.sum(axis=1, keepdims=True)
+                    r_sums[r_sums == 0] = 1.0
+                    t_base = aligned_t_base / r_sums
                     t_blend = best_w * t_base + (1.0 - best_w) * t_trans
+                elif t_base_raw.shape == t_trans.shape:
+                    t_blend = best_w * t_base_raw + (1.0 - best_w) * t_trans
                 else:
                     t_blend = t_trans
             else:

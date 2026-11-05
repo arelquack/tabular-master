@@ -1,23 +1,208 @@
 {
   "case_id": "nlp_kompas",
-  "model_name": "models/indobert-base-p1",
+  "model_name": "models\\indobert-base-p1",
   "device": "cuda",
   "gpu_name": "NVIDIA GeForce RTX 3070",
-  "epochs": 3,
-  "batch_size": 16,
+  "epochs": 5,
+  "batch_size": 32,
   "learning_rate": 2e-05,
   "max_length": 256,
-  "accuracy": 0.825,
-  "macro_f1": 0.685,
-  "eval_loss": 0.8725,
+  "accuracy": 0.8487,
+  "macro_f1": 0.6767,
+  "weighted_f1": 0.8535,
+  "eval_loss": 0.8178693056106567,
+  "classification_report": {
+    "Advertorial": {
+      "precision": 0.4642857142857143,
+      "recall": 0.8666666666666667,
+      "f1-score": 0.6046511627906976,
+      "support": 15.0
+    },
+    "Agri": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1-score": 0.0,
+      "support": 0.0
+    },
+    "Bola": {
+      "precision": 0.8831168831168831,
+      "recall": 0.9714285714285714,
+      "f1-score": 0.9251700680272109,
+      "support": 70.0
+    },
+    "Cahaya": {
+      "precision": 0.9047619047619048,
+      "recall": 0.9743589743589743,
+      "f1-score": 0.9382716049382716,
+      "support": 39.0
+    },
+    "Cek fakta": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 15.0
+    },
+    "Edukasi": {
+      "precision": 0.6595744680851063,
+      "recall": 0.9393939393939394,
+      "f1-score": 0.775,
+      "support": 33.0
+    },
+    "Food": {
+      "precision": 0.6428571428571429,
+      "recall": 0.9,
+      "f1-score": 0.75,
+      "support": 20.0
+    },
+    "Global": {
+      "precision": 0.7037037037037037,
+      "recall": 0.7169811320754716,
+      "f1-score": 0.7102803738317757,
+      "support": 53.0
+    },
+    "Health": {
+      "precision": 0.3333333333333333,
+      "recall": 0.6666666666666666,
+      "f1-score": 0.4444444444444444,
+      "support": 3.0
+    },
+    "Homey": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1-score": 0.0,
+      "support": 1.0
+    },
+    "Hype": {
+      "precision": 0.8,
+      "recall": 0.9696969696969697,
+      "f1-score": 0.8767123287671232,
+      "support": 33.0
+    },
+    "Ikn": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1-score": 0.0,
+      "support": 1.0
+    },
+    "Katanetizen": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1-score": 0.0,
+      "support": 1.0
+    },
+    "Lestari": {
+      "precision": 0.25925925925925924,
+      "recall": 0.5833333333333334,
+      "f1-score": 0.358974358974359,
+      "support": 12.0
+    },
+    "Lifestyle": {
+      "precision": 0.8235294117647058,
+      "recall": 0.8235294117647058,
+      "f1-score": 0.8235294117647058,
+      "support": 17.0
+    },
+    "Microsite": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1-score": 0.0,
+      "support": 0.0
+    },
+    "Money": {
+      "precision": 0.8787878787878788,
+      "recall": 0.7532467532467533,
+      "f1-score": 0.8111888111888111,
+      "support": 231.0
+    },
+    "News": {
+      "precision": 0.891832229580574,
+      "recall": 0.8505263157894737,
+      "f1-score": 0.8706896551724138,
+      "support": 475.0
+    },
+    "Otomotif": {
+      "precision": 0.7567567567567568,
+      "recall": 0.8484848484848485,
+      "f1-score": 0.8,
+      "support": 33.0
+    },
+    "Properti": {
+      "precision": 0.65,
+      "recall": 0.8125,
+      "f1-score": 0.7222222222222222,
+      "support": 32.0
+    },
+    "Prov": {
+      "precision": 0.875,
+      "recall": 1.0,
+      "f1-score": 0.9333333333333333,
+      "support": 7.0
+    },
+    "Regional": {
+      "precision": 0.96875,
+      "recall": 0.8936936936936937,
+      "f1-score": 0.92970946579194,
+      "support": 555.0
+    },
+    "Sains": {
+      "precision": 0.42857142857142855,
+      "recall": 0.75,
+      "f1-score": 0.5454545454545454,
+      "support": 4.0
+    },
+    "Skola": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 5.0
+    },
+    "Stori": {
+      "precision": 0.3,
+      "recall": 0.75,
+      "f1-score": 0.42857142857142855,
+      "support": 4.0
+    },
+    "Tekno": {
+      "precision": 0.9230769230769231,
+      "recall": 0.9230769230769231,
+      "f1-score": 0.9230769230769231,
+      "support": 13.0
+    },
+    "Travel": {
+      "precision": 0.7115384615384616,
+      "recall": 0.925,
+      "f1-score": 0.8043478260869565,
+      "support": 40.0
+    },
+    "Tren": {
+      "precision": 0.6376811594202898,
+      "recall": 0.6027397260273972,
+      "f1-score": 0.6197183098591549,
+      "support": 73.0
+    },
+    "accuracy": 0.8487394957983193,
+    "macro avg": {
+      "precision": 0.5891577378178595,
+      "recall": 0.6971901402037283,
+      "f1-score": 0.6284052240820114,
+      "support": 1785.0
+    },
+    "weighted avg": {
+      "precision": 0.8664424483847573,
+      "recall": 0.8487394957983193,
+      "f1-score": 0.8535134510977962,
+      "support": 1785.0
+    }
+  },
+  "test_predictions_sample": [],
   "smart_diagnostics": {
     "num_classes": 28,
-    "eval_loss": 0.8725,
+    "eval_loss": 0.8179,
     "random_guess_loss": 3.3322,
-    "loss_reduction_pct": 73.82,
-    "learning_phase": "Healthy Convergence",
-    "phase_color": "blue",
-    "advice": "Validation loss (0.8725) berhasil terpangkas 73.82% dari baseline acak murni (3.3322) untuk 28 kelas berita! Konvergensi model sangat sehat. Coba naikkan ke 4-5 epoch untuk mendorong F1 lebih dalam, atau langsung kombinasikan dengan TF-IDF di Tab 5."
+    "loss_reduction_pct": 75.46,
+    "learning_phase": "Sweet Spot Optimal",
+    "phase_color": "emerald",
+    "advice": "Validation loss (0.8179) berhasil terpangkas 75.46% dari tebakan acak (3.3322)! Konvergensi model berada di titik optimal. Siap untuk dievaluasi dan di-blend."
   },
   "status": "completed"
 }
