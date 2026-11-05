@@ -54,11 +54,37 @@ def run_training(
     seed: int = 2026,
     log_callback=None
 ):
+
+def resolve_model_path(model_identifier: str) -> str:
+    # Auto-correct typo from previous snippet
+    if "wirasana" in model_identifier.lower():
+        model_identifier = "w11wo/indonesian-roberta-base-sentiment-classifier"
+
+    # 1. Exact path check
+    if os.path.exists(model_identifier) and os.path.exists(os.path.join(model_identifier, "config.json")):
+        return model_identifier
+
+    # 2. Check models/ directory
+    basename = model_identifier.split("/")[-1]
+    candidates = [
+        os.path.join("models", model_identifier),
+        os.path.join("models", basename),
+        os.path.join("models", "indobert-base-p1") if "indobert" in basename.lower() and "tweet" not in basename.lower() else None,
+        os.path.join("models", "indobertweet-base-uncased") if "tweet" in basename.lower() else None,
+        os.path.join("models", "indonesian-roberta-base-sentiment") if "roberta" in basename.lower() else None,
+    ]
+    for c in candidates:
+        if c and os.path.exists(c) and os.path.exists(os.path.join(c, "config.json")):
+            print(f"[OFFLINE CACHE] Resolved '{model_identifier}' to local folder '{c}'")
+            return c
+    return model_identifier
+
     def log(msg):
         print(msg)
         if log_callback:
             log_callback(msg)
 
+    model_name = resolve_model_path(model_name)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     gpu_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "None (CPU)"
     log(f"============================================================")

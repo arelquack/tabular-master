@@ -958,9 +958,9 @@ export const TextStudio: React.FC<TextStudioProps> = ({
                   onChange={e => setTransformerModel(e.target.value)}
                   className="w-full text-xs font-mono bg-zinc-50 border border-zinc-200 rounded-lg px-2.5 py-2 text-zinc-900"
                 >
-                  <option value="indobenchmark/indobert-base-p1">indobenchmark/indobert-base-p1 (Standard)</option>
-                  <option value="wirasana/indonesian-roberta-base-sentiment-classifier">wirasana/indonesian-roberta (Sentiment)</option>
-                  <option value="cahya/bert-base-indonesian-522M">cahya/bert-base-indonesian-522M (Large)</option>
+                  <option value="indobenchmark/indobert-base-p1">indobenchmark/indobert-base-p1 (IndoBERT - Formal/News)</option>
+                  <option value="indolem/indobertweet-base-uncased">indolem/indobertweet-base-uncased (IndoBERTweet - Slang/Comments)</option>
+                  <option value="w11wo/indonesian-roberta-base-sentiment-classifier">w11wo/indonesian-roberta (Fine-tuned Sentiment)</option>
                 </select>
               </div>
 
