@@ -290,6 +290,7 @@ def resolve_model_path(model_identifier: str) -> str:
     report_dict = classification_report(
         y_true,
         y_preds,
+        labels=np.arange(num_labels),
         target_names=unique_labels,
         output_dict=True,
         zero_division=0
