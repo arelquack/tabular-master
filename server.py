@@ -4,12 +4,19 @@ import json
 import glob
 import re
 import shutil
+import subprocess
 import importlib.util
 import threading
 import time
 from typing import List, Dict, Any, Optional
 import numpy as np
 import pandas as pd
+
+def safe_is_numeric(dt) -> bool:
+    try:
+        return pd.api.types.is_numeric_dtype(dt)
+    except Exception:
+        return False
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
@@ -572,7 +579,7 @@ def get_case_eda(case_id: str):
     correlations = []
     if target_col and target_col in df_sample.columns:
         y_s = df_sample[target_col]
-        if y_s.dtype == bool or not np.issubdtype(y_s.dtype, np.number):
+        if y_s.dtype == bool or not safe_is_numeric(y_s.dtype):
             y_num = pd.Series(y_s).astype("category").cat.codes
         else:
             y_num = y_s
@@ -592,7 +599,7 @@ def get_case_eda(case_id: str):
     columns_profile = []
     for c in df_sample.columns:
         s = df_sample[c]
-        is_num = np.issubdtype(s.dtype, np.number)
+        is_num = safe_is_numeric(s.dtype)
         missing_count = int(s.isna().sum())
         missing_rate = round((missing_count / len(s)) * 100, 2)
         nunique = int(s.nunique())
@@ -2381,8 +2388,8 @@ def run_tune_thread(case_id: str, model_name: str, n_trials: int, meta: dict, ca
         id_col = meta.get("id_col")
         y_raw = train_df[target_col].values
         if meta["task_type"] == "binary":
-            y = (y_raw == 1) | (y_raw == True) | (y_raw == "True") if y_raw.dtype == bool or not np.issubdtype(y_raw.dtype, np.number) else y_raw
-            if not np.issubdtype(y.dtype, np.number):
+            y = (y_raw == 1) | (y_raw == True) | (y_raw == "True") if y_raw.dtype == bool or not safe_is_numeric(y_raw.dtype) else y_raw
+            if not safe_is_numeric(y.dtype):
                 y = pd.Series(y_raw).astype("category").cat.codes.values
             y = y.astype(int)
         else:
@@ -2628,7 +2635,7 @@ def run_hill_climb(case_id: str):
             raise HTTPException(status_code=404, detail="Training dataset not found")
         train_df = pd.read_csv(train_path, usecols=[meta["target_col"]])
         y_true = train_df[meta["target_col"]].values
-        if y_true.dtype == bool or not np.issubdtype(y_true.dtype, np.number):
+        if y_true.dtype == bool or not safe_is_numeric(y_true.dtype):
             y_true = pd.Series(y_true).astype("category").cat.codes.values
 
     opt = EnsembleOptimizer(task_type=meta["task_type"], eval_metric=meta["eval_metric"])
@@ -2667,7 +2674,7 @@ def run_custom_blend(case_id: str, req: BlendRequest):
             raise HTTPException(status_code=404, detail="Training dataset not found")
         train_df = pd.read_csv(train_path, usecols=[meta["target_col"]])
         y_true = train_df[meta["target_col"]].values
-        if y_true.dtype == bool or not np.issubdtype(y_true.dtype, np.number):
+        if y_true.dtype == bool or not safe_is_numeric(y_true.dtype):
             y_true = pd.Series(y_true).astype("category").cat.codes.values
 
     total_w = sum(req.weights.values())
@@ -3110,7 +3117,7 @@ def apply_auto_feature_engineering(train_df: pd.DataFrame, test_df: pd.DataFrame
     # 4. Filter near-constant or collinear features
     all_created = [c for c in new_feats if c in train_out.columns]
     if all_created:
-        num_created = [c for c in all_created if np.issubdtype(train_out[c].dtype, np.number)]
+        num_created = [c for c in all_created if safe_is_numeric(train_out[c].dtype)]
         valid_num = []
         if num_created:
             variances = train_out[num_created].var()
@@ -3124,7 +3131,7 @@ def apply_auto_feature_engineering(train_df: pd.DataFrame, test_df: pd.DataFrame
                         if f1 not in to_drop and f2 not in to_drop and corr_matrix.loc[f1, f2] >= 0.98:
                             to_drop.add(f2)
                 valid_num = [f for f in valid_num if f not in to_drop]
-        non_num_created = [c for c in all_created if not np.issubdtype(train_out[c].dtype, np.number)]
+        non_num_created = [c for c in all_created if not safe_is_numeric(train_out[c].dtype)]
         kept_feats = (valid_num + non_num_created)[:40]
         drop_candidates = [c for c in all_created if c not in kept_feats]
         for df in dfs:
@@ -3749,7 +3756,7 @@ def export_standalone_notebook(case_id: str):
                     "    # 4. Prune collinear / near-constant features\n",
                     "    all_created = [c for c in new_feats if c in train_out.columns]\n",
                     "    if all_created:\n",
-                    "        num_created = [c for c in all_created if np.issubdtype(train_out[c].dtype, np.number)]\n",
+                    "        num_created = [c for c in all_created if safe_is_numeric(train_out[c].dtype)]\n",
                     "        valid_num = []\n",
                     "        if num_created:\n",
                     "            variances = train_out[num_created].var()\n",
@@ -3763,7 +3770,7 @@ def export_standalone_notebook(case_id: str):
                     "                        if f1 not in to_drop and f2 not in to_drop and corr_matrix.loc[f1, f2] >= 0.98:\n",
                     "                            to_drop.add(f2)\n",
                     "                valid_num = [f for f in valid_num if f not in to_drop]\n",
-                    "        non_num_created = [c for c in all_created if not np.issubdtype(train_out[c].dtype, np.number)]\n",
+                    "        non_num_created = [c for c in all_created if not safe_is_numeric(train_out[c].dtype)]\n",
                     "        kept_feats = (valid_num + non_num_created)[:40]\n",
                     "        drop_candidates = [c for c in all_created if c not in kept_feats]\n",
                     "        for df in dfs:\n",
