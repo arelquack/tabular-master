@@ -167,6 +167,13 @@ class NLPTrainRequest(BaseModel):
     n_splits: int = 5
     c_param: float = 1.5
 
+class NLPTransformerTrainRequest(BaseModel):
+    model_name: Optional[str] = "indobenchmark/indobert-base-p1"
+    epochs: Optional[int] = 3
+    batch_size: Optional[int] = 16
+    learning_rate: Optional[float] = 2e-5
+    max_length: Optional[int] = None
+
 class NLPCleanRequest(BaseModel):
     columns_to_combine: Optional[List[str]] = None
     prefix_with_column_name: bool = False
@@ -1673,6 +1680,97 @@ def execute_nlp_train(case_id: str, req: NLPTrainRequest):
         return res
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+active_transformer_tasks = {}
+
+@app.post("/api/cases/{case_id}/nlp-train-transformer")
+def execute_nlp_transformer_train(case_id: str, req: NLPTransformerTrainRequest):
+    case_dir = os.path.join(CASES_DIR, case_id)
+    if not os.path.exists(case_dir):
+        raise HTTPException(status_code=404, detail=f"Case not found: {case_id}")
+    
+    # Check if already running
+    proc = active_transformer_tasks.get(case_id)
+    if proc and proc.poll() is None:
+        return {"status": "already_running", "case_id": case_id}
+
+    log_path = os.path.join(case_dir, "transformer_train.log")
+    cmd = [
+        sys.executable,
+        "train_transformer_universal.py",
+        "--case", case_id,
+        "--model", req.model_name or "indobenchmark/indobert-base-p1",
+        "--epochs", str(req.epochs or 3),
+        "--batch_size", str(req.batch_size or 16),
+        "--lr", str(req.learning_rate or 2e-5)
+    ]
+    if req.max_length:
+        cmd.extend(["--max_length", str(req.max_length)])
+
+    log_file = open(log_path, "w", encoding="utf-8")
+    proc = subprocess.Popen(cmd, stdout=log_file, stderr=subprocess.STDOUT)
+    active_transformer_tasks[case_id] = proc
+
+    return {
+        "status": "started",
+        "case_id": case_id,
+        "pid": proc.pid,
+        "model": req.model_name,
+        "epochs": req.epochs
+    }
+
+@app.get("/api/cases/{case_id}/nlp-transformer-status")
+def get_nlp_transformer_status(case_id: str):
+    case_dir = os.path.join(CASES_DIR, case_id)
+    if not os.path.exists(case_dir):
+        raise HTTPException(status_code=404, detail=f"Case not found: {case_id}")
+
+    log_path = os.path.join(case_dir, "transformer_train.log")
+    recent_logs = []
+    if os.path.exists(log_path):
+        try:
+            with open(log_path, "r", encoding="utf-8", errors="ignore") as lf:
+                lines = lf.readlines()
+                recent_logs = [l.rstrip() for l in lines[-60:]]
+        except Exception:
+            pass
+
+    results_path = os.path.join(case_dir, "transformer_results.json")
+    results_data = None
+    if os.path.exists(results_path):
+        try:
+            with open(results_path, "r", encoding="utf-8") as rf:
+                results_data = json.load(rf)
+        except Exception:
+            pass
+
+    proc = active_transformer_tasks.get(case_id)
+    is_running = proc is not None and proc.poll() is None
+    exit_code = proc.poll() if proc is not None else None
+
+    state = "idle"
+    if is_running:
+        state = "running"
+    elif exit_code == 0 or (results_data and not is_running):
+        state = "completed"
+    elif exit_code is not None and exit_code != 0:
+        state = "error"
+
+    return {
+        "state": state,
+        "is_running": is_running,
+        "exit_code": exit_code,
+        "recent_logs": recent_logs,
+        "results": results_data
+    }
+
+@app.post("/api/cases/{case_id}/nlp-transformer-stop")
+def stop_nlp_transformer_train(case_id: str):
+    proc = active_transformer_tasks.get(case_id)
+    if proc and proc.poll() is None:
+        proc.terminate()
+        return {"status": "terminated"}
+    return {"status": "not_running"}
 
 @app.post("/api/cases/{case_id}/nlp-clean")
 def execute_nlp_clean(case_id: str, req: NLPCleanRequest):

@@ -74,3 +74,9 @@ scratch/
 *.swo
 .DS_Store
 Thumbs.db
+
+# Exceptions for ready-to-run cases
+!cases/sentimen_karhutla/**
+!cases/karhutla/**
+!cases/campus_complaints_routing/**
+!cases/nlp_kompas/**

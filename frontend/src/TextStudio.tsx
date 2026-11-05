@@ -8,7 +8,11 @@ import {
   RefreshCw, 
   BarChart2, 
   Cpu,
-  Check
+  Check,
+  Zap,
+  Square,
+  Terminal,
+  Copy,
 } from 'lucide-react';
 
 interface TextStudioProps {
@@ -197,6 +201,87 @@ export const TextStudio: React.FC<TextStudioProps> = ({
     } finally {
       setIsTraining(false);
     }
+  };
+
+  // Transformer Pipeline State
+  const [transformerModel, setTransformerModel] = useState<string>('indobenchmark/indobert-base-p1');
+  const [transformerEpochs, setTransformerEpochs] = useState<number>(3);
+  const [transformerBatchSize, setTransformerBatchSize] = useState<number>(16);
+  const [transformerLr, setTransformerLr] = useState<number>(2e-5);
+  const [transformerMaxLen, setTransformerMaxLen] = useState<string>('auto');
+  const [transformerStatus, setTransformerStatus] = useState<any>(null);
+  const [isStartingTransformer, setIsStartingTransformer] = useState<boolean>(false);
+  const [copiedCli, setCopiedCli] = useState<boolean>(false);
+
+  const fetchTransformerStatus = async () => {
+    if (!selectedCaseId) return;
+    try {
+      const res = await fetch(`/api/cases/${selectedCaseId}/nlp-transformer-status`);
+      if (res.ok) {
+        const data = await res.json();
+        setTransformerStatus(data);
+      }
+    } catch (e) {
+      // ignore
+    }
+  };
+
+  useEffect(() => {
+    if (activeNlpTab === 'deep_nlp') {
+      fetchTransformerStatus();
+    }
+  }, [activeNlpTab, selectedCaseId]);
+
+  useEffect(() => {
+    let interval: any = null;
+    if (activeNlpTab === 'deep_nlp' && transformerStatus?.is_running) {
+      interval = setInterval(() => {
+        fetchTransformerStatus();
+      }, 2500);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [activeNlpTab, transformerStatus?.is_running]);
+
+  const handleLaunchTransformer = async () => {
+    setIsStartingTransformer(true);
+    try {
+      const res = await fetch(`/api/cases/${selectedCaseId}/nlp-train-transformer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model_name: transformerModel,
+          epochs: transformerEpochs,
+          batch_size: transformerBatchSize,
+          learning_rate: transformerLr,
+          max_length: transformerMaxLen === 'auto' ? null : Number(transformerMaxLen)
+        })
+      });
+      if (res.ok) {
+        await fetchTransformerStatus();
+      }
+    } catch (e) {
+      // ignore
+    } finally {
+      setIsStartingTransformer(false);
+    }
+  };
+
+  const handleStopTransformer = async () => {
+    try {
+      await fetch(`/api/cases/${selectedCaseId}/nlp-transformer-stop`, { method: 'POST' });
+      await fetchTransformerStatus();
+    } catch (e) {
+      // ignore
+    }
+  };
+
+  const handleCopyCli = () => {
+    const cliCmd = `python train_transformer_universal.py --case ${selectedCaseId}`;
+    navigator.clipboard.writeText(cliCmd);
+    setCopiedCli(true);
+    setTimeout(() => setCopiedCli(false), 2000);
   };
 
   const toggleColumnSelection = (col: string) => {
@@ -814,91 +899,221 @@ export const TextStudio: React.FC<TextStudioProps> = ({
 
       {/* Tab 4: Deep Learning (Transformers) */}
       {activeNlpTab === 'deep_nlp' && (
-        <div className="bg-white border border-zinc-200/80 rounded-xl p-6 shadow-xs space-y-5">
-          <div className="flex items-center justify-between">
+        <div className="space-y-6">
+          {/* Header Card */}
+          <div className="bg-white border border-zinc-200/80 rounded-xl p-5 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div>
-              <h3 className="text-base font-bold text-zinc-950">Deep Learning Pipeline (Transformers)</h3>
+              <div className="flex items-center space-x-2">
+                <span className="text-[10px] font-mono uppercase bg-zinc-900 text-white px-2 py-0.5 rounded font-bold">
+                  GPU Accelerated Fine-Tuning
+                </span>
+                <span className={`text-[10px] font-mono px-2 py-0.5 rounded border uppercase font-bold ${
+                  transformerStatus?.is_running 
+                    ? 'bg-amber-50 text-amber-800 border-amber-300 animate-pulse'
+                    : (transformerStatus?.state === 'completed' 
+                        ? 'bg-emerald-50 text-emerald-800 border-emerald-300' 
+                        : 'bg-zinc-100 text-zinc-600 border-zinc-200')
+                }`}>
+                  {transformerStatus?.is_running ? 'Training in Progress (GPU Active)' : (transformerStatus?.state === 'completed' ? 'Model Ready & Validated' : 'Idle')}
+                </span>
+              </div>
+              <h3 className="text-base font-bold text-zinc-950 mt-1">Deep Learning Transformers (IndoBERT / RoBERTa)</h3>
               <p className="text-xs text-zinc-500 mt-0.5">
-                Fine-tune sequence classification models locally from pre-downloaded checkpoints.
+                Otomatis mengadaptasi task ({caseDetail?.meta?.task_type || 'binary'}), panjang urutan teks (P95), dan bobot kelas berimbang.
               </p>
             </div>
-            <span className="text-xs font-mono bg-zinc-100 text-zinc-800 px-3 py-1 rounded-md border border-zinc-200">
-              PyTorch / Transformers
-            </span>
-          </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="p-3.5 bg-zinc-50 border border-zinc-200 rounded-lg text-xs">
-              <div className="font-bold text-zinc-900 mb-1">Batch Size: 16 (or 32 with grad accum)</div>
-              <div className="text-zinc-500">Balances GPU memory utilization and gradient stability.</div>
-            </div>
-            <div className="p-3.5 bg-zinc-50 border border-zinc-200 rounded-lg text-xs">
-              <div className="font-bold text-zinc-900 mb-1">Sequence Length: 256 / 512</div>
-              <div className="text-zinc-500">Truncate long articles; keep title + keywords + head/tail of body.</div>
-            </div>
-            <div className="p-3.5 bg-zinc-50 border border-zinc-200 rounded-lg text-xs">
-              <div className="font-bold text-zinc-900 mb-1">Optimizer: AdamW (lr=2e-5)</div>
-              <div className="text-zinc-500">With linear warmup and weight decay 0.01.</div>
+            {/* Quick CLI Banner for PC Dosen */}
+            <div className="bg-zinc-50 border border-zinc-200 rounded-lg p-2.5 flex items-center space-x-3">
+              <div className="font-mono text-[11px] text-zinc-700">
+                <div className="text-[9px] uppercase tracking-wider text-zinc-400 font-sans font-semibold">PC Dosen / Terminal Execution:</div>
+                <code>python train_transformer_universal.py --case {selectedCaseId}</code>
+              </div>
+              <button
+                type="button"
+                onClick={handleCopyCli}
+                className="p-1.5 bg-white border border-zinc-200 rounded hover:bg-zinc-100 text-zinc-700 transition"
+                title="Copy Terminal Command"
+              >
+                {copiedCli ? <Check size={13} className="text-emerald-600" /> : <Copy size={13} />}
+              </button>
             </div>
           </div>
 
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-semibold text-zinc-900">Standalone Fine-Tuning Script:</span>
-              <span className="text-[10px] font-mono text-zinc-400">train_transformer_offline.py</span>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {/* Left Column: Hyperparameter & Launcher */}
+            <div className="bg-white border border-zinc-200/80 rounded-xl p-5 shadow-xs space-y-4">
+              <div className="flex items-center justify-between pb-2 border-b border-zinc-100">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-zinc-900 flex items-center space-x-1.5">
+                  <Zap size={13} className="text-zinc-900" />
+                  <span>Pipeline Hyperparameters</span>
+                </h4>
+                <span className="text-[10px] font-mono text-zinc-500">PyTorch + FP16</span>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-mono uppercase text-zinc-500 mb-1">Backbone Pretrained Model</label>
+                <select
+                  value={transformerModel}
+                  onChange={e => setTransformerModel(e.target.value)}
+                  className="w-full text-xs font-mono bg-zinc-50 border border-zinc-200 rounded-lg px-2.5 py-2 text-zinc-900"
+                >
+                  <option value="indobenchmark/indobert-base-p1">indobenchmark/indobert-base-p1 (Standard)</option>
+                  <option value="wirasana/indonesian-roberta-base-sentiment-classifier">wirasana/indonesian-roberta (Sentiment)</option>
+                  <option value="cahya/bert-base-indonesian-522M">cahya/bert-base-indonesian-522M (Large)</option>
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-mono uppercase text-zinc-500 mb-1">Epochs</label>
+                  <input
+                    type="number"
+                    value={transformerEpochs}
+                    onChange={e => setTransformerEpochs(Number(e.target.value))}
+                    className="w-full text-xs font-mono bg-zinc-50 border border-zinc-200 rounded-lg px-2.5 py-1.5 text-zinc-900"
+                    min={1}
+                    max={10}
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-mono uppercase text-zinc-500 mb-1">Batch Size</label>
+                  <select
+                    value={transformerBatchSize}
+                    onChange={e => setTransformerBatchSize(Number(e.target.value))}
+                    className="w-full text-xs font-mono bg-zinc-50 border border-zinc-200 rounded-lg px-2.5 py-1.5 text-zinc-900"
+                  >
+                    <option value={8}>8 (Low VRAM)</option>
+                    <option value={16}>16 (Recommended)</option>
+                    <option value={32}>32 (Fast RTX 3070)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-mono uppercase text-zinc-500 mb-1">Learning Rate</label>
+                  <input
+                    type="number"
+                    value={transformerLr}
+                    onChange={e => setTransformerLr(Number(e.target.value))}
+                    step={0.000005}
+                    className="w-full text-xs font-mono bg-zinc-50 border border-zinc-200 rounded-lg px-2.5 py-1.5 text-zinc-900"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-mono uppercase text-zinc-500 mb-1">Max Sequence Length</label>
+                  <select
+                    value={transformerMaxLen}
+                    onChange={e => setTransformerMaxLen(e.target.value)}
+                    className="w-full text-xs font-mono bg-zinc-50 border border-zinc-200 rounded-lg px-2.5 py-1.5 text-zinc-900"
+                  >
+                    <option value="auto">Auto (from P95 = {edaData?.word_length_stats?.p95 ? Math.min(512, Math.max(96, Math.round(edaData.word_length_stats.p95 * 1.35))) : 128})</option>
+                    <option value="96">96 tokens (Short/Fast)</option>
+                    <option value="128">128 tokens (Comments)</option>
+                    <option value="256">256 tokens (Articles)</option>
+                    <option value="512">512 tokens (Full News)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="pt-2">
+                {transformerStatus?.is_running ? (
+                  <button
+                    type="button"
+                    onClick={handleStopTransformer}
+                    className="w-full flex items-center justify-center space-x-2 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold py-2.5 rounded-lg transition shadow-xs"
+                  >
+                    <Square size={13} />
+                    <span>Hentikan Training GPU</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleLaunchTransformer}
+                    disabled={isStartingTransformer}
+                    className="w-full flex items-center justify-center space-x-2 bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-semibold py-2.5 rounded-lg transition shadow-xs disabled:opacity-50"
+                  >
+                    {isStartingTransformer ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}
+                    <span>Jalankan Fine-Tuning GPU (RTX 3070)</span>
+                  </button>
+                )}
+              </div>
+
+              <div className="text-[11px] text-zinc-500 space-y-1 bg-zinc-50 p-3 rounded-lg border border-zinc-200">
+                <div className="font-semibold text-zinc-800">Spesifikasi Engine GPU:</div>
+                <div>• Automatic FP16 mixed precision on CUDA</div>
+                <div>• Rare class shielding to protect Stratified Split</div>
+                <div>• Weighted CrossEntropyLoss anti class imbalance</div>
+              </div>
             </div>
-            <pre className="p-4 bg-zinc-900 text-zinc-100 rounded-xl text-xs font-mono overflow-x-auto max-h-96">
-{`import os
-import torch
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, Trainer, TrainingArguments
-import pandas as pd
-from sklearn.metrics import accuracy_score, f1_score
 
-# 1. Load Cleaned Dataset
-train_df = pd.read_csv("cases/${selectedCaseId}/train.csv")
-MODEL_PATH = "./models/pretrained-checkpoint" # Local folder path
+            {/* Right Column: Execution Monitor & Evaluation Results */}
+            <div className="md:col-span-2 space-y-4">
+              {/* If completed, show metric cards */}
+              {transformerStatus?.results && (
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="bg-white border border-zinc-200/80 rounded-xl p-4 shadow-xs">
+                    <div className="text-[10px] font-mono uppercase text-zinc-400">Validation Macro-F1</div>
+                    <div className="text-xl font-bold text-zinc-900 mt-0.5">
+                      {(transformerStatus.results.macro_f1 * 100).toFixed(2)}%
+                    </div>
+                    {baselineResult?.overall_macro_f1 && (
+                      <div className="text-[10px] font-mono text-emerald-600 mt-1 font-semibold">
+                        + {((transformerStatus.results.macro_f1 - baselineResult.overall_macro_f1) * 100).toFixed(2)}% vs Baseline
+                      </div>
+                    )}
+                  </div>
+                  <div className="bg-white border border-zinc-200/80 rounded-xl p-4 shadow-xs">
+                    <div className="text-[10px] font-mono uppercase text-zinc-400">Validation Accuracy</div>
+                    <div className="text-xl font-bold text-zinc-900 mt-0.5">
+                      {(transformerStatus.results.accuracy * 100).toFixed(2)}%
+                    </div>
+                    <div className="text-[10px] font-mono text-zinc-500 mt-1">
+                      Loss: {Number(transformerStatus.results.eval_loss || 0).toFixed(4)}
+                    </div>
+                  </div>
+                  <div className="bg-white border border-zinc-200/80 rounded-xl p-4 shadow-xs">
+                    <div className="text-[10px] font-mono uppercase text-zinc-400">Hardware & Backbone</div>
+                    <div className="text-xs font-bold text-zinc-900 mt-1 truncate">
+                      {transformerStatus.results.gpu_name || 'GPU CUDA'}
+                    </div>
+                    <div className="text-[10px] font-mono text-zinc-500 mt-1 truncate">
+                      {transformerStatus.results.model_name?.split('/').pop()}
+                    </div>
+                  </div>
+                </div>
+              )}
 
-# 2. Label Encoding
-labels = sorted(train_df["${baselineLabelCol || caseDetail?.meta?.target_column || 'category'}"].unique())
-label2id = {l: i for i, l in enumerate(labels)}
-id2label = {i: l for i, l in enumerate(labels)}
-train_df["label"] = train_df["${baselineLabelCol || caseDetail?.meta?.target_column || 'category'}"].map(label2id)
-
-tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
-
-def tokenize_fn(examples):
-    return tokenizer(examples["${baselineTextCol || 'clean_text'}"], truncation=True, max_length=256, padding="max_length")
-
-# 3. Training Arguments
-training_args = TrainingArguments(
-    output_dir="./checkpoints",
-    per_device_train_batch_size=16,
-    per_device_eval_batch_size=32,
-    learning_rate=2e-5,
-    num_train_epochs=3,
-    fp16=torch.cuda.is_available(),
-    evaluation_strategy="epoch",
-    save_strategy="epoch",
-    load_best_model_at_end=True,
-    metric_for_best_model="f1_macro"
-)
-
-# 4. Initialize Model
-model = AutoModelForSequenceClassification.from_pretrained(
-    MODEL_PATH, 
-    num_labels=len(labels), 
-    id2label=id2label, 
-    label2id=label2id
-)
-
-def compute_metrics(eval_pred):
-    logits, y_true = eval_pred
-    preds = logits.argmax(-1)
-    return {
-        "accuracy": accuracy_score(y_true, preds),
-        "f1_macro": f1_score(y_true, preds, average="macro")
-    }`}
-            </pre>
+              {/* Live Terminal Output */}
+              <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 shadow-xs">
+                <div className="flex items-center justify-between pb-2 border-b border-zinc-800 mb-3">
+                  <div className="flex items-center space-x-2 text-zinc-400 text-xs font-mono">
+                    <Terminal size={13} />
+                    <span>Transformer GPU Live Log Stream</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={fetchTransformerStatus}
+                    className="text-zinc-500 hover:text-zinc-300 transition"
+                    title="Refresh Log"
+                  >
+                    <RefreshCw size={12} />
+                  </button>
+                </div>
+                <div className="font-mono text-xs text-zinc-300 space-y-1 max-h-72 overflow-y-auto scrollbar-thin">
+                  {transformerStatus?.recent_logs && transformerStatus.recent_logs.length > 0 ? (
+                    transformerStatus.recent_logs.map((line: string, idx: number) => (
+                      <div key={idx} className="whitespace-pre-wrap leading-relaxed">{line}</div>
+                    ))
+                  ) : (
+                    <div className="text-zinc-600 py-6 text-center">
+                      Siap dijalankan di PC Dosen (RTX 3070). Klik "Jalankan Fine-Tuning GPU" untuk memulai.
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       )}

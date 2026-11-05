@@ -1,0 +1,229 @@
+{
+  "model_type": "TF-IDF + Balanced Logistic Regression",
+  "features_extracted": 15000,
+  "n_splits": 5,
+  "overall_accuracy": 0.9998,
+  "overall_macro_f1": 0.9998,
+  "fold_results": [
+    {
+      "fold": 1,
+      "accuracy": 1.0,
+      "macro_f1": 1.0,
+      "val_samples": 7119
+    },
+    {
+      "fold": 2,
+      "accuracy": 0.9997,
+      "macro_f1": 0.9997,
+      "val_samples": 7118
+    },
+    {
+      "fold": 3,
+      "accuracy": 0.9999,
+      "macro_f1": 0.9999,
+      "val_samples": 7118
+    },
+    {
+      "fold": 4,
+      "accuracy": 0.9999,
+      "macro_f1": 0.9999,
+      "val_samples": 7118
+    },
+    {
+      "fold": 5,
+      "accuracy": 0.9996,
+      "macro_f1": 0.9996,
+      "val_samples": 7118
+    }
+  ],
+  "top_words_per_class": {
+    "BAK": [
+      "tagihan",
+      "bayar",
+      "pembayaran",
+      "keuangan",
+      "billing",
+      "lunas",
+      "va",
+      "payment",
+      "sia dr",
+      "kasir"
+    ],
+    "BAP": [
+      "akademik",
+      "krs",
+      "nilai",
+      "portal",
+      "matkul",
+      "bagian akademik",
+      "menyangkut kelulusan",
+      "cuti",
+      "administrasi pembelajaran",
+      "biro administrasi"
+    ],
+    "BIMA": [
+      "kemahasiswaan",
+      "skp",
+      "kegiatan",
+      "agenda",
+      "prestasi",
+      "pelayanan kemahasiswaan",
+      "kemahasiswaan kampus",
+      "bem",
+      "panitia",
+      "kelancaran kegiatan"
+    ],
+    "BKP": [
+      "umbcan",
+      "evaluasi",
+      "survei",
+      "rektorat",
+      "tracer",
+      "kepuasan",
+      "kuesioner",
+      "karier",
+      "admin umbcan",
+      "tracer study"
+    ],
+    "BPM": [
+      "mutu",
+      "belajar",
+      "penjaminan mutu",
+      "penjaminan",
+      "materi",
+      "dosen",
+      "evaluasi",
+      "kelas",
+      "perkuliahan",
+      "di kelas"
+    ],
+    "BSP": [
+      "di",
+      "parkir",
+      "fasilitas",
+      "lab",
+      "maintenance",
+      "benerin",
+      "fasilitas kampus",
+      "aula",
+      "permisi min",
+      "gedung kuliah"
+    ],
+    "BTI": [
+      "it",
+      "teknologi",
+      "teknologi informasi",
+      "server",
+      "email",
+      "tim it",
+      "servernya",
+      "post",
+      "helpdesk",
+      "sistem kampus"
+    ],
+    "HUMAS": [
+      "informasi",
+      "care",
+      "customer",
+      "customer care",
+      "resmi",
+      "kampus",
+      "informasi kampus",
+      "info",
+      "komunikasi",
+      "publik"
+    ],
+    "PERPUS": [
+      "takaan",
+      "turnitin",
+      "buku",
+      "menara",
+      "denda",
+      "repositori",
+      "sidang",
+      "bebas",
+      "yudisium",
+      "takaan kampus"
+    ],
+    "PPKS": [
+      "perlindungan",
+      "korban",
+      "pendampingan",
+      "safe",
+      "dan",
+      "secara",
+      "safe space",
+      "space",
+      "ngalamin",
+      "aman"
+    ],
+    "ULT": [
+      "loket",
+      "gedung",
+      "operasional",
+      "jadwal",
+      "staf",
+      "administrasi",
+      "ujian",
+      "operasional kampus",
+      "layanan",
+      "jam"
+    ]
+  },
+  "test_predictions_sample": [
+    {
+      "id": "PERPUS-0794",
+      "predicted_label": "PERPUS",
+      "confidence": 0.9264
+    },
+    {
+      "id": "BSP-2383",
+      "predicted_label": "BSP",
+      "confidence": 0.9503
+    },
+    {
+      "id": "BPM-3470",
+      "predicted_label": "BPM",
+      "confidence": 0.9569
+    },
+    {
+      "id": "BIMA-3907",
+      "predicted_label": "BIMA",
+      "confidence": 0.8401
+    },
+    {
+      "id": "ULT-3729",
+      "predicted_label": "ULT",
+      "confidence": 0.9577
+    },
+    {
+      "id": "BPM-2671",
+      "predicted_label": "BPM",
+      "confidence": 0.9937
+    },
+    {
+      "id": "HUMAS-0713",
+      "predicted_label": "HUMAS",
+      "confidence": 0.9777
+    },
+    {
+      "id": "ULT-1073",
+      "predicted_label": "ULT",
+      "confidence": 0.9799
+    },
+    {
+      "id": "BAK-0191",
+      "predicted_label": "BAK",
+      "confidence": 0.97
+    },
+    {
+      "id": "BAK-3557",
+      "predicted_label": "BAK",
+      "confidence": 0.939
+    }
+  ],
+  "total_train_samples": 35591,
+  "rare_classes_shielded": 0,
+  "submission_saved": true,
+  "submission_rows": 8904
+}

@@ -1,0 +1,23 @@
+{
+  "id": "campus_complaints_routing",
+  "name": "Campus Complaint Bureau Routing",
+  "description": "Text / NLP case normalized from cases/campus_complaints/train.csv. Text: text_raw, Target: target_biro",
+  "train_path": "cases/campus_complaints_routing/train.csv",
+  "test_path": "cases/campus_complaints_routing/test.csv",
+  "id_col": "id",
+  "target_col": "target_biro",
+  "target_column": "target_biro",
+  "text_column": "clean_text",
+  "data_type": "nlp",
+  "task_type": "multiclass",
+  "eval_metric": "f1_macro",
+  "cv_strategy": "stratified_kfold",
+  "n_splits": 5,
+  "seed": 2026,
+  "models": [
+    "lgbm",
+    "xgb",
+    "catboost"
+  ],
+  "output_dir": "experiments/campus_complaints_routing_run"
+}
