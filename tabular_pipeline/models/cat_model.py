@@ -7,8 +7,9 @@ class CatBoostModel(BaseTabularModel):
     """
     Unified high-performance wrapper for CatBoost Classifier & Regressor.
     """
-    def __init__(self, task_type: str = "binary", eval_metric: str = "roc_auc", random_state: int = 42, params: Optional[Dict[str, Any]] = None):
+    def __init__(self, task_type: str = "binary", eval_metric: str = "roc_auc", random_state: int = 42, params: Optional[Dict[str, Any]] = None, use_gpu: bool = False):
         super().__init__(task_type, eval_metric, random_state, params)
+        self.use_gpu = use_gpu
 
     def _get_metric_name(self) -> str:
         m = self.eval_metric.lower()
@@ -34,6 +35,8 @@ class CatBoostModel(BaseTabularModel):
             "verbose": False,
             "thread_count": -1,
         }
+        if self.use_gpu:
+            defaults["task_type"] = "GPU"
         defaults["eval_metric"] = self._get_metric_name()
         return defaults
 

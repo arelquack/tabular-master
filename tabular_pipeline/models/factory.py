@@ -16,15 +16,16 @@ class ModelFactory:
         eval_metric: str = "roc_auc",
         random_state: int = 42,
         params: Optional[Dict[str, Any]] = None,
+        use_gpu: bool = False,
     ) -> BaseTabularModel:
         name_clean = name.lower().replace("-", "_")
 
         if name_clean in ["lgbm", "lightgbm"]:
-            return LightGBMModel(task_type=task_type, eval_metric=eval_metric, random_state=random_state, params=params)
+            return LightGBMModel(task_type=task_type, eval_metric=eval_metric, random_state=random_state, params=params, use_gpu=use_gpu)
         elif name_clean in ["xgb", "xgboost"]:
-            return XGBoostModel(task_type=task_type, eval_metric=eval_metric, random_state=random_state, params=params)
+            return XGBoostModel(task_type=task_type, eval_metric=eval_metric, random_state=random_state, params=params, use_gpu=use_gpu)
         elif name_clean in ["cat", "catboost"]:
-            return CatBoostModel(task_type=task_type, eval_metric=eval_metric, random_state=random_state, params=params)
+            return CatBoostModel(task_type=task_type, eval_metric=eval_metric, random_state=random_state, params=params, use_gpu=use_gpu)
         elif name_clean in ["rf", "random_forest", "et", "extra_trees", "ridge", "logreg"]:
             return SklearnModel(model_type=name_clean, task_type=task_type, random_state=random_state, params=params)
         else:

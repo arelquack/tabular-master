@@ -103,6 +103,7 @@ class CreateCaseRequest(BaseModel):
     seed: int = 2026
     models: List[str] = ["lgbm", "xgb", "catboost"]
     hook_code: Optional[str] = None
+    use_gpu: Optional[bool] = False
     auto_stitch: Optional[bool] = False
     stitch_base_pattern: Optional[str] = None
     stitch_join_pattern: Optional[str] = None
@@ -505,6 +506,39 @@ def get_case(case_id: str):
         "dataset_columns": dataset_columns,
         "job_state": job_state.get(case_id, {"status": "completed" if summary_data else "ready", "progress": 0, "logs": []})
     }
+
+@app.patch("/api/cases/{case_id}/settings")
+def update_case_settings(case_id: str, settings: Dict[str, Any]):
+    """Update configurable settings on an existing case (e.g. use_gpu, models, n_splits)."""
+    allowed_keys = {
+        "use_gpu", "models", "model_params", "n_splits", "seed",
+        "cv_strategy", "eval_metric", "task_type", "target_col",
+        "id_col", "text_column", "target_column"
+    }
+    case_dir = get_case_dir(case_id)
+    case_json = os.path.join(case_dir, "case.json")
+    if not os.path.exists(case_json):
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    with open(case_json, "r", encoding="utf-8") as f:
+        meta = json.load(f)
+
+    updated = {}
+    for k, v in settings.items():
+        if k in allowed_keys:
+            meta[k] = v
+            updated[k] = v
+
+    with open(case_json, "w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=4)
+
+    return {"status": "updated", "case_id": case_id, "updated_fields": updated}
+
+@app.get("/api/system/gpu-status")
+def get_system_gpu_status():
+    """Return real-time CUDA availability, device name, and VRAM statistics."""
+    from tabular_pipeline.indobert_engine import IndoBERTEngine
+    return IndoBERTEngine.get_gpu_status()
 
 @app.get("/api/cases/{case_id}/eda")
 def get_case_eda(case_id: str):
@@ -2609,7 +2643,8 @@ def run_pipeline_thread(case_id: str, meta: dict, case_dir: str):
             ensemble_methods=["mean", "rank", "opt_weights", "hill_climbing", "stacking"] if len(meta.get("models", [])) > 1 else [],
             run_adversarial_validation=True,
             save_oof_predictions=True,
-            save_test_predictions=True
+            save_test_predictions=True,
+            use_gpu=meta.get("use_gpu", False)
         )
 
         total_models = len(cfg.models)
@@ -2842,6 +2877,7 @@ def run_tune_thread(case_id: str, model_name: str, n_trials: int, meta: dict, ca
             cv_strategy=cv_strategy,
             group_col=group_col,
             seed=meta.get("seed", 2026),
+            use_gpu=meta.get("use_gpu", False),
             progress_callback=None
         )
 

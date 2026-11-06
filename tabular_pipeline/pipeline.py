@@ -73,12 +73,12 @@ class TabularPipeline:
         if self.config.task_type == "binary":
             if y_raw.dtype == bool:
                 y_train = y_raw.astype(int)
-            elif not np.issubdtype(y_raw.dtype, np.number):
+            elif not pd.api.types.is_numeric_dtype(pd.Series(y_raw)):
                 y_train = pd.Series(y_raw).astype("category").cat.codes.values
             else:
                 y_train = y_raw.astype(int)
         elif self.config.task_type == "multiclass":
-            if not np.issubdtype(y_raw.dtype, np.number):
+            if not pd.api.types.is_numeric_dtype(pd.Series(y_raw)):
                 y_train = pd.Series(y_raw).astype("category").cat.codes.values
             else:
                 y_train = y_raw.astype(int)
@@ -171,6 +171,7 @@ class TabularPipeline:
             n_splits=self.config.n_splits,
             categorical_encoder=self.config.categorical_encoder,
             seed=self.config.seed,
+            use_gpu=getattr(self.config, "use_gpu", False),
             progress_callback=self.progress_callback,
             is_aborted=self.is_aborted,
         )

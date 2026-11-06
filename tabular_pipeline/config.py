@@ -53,6 +53,7 @@ class PipelineConfig:
     # Options: "lgbm", "xgb", "catboost", "rf", "ridge", "logreg"
     models: List[str] = field(default_factory=lambda: ["lgbm", "xgb", "catboost"])
     model_params: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    use_gpu: bool = False
 
     # --- Ensembling ---
     ensemble_methods: List[str] = field(default_factory=lambda: ["mean", "rank", "optimal_weights", "stacking", "hill_climbing"])

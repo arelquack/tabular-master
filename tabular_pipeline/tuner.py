@@ -32,6 +32,7 @@ class HyperparameterTuner:
         cv_strategy: str = "stratified_kfold",
         group_col: Optional[str] = None,
         seed: int = 42,
+        use_gpu: bool = False,
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None
     ):
         self.task_type = task_type
@@ -39,6 +40,7 @@ class HyperparameterTuner:
         self.cv_strategy = (cv_strategy or "stratified_kfold").lower()
         self.group_col = group_col
         self.seed = seed
+        self.use_gpu = use_gpu
         self.progress_callback = progress_callback
         self.higher_is_better = MetricEvaluator.is_higher_better(eval_metric)
 
@@ -176,7 +178,8 @@ class HyperparameterTuner:
                     m_name,
                     task_type=self.task_type,
                     eval_metric=self.eval_metric,
-                    params=params
+                    params=params,
+                    use_gpu=self.use_gpu
                 )
                 model.fit(
                     X_tr, y_tr,

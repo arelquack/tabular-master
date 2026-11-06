@@ -12,6 +12,11 @@
     "cv_strategy": "stratified_kfold",
     "n_splits": 5,
     "seed": 2026,
-    "models": ["lgbm", "xgb", "catboost"],
-    "output_dir": "experiments/spaceship_run"
+    "models": [
+        "lgbm",
+        "xgb",
+        "catboost"
+    ],
+    "output_dir": "experiments/spaceship_run",
+    "use_gpu": false
 }
