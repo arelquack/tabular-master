@@ -1,0 +1,74 @@
+{
+  "case_id": "aksi_28_okt",
+  "total_comments": 3793,
+  "distribution_counts": {
+    "Negatif": 2705,
+    "Positif": 797,
+    "Netral": 291
+  },
+  "distribution_percentages": {
+    "Negatif": 71.32,
+    "Positif": 21.01,
+    "Netral": 7.67
+  },
+  "top_keywords": {
+    "Positif": [
+      "dan",
+      "di",
+      "indonesia",
+      "ini",
+      "mahasiswa",
+      "rakyat",
+      "yang",
+      "yg"
+    ],
+    "Negatif": [
+      "ada",
+      "dan",
+      "demo",
+      "di",
+      "ini",
+      "rakyat",
+      "yang",
+      "yg"
+    ],
+    "Netral": [
+      "dan",
+      "demo",
+      "di",
+      "ini",
+      "itu",
+      "rakyat",
+      "yang",
+      "yg"
+    ]
+  },
+  "sample_positive": [
+    {
+      "clean_text": "Terima kasih banyaaak untuk semua elemen mahasiswa dan masyarakat yang sudah berjuang dan berani untuk bersuara. Terima kasih juga untuk tim watchdoc yang selalu update dan menyorot aksi ini biar seluruh dunia tau bejatnya pemerintah negeri ini. Sehat selalu all, panjang umur perjuangan",
+      "confidence": 1.0
+    },
+    {
+      "clean_text": "Jidup Mahasiswa lanjutkan perjuangan mu demi bangsa & negara serta generasi penerus utk anak cucu kt karena kt berhak utk keadilan kt blm merdeka tp tambah menderita",
+      "confidence": 0.9998
+    },
+    {
+      "clean_text": "Mantap bgt Mas Budiman mau turun & jawab langsung. Tetap semangat kawal visi pro-rakyat Pak Prabowo ya mas! \ud83e\udd1d\ud83d\udd25",
+      "confidence": 0.9997
+    }
+  ],
+  "sample_negative": [
+    {
+      "clean_text": "SE 7 \" R E V O L U S I \" T O T A L \" SEGERA DI \" T U M B A N G K A N / G U L I N G K A N \" P R E S I D E N \" GILA TIDAK W A R A S \" C A C A T \" PRODUK \" P E N G H I A N A T \" M U N A F I K \" P E R A M P O K \" GARONG \" M A L I N G \" UANG \" R A K Y A T \" MENGHALALKAN SEGALA C A R A \" P K I \" GAYA BARU \" P E N J A H A T \" H A M \". B E R A T LICIK AMORAL \" MENARI NARI DIATAS \" P E N D E R I T A A N \" R A K Y A T \" YANG M I S K I N SEKARATTT \ud83d\ude2d\ud83d\ude2d REZIM ' SESAT ' SETAN ' I B L I S \" P R E S I D E N \" BAJINGAN BUSUK SAMPAH BERACUN BANGKAI MAYAT HIDUP \" HARAM JADAH LAKNATULLAH \ud83d\udc79\ud83d\udc79\ud83d\udc79",
+      "confidence": 1.0
+    },
+    {
+      "clean_text": "Seluruh elemen masyarakat bersatu kompak Lawan kedzaliman kebejatan kebusukan pemimpin pemerintahan Negri ini... HANCUR kan semua institusi kepolisian d seluruh wilayah Negri ini karna sdh tak Berguna Bagi Rakyat kecil... Polri hanya melindungi buajingan mafia2 penipu2 Maling \" Uang Rakyat... Polri \ud83d\udc15\ud83d\udc15 peliharaan pejabat2 Maling penghianat2 Negara -Rakyat",
+      "confidence": 0.9998
+    },
+    {
+      "clean_text": "DI MULAI ERANYA JOKOWI DAN KRONI2NYA NEGARA \ud83c\uddee\ud83c\udde9,.. JADI BOBROK RUSAK,.... SECEPATNYA HARUS DI TANGKAP DAN ADILI JOKOWI, PENIPU IJASAH PALSU, MOBIL SMK, IKN, WHOSS, DLL,TURUNKAN si PLONGA PLONGO GIBRAN serta HENTIKAN PROYEK KORUPSI ERA JOKOWI YAITU MBG, BGN ,KOPDES DLL, JOKOWI DAN KRONI2NYA DIGAJI DAN DIBIAYAI RAKYAT TAPI FAKTANYA MENIPU RAKYAT & NEGARA, HERANNYA PRABOWO YG TERPILIH SEBAGAI PRESIDEN TERNYATA MENERUSKAN PROYEK KORUPSI ITU DAN MENGINGKARI RAKYAT,..MENIPU DENGAN JANJI2NYA....SEWAJIBNYA HARUS DI HUKUM SEBERAT BERATNYA PARA MALING2 UANG RAKYAT KORUPTOR APBN,.. PENCURI APBN ,..PARA PENIPU2,... BAJINGAN ITU PERUSAK BANGSA DAN NEGARA \ud83c\uddee\ud83c\udde9 INI ,..HARUS DI HUKUM SEBERAT BERATNYA ATAU HUKUMAN MATI,. HAI PARA MALING2 KORUPTOR...INGAT SEKAYA APAPUN ..SEBANYAK APAPUN HARTAMU...DIRIMU PASTI JADI BANGKAI BAU PENUH BELATUNG,.. \ud83d\ude01\ud83c\udf89\ud83c\uddee\ud83c\udde9......",
+      "confidence": 0.9997
+    }
+  ]
+}
