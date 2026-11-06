@@ -568,8 +568,10 @@ class NLPBaselineTrainer:
         train_df: pd.DataFrame,
         test_df: Optional[pd.DataFrame] = None,
         text_col: str = "text",
+        text_col_2: Optional[str] = None,
         label_col: str = "label",
         id_col: str = "id",
+        task_type: str = "classification",
         max_features: int = 15000,
         ngram_min: int = 1,
         ngram_max: int = 2,
@@ -578,17 +580,23 @@ class NLPBaselineTrainer:
         random_state: int = 42
     ) -> Dict[str, Any]:
         from sklearn.feature_extraction.text import TfidfVectorizer
-        from sklearn.linear_model import LogisticRegression
-        from sklearn.model_selection import StratifiedKFold
-        from sklearn.metrics import accuracy_score, f1_score
+        from sklearn.linear_model import LogisticRegression, Ridge
+        from sklearn.model_selection import StratifiedKFold, KFold
+        from sklearn.metrics import accuracy_score, f1_score, mean_squared_error, mean_absolute_error, r2_score
 
         if text_col not in train_df.columns:
             raise ValueError(f"Text column '{text_col}' not found in training dataset.")
         if label_col not in train_df.columns:
             raise ValueError(f"Label column '{label_col}' not found in training dataset.")
 
-        clean_train = train_df.dropna(subset=[text_col, label_col]).copy()
-        clean_train[text_col] = clean_train[text_col].astype(str)
+        subset_cols = [text_col, text_col_2, label_col] if text_col_2 and text_col_2 in train_df.columns else [text_col, label_col]
+        clean_train = train_df.dropna(subset=subset_cols).copy()
+        if text_col_2 and text_col_2 in clean_train.columns:
+            clean_train["_combined_text"] = clean_train[text_col].astype(str) + " " + clean_train[text_col_2].astype(str)
+            active_text_col = "_combined_text"
+        else:
+            clean_train[text_col] = clean_train[text_col].astype(str)
+            active_text_col = text_col
 
         # Store original index to ensure exact row alignment with other models
         clean_train["_orig_idx"] = clean_train.index.values
@@ -611,7 +619,7 @@ class NLPBaselineTrainer:
             sublinear_tf=True,
             strip_accents="unicode"
         )
-        X_all = vec.fit_transform(clean_train[text_col])
+        X_all = vec.fit_transform(clean_train[active_text_col])
         feature_names = np.array(vec.get_feature_names_out())
 
         # Fit full model for test predictions & top words

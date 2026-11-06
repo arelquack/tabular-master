@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 # ============================================================
-#   TABULAR STUDIO - Competitive Machine Learning Platform
+#   TABULAR & NLP STUDIO - Competitive Machine Learning Platform
 # ============================================================
 
-# Pindah ke direktori skrip ini berada
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 echo "============================================================"
-echo "  TABULAR STUDIO - Competitive Machine Learning Platform"
+echo "  TABULAR & NLP STUDIO - Competitive Machine Learning Platform"
 echo "============================================================"
 echo ""
 echo "Starting FastAPI Engine on http://localhost:8000 ..."
@@ -36,14 +35,18 @@ elif command -v firefox &> /dev/null; then
     firefox "http://localhost:8000" &
 fi
 
-# Cari Python environment yang tersedia
+# Cari Python environment dengan urutan prioritas
 VENV_PY=""
-if [ -f "$SCRIPT_DIR/spaceship-titanic/.venv/bin/python" ]; then
-    VENV_PY="$SCRIPT_DIR/spaceship-titanic/.venv/bin/python"
-elif [ -f "$SCRIPT_DIR/.venv/bin/python" ]; then
+if [ -f "$SCRIPT_DIR/.venv/bin/python" ]; then
     VENV_PY="$SCRIPT_DIR/.venv/bin/python"
+elif [ -f "$SCRIPT_DIR/spaceship-titanic/.venv/bin/python" ]; then
+    VENV_PY="$SCRIPT_DIR/spaceship-titanic/.venv/bin/python"
+elif [ -f "$SCRIPT_DIR/venv/bin/python" ]; then
+    VENV_PY="$SCRIPT_DIR/venv/bin/python"
 elif command -v python3 &> /dev/null; then
     VENV_PY="$(command -v python3)"
+elif command -v python &> /dev/null; then
+    VENV_PY="$(command -v python)"
 else
     echo "Error: Python environment tidak ditemukan."
     exit 1

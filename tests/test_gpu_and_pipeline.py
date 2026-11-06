@@ -1,10 +1,13 @@
 import unittest
 import os
 import sys
+import pandas as pd
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from tabular_pipeline import PipelineConfig, ModelFactory, IndoBERTEngine
+from tabular_pipeline.text_engine import UniversalTextCleaner, TextFeatureExtractor, NLPBaselineTrainer
+from train_transformer_universal import resolve_model_path
 
 
 class TabularGpuAndPipelineTest(unittest.TestCase):
@@ -30,7 +33,6 @@ class TabularGpuAndPipelineTest(unittest.TestCase):
 
         m_gpu = ModelFactory.create("xgb", use_gpu=True)
         params = m_gpu._get_default_params()
-        # Either device='cuda' (xgb >= 2.0) or tree_method='gpu_hist'
         self.assertTrue(params.get("device") == "cuda" or params.get("tree_method") == "gpu_hist")
 
     def test_model_factory_catboost_gpu_params(self):
@@ -46,6 +48,37 @@ class TabularGpuAndPipelineTest(unittest.TestCase):
         self.assertIn("cuda_available", status)
         self.assertIn("device_name", status)
         self.assertIn("details", status)
+
+    def test_text_cleaner_and_stylometrics(self):
+        cleaner = UniversalTextCleaner()
+        raw = "Halo SEMUANYA!! Cek di https://gemastik.id #semangat @panitia :)"
+        cleaned = cleaner.clean(raw)
+        self.assertNotIn("https://", cleaned)
+
+        df = pd.DataFrame({"text": [cleaned, "Teks kedua sangat informatif."]})
+        features = TextFeatureExtractor.extract_stylometrics(df, "text")
+        self.assertIn("txt_word_count", features.columns)
+        self.assertIn("txt_char_count", features.columns)
+
+    def test_nlp_baseline_trainer(self):
+        df = pd.DataFrame({
+            "id": range(1, 21),
+            "text": ["layanan sangat bagus sekali dan memuaskan"] * 10 + ["kecewa sekali sistem eror dan lambat"] * 10,
+            "sentiment": ["Positif"] * 10 + ["Negatif"] * 10
+        })
+        res = NLPBaselineTrainer.train_baseline(
+            train_df=df,
+            text_col="text",
+            label_col="sentiment",
+            n_splits=2,
+            max_features=100
+        )
+        self.assertIn("overall_accuracy", res)
+        self.assertGreater(res["overall_accuracy"], 0.7)
+
+    def test_resolve_model_path(self):
+        resolved = resolve_model_path("indobenchmark/indobert-base-p1")
+        self.assertTrue(isinstance(resolved, str))
 
 
 if __name__ == "__main__":
