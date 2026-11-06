@@ -72,31 +72,53 @@ Because `TabularPipeline` relies on deterministic random seeding and identical f
 ## Directory Structure
 
 ```
-tabular-master/
-├── cases/                          # Case definitions and custom domain hooks
-│   ├── airline_s6e10/
-│   │   ├── case.json               # Case configuration metadata
-│   │   └── feature_hook.py         # Domain feature engineering hook
-│   ├── home_credit/
-│   └── spaceship_titanic/
+gemastik-final/
+├── cases/                          # Competition case definitions and dataset configs
+│   ├── airline_s6e10/              # Playground s6e10 Airline Satisfaction
+│   ├── aksi_28_okt/                # Opinion Mining & Public Sentiment (Aksi 28 Okt)
+│   ├── campus_complaints_routing/  # Multiclass NLP Bureau Routing
+│   ├── credit_card_fraud/          # Extreme Imbalance Tabular Fraud Detection
+│   ├── f1_podium/                  # Relational Star-Schema F1 Prediction
+│   ├── home_credit/                # Home Credit Default Risk
+│   ├── nfl_big_data_bowl_2026/     # GroupKFold Spatial-Temporal NFL Regression
+│   ├── nlp_kompas/                 # Multiclass News Classification
+│   ├── sentimen_karhutla/          # Environmental Sentiment Classification
+│   └── spaceship_titanic/          # Classic Tabular Benchmark
+├── docs/                           # Official guides, competition rules & assets
+│   ├── Panduan-GEMASTIK-2026.pdf   # GEMASTIK competition guideline
+│   └── assets/                     # EDA visual assets & sample charts
+├── experiments/                    # Model outputs, checkpoints, OOF caches & submissions
 ├── frontend/                       # React 19 + TypeScript + Tailwind CSS UI
 │   ├── dist/                       # Pre-built static distribution bundle
-│   ├── src/                        # React source components
-│   ├── package.json
+│   ├── src/                        # React UI components
 │   └── vite.config.ts
-├── tabular_pipeline/               # Core Python Data Mining & ML Engine
+├── scripts/                        # Standalone utility and automation scripts
+│   ├── download_models.py          # Offline HuggingFace model cache downloader
+│   ├── auto_label_aksi.py          # Zero-shot pseudo-labeler & validator
+│   └── runners/                    # Standalone CLI runners for cases
+│       ├── run_case1_spaceship.py
+│       ├── run_case2_airline.py
+│       ├── run_case3_homecredit.py
+│       ├── run_s6e10.py
+│       └── run_roberta_sentiment.py
+├── tabular_pipeline/               # Core Python Data Mining & ML Framework
 │   ├── models/                     # GBDT & linear model wrappers (LGBM, XGB, CatBoost)
 │   ├── config.py                   # Strict pipeline dataclass configuration
 │   ├── data_detector.py            # Automated column schema & cardinality detector
-│   ├── diagnostics.py             # Adversarial validation drift tester
+│   ├── diagnostics.py              # Adversarial validation drift tester
 │   ├── ensemble.py                 # Caruana, SLSQP, Stacking, and Rank optimizers
 │   ├── feature_engine.py           # Universal Auto-FE and BaseFeatureHook
 │   ├── metrics.py                  # Task-aligned metric calculation & threshold tuning
 │   ├── pipeline.py                 # TabularPipeline orchestrator
 │   ├── trainer.py                  # Leak-free cross-validator
 │   └── tuner.py                    # Optuna hyperparameter optimization engine
+├── templates/                      # Standardized project starters
+│   ├── tabular/                    # Starter template for tabular challenges
+│   └── nlp/                        # 5 modular starter templates for NLP tasks
 ├── launch_studio.bat               # Windows one-click desktop launcher
-├── server.py                       # FastAPI backend server
+├── run.bat                         # Quick CLI execution launcher
+├── server.py                       # FastAPI unified backend server
+├── train_transformer_universal.py  # Universal PyTorch / Transformers training CLI
 ├── requirements.txt                # Production Python dependencies
 └── README.md
 ```

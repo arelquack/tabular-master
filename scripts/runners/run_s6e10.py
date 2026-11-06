@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 
 # Pastikan path folder root proyek terdeteksi meskipun dijalankan dari subfolder
-ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 os.chdir(ROOT_DIR)

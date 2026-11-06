@@ -8,8 +8,12 @@ if not exist "%VENV_PY%" (
 )
 
 if "%~1"=="" (
-    echo Menjalankan run_s6e10.py secara default...
-    "%VENV_PY%" "%SCRIPT_DIR%run_s6e10.py"
+    echo Menjalankan scripts\runners\run_s6e10.py secara default...
+    "%VENV_PY%" "%SCRIPT_DIR%scripts\runners\run_s6e10.py"
 ) else (
-    "%VENV_PY%" "%SCRIPT_DIR%%~1" %2 %3 %4 %5
+    if exist "%SCRIPT_DIR%scripts\runners\%~1" (
+        "%VENV_PY%" "%SCRIPT_DIR%scripts\runners\%~1" %2 %3 %4 %5
+    ) else (
+        "%VENV_PY%" "%SCRIPT_DIR%%~1" %2 %3 %4 %5
+    )
 )
