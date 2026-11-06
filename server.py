@@ -55,6 +55,30 @@ async def add_no_cache_headers(request, call_next):
 CASES_DIR = os.path.join(ROOT_DIR, "cases")
 os.makedirs(CASES_DIR, exist_ok=True)
 
+def get_case_dir(case_id: str) -> str:
+    p1 = os.path.join(CASES_DIR, case_id)
+    if os.path.exists(p1):
+        return p1
+    p2 = os.path.join(CASES_DIR, case_id.replace("_", "-"))
+    if os.path.exists(p2):
+        return p2
+    p3 = os.path.join(CASES_DIR, case_id.replace("-", "_"))
+    if os.path.exists(p3):
+        return p3
+    if os.path.exists(CASES_DIR):
+        for d in os.listdir(CASES_DIR):
+            cdir = os.path.join(CASES_DIR, d)
+            if os.path.isdir(cdir):
+                cj = os.path.join(cdir, "case.json")
+                if os.path.exists(cj):
+                    try:
+                        with open(cj, "r", encoding="utf-8") as f:
+                            if json.load(f).get("id") == case_id:
+                                return cdir
+                    except Exception:
+                        pass
+    return p1
+
 # In-memory execution state, EDA cache, and tuning state
 job_state = {}
 eda_cache = {}
@@ -401,7 +425,7 @@ def list_cases():
 
 @app.get("/api/cases/{case_id}")
 def get_case(case_id: str):
-    case_dir = os.path.join(CASES_DIR, case_id)
+    case_dir = get_case_dir(case_id)
     case_json = os.path.join(case_dir, "case.json")
     if not os.path.exists(case_json):
         raise HTTPException(status_code=404, detail="Case not found")
@@ -487,7 +511,7 @@ def get_case_eda(case_id: str):
     if case_id in eda_cache:
         return eda_cache[case_id]
 
-    case_dir = os.path.join(CASES_DIR, case_id)
+    case_dir = get_case_dir(case_id)
     case_json = os.path.join(case_dir, "case.json")
     if not os.path.exists(case_json):
         raise HTTPException(status_code=404, detail="Case not found")
@@ -835,7 +859,7 @@ def get_case_eda(case_id: str):
 
 @app.get("/api/cases/{case_id}/ablation")
 def get_case_ablation_study(case_id: str):
-    case_dir = os.path.join(CASES_DIR, case_id)
+    case_dir = get_case_dir(case_id)
     case_json = os.path.join(case_dir, "case.json")
     if not os.path.exists(case_json):
         raise HTTPException(status_code=404, detail="Case not found")
@@ -982,7 +1006,7 @@ def create_case(req: CreateCaseRequest):
 
 @app.delete("/api/cases/{case_id}")
 def delete_case(case_id: str):
-    case_dir = os.path.join(CASES_DIR, case_id)
+    case_dir = get_case_dir(case_id)
     if not os.path.exists(case_dir):
         raise HTTPException(status_code=404, detail="Case not found")
     shutil.rmtree(case_dir, ignore_errors=True)
@@ -992,7 +1016,7 @@ def delete_case(case_id: str):
 
 @app.post("/api/cases/{case_id}/paths")
 def update_case_paths(case_id: str, req: UpdateCasePathsRequest):
-    case_dir = os.path.join(CASES_DIR, case_id)
+    case_dir = get_case_dir(case_id)
     case_json = os.path.join(case_dir, "case.json")
     if not os.path.exists(case_json):
         raise HTTPException(status_code=404, detail="Case not found")
@@ -1328,7 +1352,7 @@ def execute_relational_stitch_endpoint(req: ExecuteRelationalStitchRequest):
     if not os.path.exists(base_p):
         raise HTTPException(status_code=404, detail=f"Base table not found: {base_p}")
 
-    case_dir = os.path.join(CASES_DIR, req.case_id)
+    case_dir = get_case_dir(req.case_id)
     os.makedirs(case_dir, exist_ok=True)
 
     try:
@@ -1467,7 +1491,7 @@ def normalize_text_endpoint(req: TextNormalizeRequest):
     if not p or not os.path.exists(p):
         raise HTTPException(status_code=404, detail=f"Source path not found: {req.source_path}")
 
-    case_dir = os.path.join(CASES_DIR, req.case_id)
+    case_dir = get_case_dir(req.case_id)
     os.makedirs(case_dir, exist_ok=True)
     out_train = os.path.join(case_dir, "train.csv")
 
@@ -1620,7 +1644,7 @@ def text_eda_endpoint(req: TextEDARequest):
 
 @app.post("/api/cases/{case_id}/nlp-train")
 def execute_nlp_train(case_id: str, req: NLPTrainRequest):
-    case_dir = os.path.join(CASES_DIR, case_id)
+    case_dir = get_case_dir(case_id)
     if not os.path.exists(case_dir):
         raise HTTPException(status_code=404, detail=f"Case not found: {case_id}")
     train_path = os.path.join(case_dir, "train.csv")
@@ -1711,7 +1735,7 @@ active_transformer_tasks = {}
 
 @app.post("/api/cases/{case_id}/nlp-train-transformer")
 def execute_nlp_transformer_train(case_id: str, req: NLPTransformerTrainRequest):
-    case_dir = os.path.join(CASES_DIR, case_id)
+    case_dir = get_case_dir(case_id)
     if not os.path.exists(case_dir):
         raise HTTPException(status_code=404, detail=f"Case not found: {case_id}")
     
@@ -1747,7 +1771,7 @@ def execute_nlp_transformer_train(case_id: str, req: NLPTransformerTrainRequest)
 
 @app.get("/api/cases/{case_id}/nlp-transformer-status")
 def get_nlp_transformer_status(case_id: str):
-    case_dir = os.path.join(CASES_DIR, case_id)
+    case_dir = get_case_dir(case_id)
     if not os.path.exists(case_dir):
         raise HTTPException(status_code=404, detail=f"Case not found: {case_id}")
 
@@ -1798,9 +1822,76 @@ def stop_nlp_transformer_train(case_id: str):
         return {"status": "terminated"}
     return {"status": "not_running"}
 
+active_zeroshot_tasks = {}
+
+@app.post("/api/cases/{case_id}/nlp-zero-shot-roberta")
+def execute_nlp_zero_shot_roberta(case_id: str):
+    case_dir = get_case_dir(case_id)
+    if not os.path.exists(case_dir):
+        raise HTTPException(status_code=404, detail=f"Case not found: {case_id}")
+    
+    proc = active_zeroshot_tasks.get(case_id)
+    if proc and proc.poll() is None:
+        return {"status": "already_running", "case_id": case_id}
+
+    log_path = os.path.join(case_dir, "zeroshot_roberta.log")
+    cmd = [
+        sys.executable,
+        "run_roberta_sentiment.py"
+    ]
+    log_file = open(log_path, "w", encoding="utf-8")
+    proc = subprocess.Popen(cmd, stdout=log_file, stderr=subprocess.STDOUT)
+    active_zeroshot_tasks[case_id] = proc
+    return {"status": "started", "case_id": case_id, "pid": proc.pid}
+
+@app.get("/api/cases/{case_id}/nlp-zero-shot-roberta-status")
+def get_nlp_zero_shot_roberta_status(case_id: str):
+    case_dir = get_case_dir(case_id)
+    if not os.path.exists(case_dir):
+        raise HTTPException(status_code=404, detail=f"Case not found: {case_id}")
+
+    log_path = os.path.join(case_dir, "zeroshot_roberta.log")
+    recent_logs = []
+    if os.path.exists(log_path):
+        try:
+            with open(log_path, "r", encoding="utf-8", errors="ignore") as lf:
+                lines = lf.readlines()
+                recent_logs = [l.strip() for l in lines[-40:]]
+        except Exception:
+            pass
+
+    proc = active_zeroshot_tasks.get(case_id)
+    is_running = proc is not None and proc.poll() is None
+    exit_code = proc.poll() if proc is not None else None
+
+    insights_path = os.path.join(case_dir, "sentiment_insights.json")
+    insights_data = None
+    if os.path.exists(insights_path):
+        try:
+            with open(insights_path, "r", encoding="utf-8") as inf_f:
+                insights_data = json.load(inf_f)
+        except Exception:
+            pass
+
+    state = "idle"
+    if is_running:
+        state = "running"
+    elif exit_code == 0 or (insights_data and not is_running):
+        state = "completed"
+    elif exit_code is not None and exit_code != 0:
+        state = "error"
+
+    return {
+        "state": state,
+        "is_running": is_running,
+        "exit_code": exit_code,
+        "recent_logs": recent_logs,
+        "insights": insights_data
+    }
+
 @app.post("/api/cases/{case_id}/nlp-ensemble")
 def execute_nlp_ensemble(case_id: str, req: NLPEnsembleRequest):
-    case_dir = os.path.join(CASES_DIR, case_id)
+    case_dir = get_case_dir(case_id)
     if not os.path.exists(case_dir):
         raise HTTPException(status_code=404, detail="Case not found")
 
@@ -2066,7 +2157,7 @@ def execute_nlp_ensemble(case_id: str, req: NLPEnsembleRequest):
 
 @app.get("/api/cases/{case_id}/nlp-ensemble-status")
 def get_nlp_ensemble_status(case_id: str):
-    case_dir = os.path.join(CASES_DIR, case_id)
+    case_dir = get_case_dir(case_id)
     if not os.path.exists(case_dir):
         raise HTTPException(status_code=404, detail="Case not found")
 
@@ -2091,7 +2182,7 @@ def get_nlp_ensemble_status(case_id: str):
 
 @app.get("/api/cases/{case_id}/download-ensemble-submission")
 def download_ensemble_submission(case_id: str):
-    case_dir = os.path.join(CASES_DIR, case_id)
+    case_dir = get_case_dir(case_id)
     sub_file = os.path.join(case_dir, "submission_ensemble.csv")
     if not os.path.exists(sub_file):
         raise HTTPException(status_code=404, detail="Ensemble submission file not found")
@@ -2099,7 +2190,7 @@ def download_ensemble_submission(case_id: str):
 
 @app.post("/api/cases/{case_id}/nlp-clean")
 def execute_nlp_clean(case_id: str, req: NLPCleanRequest):
-    case_dir = os.path.join(CASES_DIR, case_id)
+    case_dir = get_case_dir(case_id)
     if not os.path.exists(case_dir):
         raise HTTPException(status_code=404, detail=f"Case not found: {case_id}")
     train_path = os.path.join(case_dir, "train.csv")
@@ -2189,7 +2280,7 @@ def execute_merge_datasets(req: MergeDatasetsRequest):
     if not join_p or not os.path.exists(join_p):
         raise HTTPException(status_code=404, detail=f"Join dataset not found: {req.join_path}")
 
-    case_dir = os.path.join(CASES_DIR, req.case_id)
+    case_dir = get_case_dir(req.case_id)
     if not os.path.exists(case_dir):
         raise HTTPException(status_code=404, detail=f"Case not found: {req.case_id}")
 
@@ -2234,7 +2325,7 @@ def execute_merge_datasets(req: MergeDatasetsRequest):
 
 @app.post("/api/tools/concat-partitions")
 def execute_concat_partitions(req: ConcatPartitionsRequest):
-    case_dir = os.path.join(CASES_DIR, req.case_id)
+    case_dir = get_case_dir(req.case_id)
     if not os.path.exists(case_dir):
         raise HTTPException(status_code=404, detail=f"Case not found: {req.case_id}")
 
@@ -2284,7 +2375,7 @@ def execute_concat_partitions(req: ConcatPartitionsRequest):
 
 @app.post("/api/tools/smart-stitch-partitions")
 def execute_smart_stitch(req: SmartStitchRequest):
-    case_dir = os.path.join(CASES_DIR, req.case_id)
+    case_dir = get_case_dir(req.case_id)
     if not os.path.exists(case_dir):
         raise HTTPException(status_code=404, detail=f"Case not found: {req.case_id}")
 
@@ -2592,7 +2683,7 @@ def stop_case_pipeline(case_id: str):
 
 @app.post("/api/cases/{case_id}/run")
 def run_case_pipeline(case_id: str, req: Optional[RunPipelineRequest] = None):
-    case_dir = os.path.join(CASES_DIR, case_id)
+    case_dir = get_case_dir(case_id)
     case_json = os.path.join(case_dir, "case.json")
     if not os.path.exists(case_json):
         raise HTTPException(status_code=404, detail="Case not found")
@@ -2614,7 +2705,7 @@ def run_case_pipeline(case_id: str, req: Optional[RunPipelineRequest] = None):
 
 @app.post("/api/cases/{case_id}/hook")
 def save_case_hook(case_id: str, req: SaveHookRequest):
-    case_dir = os.path.join(CASES_DIR, case_id)
+    case_dir = get_case_dir(case_id)
     if not os.path.exists(case_dir):
         raise HTTPException(status_code=404, detail="Case not found")
     hook_file = os.path.join(case_dir, "feature_hook.py")
@@ -2624,7 +2715,7 @@ def save_case_hook(case_id: str, req: SaveHookRequest):
 
 @app.post("/api/cases/{case_id}/hook/test")
 def test_case_hook(case_id: str):
-    case_dir = os.path.join(CASES_DIR, case_id)
+    case_dir = get_case_dir(case_id)
     case_json = os.path.join(case_dir, "case.json")
     if not os.path.exists(case_json):
         raise HTTPException(status_code=404, detail="Case not found")
@@ -2830,7 +2921,7 @@ def run_tune_thread(case_id: str, model_name: str, n_trials: int, meta: dict, ca
 
 @app.post("/api/cases/{case_id}/tune")
 def start_tuning(case_id: str, req: TuneRequest):
-    case_dir = os.path.join(CASES_DIR, case_id)
+    case_dir = get_case_dir(case_id)
     case_json = os.path.join(case_dir, "case.json")
     if not os.path.exists(case_json):
         raise HTTPException(status_code=404, detail="Case not found")
@@ -2865,7 +2956,7 @@ def apply_tuned_params(case_id: str):
     if not t_info or (not t_info.get("best_params") and not t_info.get("all_best_params")):
         raise HTTPException(status_code=400, detail="No tuned parameters available to apply.")
 
-    case_dir = os.path.join(CASES_DIR, case_id)
+    case_dir = get_case_dir(case_id)
     case_json = os.path.join(case_dir, "case.json")
     with open(case_json, "r") as f:
         meta = json.load(f)
@@ -2887,7 +2978,7 @@ def apply_tuned_params(case_id: str):
 
 @app.get("/api/cases/{case_id}/params")
 def get_case_params(case_id: str):
-    case_dir = os.path.join(CASES_DIR, case_id)
+    case_dir = get_case_dir(case_id)
     case_json = os.path.join(case_dir, "case.json")
     if not os.path.exists(case_json):
         raise HTTPException(status_code=404, detail="Case not found")
@@ -2903,7 +2994,7 @@ def get_case_params(case_id: str):
 
 @app.post("/api/cases/{case_id}/params")
 def update_case_params(case_id: str, req: UpdateParamsRequest):
-    case_dir = os.path.join(CASES_DIR, case_id)
+    case_dir = get_case_dir(case_id)
     case_json = os.path.join(case_dir, "case.json")
     if not os.path.exists(case_json):
         raise HTTPException(status_code=404, detail="Case not found")
@@ -2929,7 +3020,7 @@ def update_case_params(case_id: str, req: UpdateParamsRequest):
 
 @app.post("/api/cases/{case_id}/ensemble/hill-climb")
 def run_hill_climb(case_id: str):
-    case_dir = os.path.join(CASES_DIR, case_id)
+    case_dir = get_case_dir(case_id)
     case_json = os.path.join(case_dir, "case.json")
     with open(case_json, "r") as f:
         meta = json.load(f)
@@ -2973,7 +3064,7 @@ def run_hill_climb(case_id: str):
 
 @app.post("/api/cases/{case_id}/ensemble/blend")
 def run_custom_blend(case_id: str, req: BlendRequest):
-    case_dir = os.path.join(CASES_DIR, case_id)
+    case_dir = get_case_dir(case_id)
     case_json = os.path.join(case_dir, "case.json")
     with open(case_json, "r") as f:
         meta = json.load(f)
@@ -3021,7 +3112,7 @@ def run_custom_blend(case_id: str, req: BlendRequest):
 
 @app.get("/api/cases/{case_id}/download/submission")
 def download_submission(case_id: str, custom: bool = False):
-    case_dir = os.path.join(CASES_DIR, case_id)
+    case_dir = get_case_dir(case_id)
     case_json = os.path.join(case_dir, "case.json")
     with open(case_json, "r") as f:
         meta = json.load(f)
@@ -3037,7 +3128,7 @@ def download_submission(case_id: str, custom: bool = False):
 
 @app.get("/api/cases/{case_id}/download/oof")
 def download_oof(case_id: str):
-    case_dir = os.path.join(CASES_DIR, case_id)
+    case_dir = get_case_dir(case_id)
     case_json = os.path.join(case_dir, "case.json")
     with open(case_json, "r") as f:
         meta = json.load(f)
@@ -3052,7 +3143,7 @@ def download_oof(case_id: str):
 
 @app.get("/api/cases/{case_id}/history")
 def get_case_history_api(case_id: str):
-    case_dir = os.path.join(CASES_DIR, case_id)
+    case_dir = get_case_dir(case_id)
     case_json = os.path.join(case_dir, "case.json")
     if not os.path.exists(case_json):
         raise HTTPException(status_code=404, detail="Case not found")
@@ -3121,7 +3212,7 @@ def get_case_history_api(case_id: str):
 
 @app.post("/api/cases/{case_id}/history/{run_id}/lb")
 def update_case_history_lb(case_id: str, run_id: str, req: UpdateRunLBRequest):
-    case_dir = os.path.join(CASES_DIR, case_id)
+    case_dir = get_case_dir(case_id)
     history_file = os.path.join(case_dir, "history.json")
     if not os.path.exists(history_file):
         raise HTTPException(status_code=404, detail="No history found for case")
@@ -3149,7 +3240,7 @@ def update_case_history_lb(case_id: str, run_id: str, req: UpdateRunLBRequest):
 
 @app.get("/api/cases/{case_id}/download/submission/run/{run_id}")
 def download_submission_run(case_id: str, run_id: str):
-    case_dir = os.path.join(CASES_DIR, case_id)
+    case_dir = get_case_dir(case_id)
     case_json = os.path.join(case_dir, "case.json")
     if not os.path.exists(case_json):
         raise HTTPException(status_code=404, detail="Case not found")
@@ -3170,7 +3261,7 @@ def download_submission_run(case_id: str, run_id: str):
 
 @app.get("/api/cases/{case_id}/export-script")
 def export_standalone_script(case_id: str):
-    case_dir = os.path.join(CASES_DIR, case_id)
+    case_dir = get_case_dir(case_id)
     case_json = os.path.join(case_dir, "case.json")
     with open(case_json, "r") as f:
         meta = json.load(f)
@@ -3754,7 +3845,7 @@ if __name__ == "__main__":
 
 @app.get("/api/cases/{case_id}/export-notebook")
 def export_standalone_notebook(case_id: str):
-    case_dir = os.path.join(CASES_DIR, case_id)
+    case_dir = get_case_dir(case_id)
     case_json = os.path.join(case_dir, "case.json")
     with open(case_json, "r") as f:
         meta = json.load(f)
@@ -4349,7 +4440,7 @@ def export_standalone_notebook(case_id: str):
 
 @app.get("/api/cases/{case_id}/export-inference-notebook")
 def export_inference_gateway_notebook(case_id: str):
-    case_dir = os.path.join(CASES_DIR, case_id)
+    case_dir = get_case_dir(case_id)
     case_json = os.path.join(case_dir, "case.json")
     with open(case_json, "r") as f:
         meta = json.load(f)

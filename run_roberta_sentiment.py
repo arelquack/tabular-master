@@ -15,7 +15,9 @@ def log(msg: str):
 
 def main():
     log("================ STARTING RO-BERTA SENTIMENT ANALYSIS ================")
-    case_dir = os.path.join("cases", "aksi-28-okt")
+    case_dir = os.path.join("cases", "aksi_28_okt")
+    if not os.path.exists(case_dir):
+        case_dir = os.path.join("cases", "aksi-28-okt")
     input_csv = os.path.join(case_dir, "train.csv")
     
     if not os.path.exists(input_csv):

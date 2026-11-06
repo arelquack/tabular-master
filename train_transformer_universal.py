@@ -95,7 +95,12 @@ def resolve_model_path(model_identifier: str) -> str:
 
     case_dir = os.path.join("cases", case_id)
     if not os.path.exists(case_dir):
-        raise FileNotFoundError(f"Case directory '{case_dir}' not found.")
+        alt_id = case_id.replace("_", "-") if "_" in case_id else case_id.replace("-", "_")
+        alt_dir = os.path.join("cases", alt_id)
+        if os.path.exists(alt_dir):
+            case_dir = alt_dir
+        else:
+            raise FileNotFoundError(f"Case directory '{case_dir}' not found.")
 
     case_json_path = os.path.join(case_dir, "case.json")
     meta = {}
