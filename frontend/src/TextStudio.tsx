@@ -28,6 +28,76 @@ interface TextStudioProps {
   onRefreshCase: () => void;
 }
 
+const computeDynamicStats = (edaData: any, baselineResult: any, caseDetail: any) => {
+  const totalDocs = edaData?.total_documents || 1000;
+  const vocabSize = edaData?.vocabulary_size || 5000;
+  const p95Words = edaData?.word_length_stats?.p95 || 32;
+  const medianWords = edaData?.word_length_stats?.median || 7;
+  
+  const optimalMaxLen = Math.min(512, Math.max(64, Math.round(p95Words * 1.35)));
+  const speedupRatio = Math.round((512 * 512) / (optimalMaxLen * optimalMaxLen));
+
+  const classDist = edaData?.class_distribution || {};
+  const classEntries = Object.entries(classDist) as [string, number][];
+  const numClasses = classEntries.length || 3;
+  
+  let majorityClass = 'mayoritas';
+  let majorityCount = 1;
+  let minorityClass = 'minoritas';
+  let minorityCount = 1;
+
+  if (classEntries.length > 0) {
+    const sorted = [...classEntries].sort((a, b) => b[1] - a[1]);
+    majorityClass = sorted[0][0];
+    majorityCount = sorted[0][1];
+    minorityClass = sorted[sorted.length - 1][0];
+    minorityCount = sorted[sorted.length - 1][1] || 1;
+  }
+
+  const imbalanceRatio = Number((majorityCount / (minorityCount || 1)).toFixed(1));
+  const minorityWeight = totalDocs / (numClasses * minorityCount);
+  const majorityWeight = totalDocs / (numClasses * majorityCount);
+  const minorityWeightMultiplier = Number((minorityWeight / (majorityWeight || 1)).toFixed(2));
+
+  const bestTuned = baselineResult?.best_tuned_params || {};
+  const bestC = bestTuned.c_param ?? (baselineResult?.c_param ?? 1.0);
+  const bestNgram = bestTuned.ngram_range 
+    ? (Array.isArray(bestTuned.ngram_range) ? `${bestTuned.ngram_range[0]}-${bestTuned.ngram_range[1]}` : String(bestTuned.ngram_range)) 
+    : '1-2';
+  const bestFeatures = bestTuned.max_features ?? 25000;
+
+  const macroF1 = baselineResult?.overall_macro_f1 != null 
+    ? `${(baselineResult.overall_macro_f1 * 100).toFixed(2)}%`
+    : 'N/A';
+  const accuracy = baselineResult?.overall_accuracy != null
+    ? `${(baselineResult.overall_accuracy * 100).toFixed(2)}%`
+    : 'N/A';
+
+  const caseName = caseDetail?.meta?.name || caseDetail?.meta?.id || 'Active Case';
+
+  return {
+    totalDocs,
+    vocabSize,
+    p95Words,
+    medianWords,
+    optimalMaxLen,
+    speedupRatio,
+    numClasses,
+    majorityClass,
+    majorityCount,
+    minorityClass,
+    minorityCount,
+    imbalanceRatio,
+    minorityWeightMultiplier,
+    bestC,
+    bestNgram,
+    bestFeatures,
+    macroF1,
+    accuracy,
+    caseName
+  };
+};
+
 export const TextStudio: React.FC<TextStudioProps> = ({
   selectedCaseId,
   caseDetail,
@@ -70,6 +140,7 @@ export const TextStudio: React.FC<TextStudioProps> = ({
   const [regC, setRegC] = useState<number>(1.5);
   const [isTraining, setIsTraining] = useState<boolean>(false);
   const [baselineResult, setBaselineResult] = useState<any>(null);
+  const dynamicStats = computeDynamicStats(edaData, baselineResult, caseDetail);
   const [trainingError, setTrainingError] = useState<string | null>(null);
 
   const availableCols: string[] = caseDetail?.dataset_columns || [];
@@ -1355,18 +1426,22 @@ export const TextStudio: React.FC<TextStudioProps> = ({
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
                       <div className="p-3 bg-zinc-50 border border-zinc-200/70 rounded-lg space-y-1.5">
-                        <span className="font-bold text-zinc-900 block text-[11px]">1. L2-Regularized Cross-Entropy (C = 5.0)</span>
+                        <span className="font-bold text-zinc-900 block text-[11px]">
+                          1. L2-Regularized Cross-Entropy (C = {dynamicStats.bestC})
+                        </span>
                         <MathView block math="\min_{W, b} \frac{1}{2}\|W\|_F^2 + C \sum_{i=1}^N w_{y_i} \mathcal{L}_{\text{CE}}(f(x_i), y_i)" />
                         <p className="text-[10px] text-zinc-600 leading-relaxed">
-                          Parameter C=5.0 terpilih sebagai juara (#1 BEST) karena melonggarkan penalti regularisasi pada korpus yang sudah bebas duplikat, memberikan bobot lebih tajam untuk frasa sentimen diskriminatif.
+                          Parameter C={dynamicStats.bestC} dan N-Gram ({dynamicStats.bestNgram}) dengan {dynamicStats.bestFeatures.toLocaleString()} fitur terpilih sebagai juara (#1 BEST). {dynamicStats.bestC > 1 ? 'Nilai C yang lebih besar melonggarkan penalti pada korpus bersih agar frasa spesifik bekerja maksimal.' : 'Nilai C pas menjaga generalisasi model agar terhindar dari overfitting.'}
                         </p>
                       </div>
 
                       <div className="p-3 bg-zinc-50 border border-zinc-200/70 rounded-lg space-y-1.5">
-                        <span className="font-bold text-zinc-900 block text-[11px]">2. Balanced Class Weights (11.6 : 1 Imbalance)</span>
+                        <span className="font-bold text-zinc-900 block text-[11px]">
+                          2. Balanced Class Weights ({dynamicStats.imbalanceRatio} : 1 Imbalance)
+                        </span>
                         <MathView block math="w_c = \frac{N}{K \cdot N_c}" />
                         <p className="text-[10px] text-zinc-600 leading-relaxed">
-                          Penalti kelas minoritas (netral) dinaikkan 6.08x lipat agar gradien optimasi tidak terdistorsi oleh ulasan bintang 5 mayoritas, menjamin Macro-F1 mencapai 88.49%.
+                          Penalti kelas minoritas ('{dynamicStats.minorityClass}') dinaikkan {dynamicStats.minorityWeightMultiplier}x lipat dibanding kelas mayoritas ('{dynamicStats.majorityClass}') untuk menjamin Macro-F1 mencapai {dynamicStats.macroF1} tanpa bias kelas.
                         </p>
                       </div>
                     </div>
@@ -2235,8 +2310,7 @@ export const TextStudio: React.FC<TextStudioProps> = ({
       <PresentationDefenseModal
         isOpen={showDefenseModal}
         onClose={() => setShowDefenseModal(false)}
-        caseId={selectedCaseId}
-        bestParams={baselineResult?.best_tuned_params}
+        stats={dynamicStats}
       />
     </div>
   );
