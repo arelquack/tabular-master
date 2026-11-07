@@ -174,6 +174,54 @@ export const TextStudio: React.FC<TextStudioProps> = ({
     }
   };
 
+  const handleTuneBaseline = async () => {
+    setIsTuningBaseline(true);
+    setTrainingError(null);
+    try {
+      const res = await fetch(`/api/cases/${selectedCaseId}/nlp-tune-baseline`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text_col: baselineTextCol || caseDetail?.meta?.text_column || 'clean_text',
+          label_col: baselineLabelCol || caseDetail?.meta?.target_column || 'category',
+          id_col: caseDetail?.meta?.id_column || 'id',
+          n_splits: nSplits
+        })
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || 'Baseline auto-tuning failed');
+      }
+      const data = await res.json();
+      setBaselineResult(data);
+      if (data.best_tuned_params) {
+        if (data.best_tuned_params.ngram_range) {
+          setNgramRange(`${data.best_tuned_params.ngram_range[0]}-${data.best_tuned_params.ngram_range[1]}`);
+        }
+        if (data.best_tuned_params.c_param) setRegC(data.best_tuned_params.c_param);
+        if (data.best_tuned_params.max_features) setMaxFeatures(data.best_tuned_params.max_features);
+      }
+      onRefreshCase();
+    } catch (err: any) {
+      setTrainingError(err.message);
+    } finally {
+      setIsTuningBaseline(false);
+    }
+  };
+
+  const fetchTrainingLogs = async () => {
+    if (!selectedCaseId) return;
+    try {
+      const res = await fetch(`/api/cases/${selectedCaseId}/nlp-training-logs`);
+      if (res.ok) {
+        const data = await res.json();
+        setTrainingLogs(data);
+      }
+    } catch (e) {
+      // ignore
+    }
+  };
+
   const handleTrainBaseline = async () => {
     setIsTraining(true);
     setTrainingError(null);
@@ -225,6 +273,9 @@ export const TextStudio: React.FC<TextStudioProps> = ({
   const [isBlending, setIsBlending] = useState<boolean>(false);
   const [ensembleResult, setEnsembleResult] = useState<any>(null);
   const [ensembleError, setEnsembleError] = useState<string | null>(null);
+  const [isTuningBaseline, setIsTuningBaseline] = useState<boolean>(false);
+  const [trainingLogs, setTrainingLogs] = useState<any>(null);
+  const [activeLogTab, setActiveLogTab] = useState<'transformer' | 'baseline' | 'ensemble'>('transformer');
 
   const fetchEnsembleStatus = async () => {
     if (!selectedCaseId) return;
@@ -247,6 +298,7 @@ export const TextStudio: React.FC<TextStudioProps> = ({
   useEffect(() => {
     if (activeNlpTab === 'submission') {
       fetchEnsembleStatus();
+      fetchTrainingLogs();
     }
   }, [activeNlpTab, selectedCaseId]);
 
@@ -438,7 +490,7 @@ export const TextStudio: React.FC<TextStudioProps> = ({
             { id: 'eda', label: '2. Corpus & Vocab EDA', icon: BarChart2 },
             { id: 'baseline', label: '3. TF-IDF & Baseline CV', icon: Play },
             { id: 'deep_nlp', label: '4. Deep Learning (Transformers)', icon: Cpu },
-            { id: 'submission', label: '5. Submissions & Inference', icon: Download },
+            { id: 'submission', label: '5. Model Arena, Logs & Comparison', icon: BarChart2 },
           ].map(tab => {
             const Icon = tab.icon;
             const isActive = activeNlpTab === tab.id;
@@ -1119,11 +1171,21 @@ export const TextStudio: React.FC<TextStudioProps> = ({
                 <button
                   type="button"
                   onClick={handleTrainBaseline}
-                  disabled={isTraining}
-                  className="w-full mt-3 flex items-center justify-center space-x-2 bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-medium py-2.5 rounded-lg transition"
+                  disabled={isTraining || isTuningBaseline}
+                  className="w-full mt-3 flex items-center justify-center space-x-2 bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-medium py-2.5 rounded-lg transition shadow-xs disabled:opacity-50"
                 >
                   {isTraining ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}
                   <span>{isTraining ? 'Training Cross-Validation...' : 'Train Stratified Baseline'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleTuneBaseline}
+                  disabled={isTraining || isTuningBaseline}
+                  className="w-full mt-2 flex items-center justify-center space-x-2 border border-zinc-300 hover:border-zinc-950 bg-white hover:bg-zinc-50 text-zinc-900 text-xs font-semibold py-2 rounded-lg transition disabled:opacity-50"
+                >
+                  {isTuningBaseline ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} className="text-zinc-700" />}
+                  <span>{isTuningBaseline ? 'Running Grid Ablation...' : 'Auto-Tune Baseline (Top 5 Ablation)'}</span>
                 </button>
               </div>
 
@@ -1138,6 +1200,55 @@ export const TextStudio: React.FC<TextStudioProps> = ({
             <div className="md:col-span-2 space-y-4">
               {baselineResult ? (
                 <>
+                  {/* Top 5 Ablation Matrix (If Available) */}
+                  {baselineResult.top_5_ablation && baselineResult.top_5_ablation.length > 0 && (
+                    <div className="bg-white border border-zinc-200/80 rounded-xl p-5 shadow-xs">
+                      <div className="flex items-center justify-between mb-3">
+                        <div>
+                          <h3 className="text-sm font-bold text-zinc-900">Top 5 Parameter Configurations (Ablation Matrix)</h3>
+                          <p className="text-xs text-zinc-500 mt-0.5">Automated parameter ablation over N-Gram, C-Param, and Max Features</p>
+                        </div>
+                        <span className="text-[10px] font-mono bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded font-bold">
+                          Best Model Auto-Selected
+                        </span>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-xs text-left">
+                          <thead>
+                            <tr className="border-b border-zinc-200 text-zinc-400 font-mono text-[10px] uppercase">
+                              <th className="pb-2">Rank</th>
+                              <th className="pb-2">CV Score (Macro F1)</th>
+                              <th className="pb-2">Accuracy</th>
+                              <th className="pb-2">N-Gram</th>
+                              <th className="pb-2">Reg C</th>
+                              <th className="pb-2">Max Features</th>
+                              <th className="pb-2">Time</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {baselineResult.top_5_ablation.map((row: any) => (
+                              <tr key={row.rank} className={`border-b border-zinc-100 last:border-0 ${row.rank === 1 ? 'bg-emerald-50/50 font-semibold' : ''}`}>
+                                <td className="py-2 font-mono">
+                                  {row.rank === 1 ? (
+                                    <span className="bg-emerald-600 text-white text-[10px] px-1.5 py-0.5 rounded font-bold">#1 BEST</span>
+                                  ) : (
+                                    `#${row.rank}`
+                                  )}
+                                </td>
+                                <td className="py-2 font-mono text-zinc-900">{(row.score * 100).toFixed(2)}%</td>
+                                <td className="py-2 font-mono text-zinc-600">{(row.accuracy * 100).toFixed(1)}%</td>
+                                <td className="py-2 font-mono text-zinc-700">{row.ngram_range}</td>
+                                <td className="py-2 font-mono text-zinc-700">{row.c_param}</td>
+                                <td className="py-2 font-mono text-zinc-500">{row.max_features?.toLocaleString()}</td>
+                                <td className="py-2 font-mono text-zinc-400">{row.duration_seconds}s</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Top Scores Banner */}
                   <div className="grid grid-cols-2 gap-4">
                     <div className="bg-white border border-zinc-200/80 rounded-xl p-5 shadow-xs">
@@ -1205,6 +1316,98 @@ export const TextStudio: React.FC<TextStudioProps> = ({
                   <p className="text-xs text-zinc-500 mt-1 max-w-sm mx-auto">
                     Select columns and click "Train Stratified Baseline" to extract TF-IDF features and execute cross-validation.
                   </p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Unified Training Logs & Console Viewer */}
+          <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-5 shadow-lg text-zinc-200">
+            <div className="flex flex-col md:flex-row md:items-center justify-between pb-3 border-b border-zinc-800 gap-3">
+              <div className="flex items-center space-x-2">
+                <Terminal size={15} className="text-zinc-400" />
+                <h4 className="text-xs font-bold uppercase tracking-wider text-zinc-100">
+                  Unified Training & Execution Logs
+                </h4>
+              </div>
+
+              <div className="flex items-center space-x-2">
+                {/* Log Category Tabs */}
+                <div className="flex items-center space-x-1 bg-zinc-900 p-0.5 rounded-lg border border-zinc-800 text-[11px] font-mono">
+                  <button
+                    type="button"
+                    onClick={() => setActiveLogTab('transformer')}
+                    className={`px-2.5 py-1 rounded transition-colors ${activeLogTab === 'transformer' ? 'bg-zinc-800 text-white font-semibold' : 'text-zinc-400 hover:text-zinc-200'}`}
+                  >
+                    Transformer GPU Log
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveLogTab('baseline')}
+                    className={`px-2.5 py-1 rounded transition-colors ${activeLogTab === 'baseline' ? 'bg-zinc-800 text-white font-semibold' : 'text-zinc-400 hover:text-zinc-200'}`}
+                  >
+                    Baseline CV Folds
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveLogTab('ensemble')}
+                    className={`px-2.5 py-1 rounded transition-colors ${activeLogTab === 'ensemble' ? 'bg-zinc-800 text-white font-semibold' : 'text-zinc-400 hover:text-zinc-200'}`}
+                  >
+                    Ensemble Fusion
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={fetchTrainingLogs}
+                  className="p-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 rounded border border-zinc-800 transition"
+                  title="Refresh Logs"
+                >
+                  <RefreshCw size={12} />
+                </button>
+              </div>
+            </div>
+
+            {/* Terminal Window Content */}
+            <div className="mt-3">
+              {activeLogTab === 'transformer' && (
+                <pre className="text-[11px] font-mono text-zinc-300 max-h-72 overflow-y-auto whitespace-pre-wrap p-3 bg-zinc-900/60 rounded-lg border border-zinc-800/80 leading-relaxed no-scrollbar select-text">
+                  {trainingLogs?.transformer_log || 'Belum ada log transformer yang tercatat. Jalankan training di Tab 4 untuk melihat log live GPU.'}
+                </pre>
+              )}
+
+              {activeLogTab === 'baseline' && (
+                <div className="text-[11px] font-mono text-zinc-300 max-h-72 overflow-y-auto p-3 bg-zinc-900/60 rounded-lg border border-zinc-800/80 space-y-2 no-scrollbar">
+                  {trainingLogs?.baseline_summary?.fold_results ? (
+                    <div>
+                      <div className="text-zinc-400 mb-2">Overall Accuracy: {((trainingLogs.baseline_summary.overall_accuracy || 0) * 100).toFixed(2)}% | Macro-F1: {((trainingLogs.baseline_summary.overall_macro_f1 || 0) * 100).toFixed(2)}%</div>
+                      <div className="space-y-1">
+                        {trainingLogs.baseline_summary.fold_results.map((f: any, idx: number) => (
+                          <div key={idx} className="flex justify-between border-b border-zinc-800 py-1">
+                            <span>Fold {f.fold || idx + 1}:</span>
+                            <span className="text-zinc-400">Acc: {(f.accuracy * 100).toFixed(2)}% | F1: {(f.macro_f1 * 100).toFixed(2)}%</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div>Belum ada hasil baseline yang tercatat. Jalankan training di Tab 3.</div>
+                  )}
+                </div>
+              )}
+
+              {activeLogTab === 'ensemble' && (
+                <div className="text-[11px] font-mono text-zinc-300 max-h-72 overflow-y-auto p-3 bg-zinc-900/60 rounded-lg border border-zinc-800/80 space-y-2 no-scrollbar">
+                  {trainingLogs?.ensemble_summary?.ensemble_macro_f1 ? (
+                    <div>
+                      <div>Ensemble Champion F1: {((trainingLogs.ensemble_summary.ensemble_macro_f1 || 0) * 100).toFixed(2)}%</div>
+                      <div>Baseline Weight: {((trainingLogs.ensemble_summary.optimal_baseline_weight || 0) * 100).toFixed(1)}%</div>
+                      <div>Transformer Weight: {((trainingLogs.ensemble_summary.optimal_transformer_weight || 0) * 100).toFixed(1)}%</div>
+                      <div>Relative Gain: +{trainingLogs.ensemble_summary.f1_gain_pct || 0}%</div>
+                    </div>
+                  ) : (
+                    <div>Belum ada log ensemble blending. Jalankan blending di atas.</div>
+                  )}
                 </div>
               )}
             </div>
@@ -1527,6 +1730,98 @@ export const TextStudio: React.FC<TextStudioProps> = ({
               </div>
             </div>
           </div>
+
+          {/* Unified Training Logs & Console Viewer */}
+          <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-5 shadow-lg text-zinc-200">
+            <div className="flex flex-col md:flex-row md:items-center justify-between pb-3 border-b border-zinc-800 gap-3">
+              <div className="flex items-center space-x-2">
+                <Terminal size={15} className="text-zinc-400" />
+                <h4 className="text-xs font-bold uppercase tracking-wider text-zinc-100">
+                  Unified Training & Execution Logs
+                </h4>
+              </div>
+
+              <div className="flex items-center space-x-2">
+                {/* Log Category Tabs */}
+                <div className="flex items-center space-x-1 bg-zinc-900 p-0.5 rounded-lg border border-zinc-800 text-[11px] font-mono">
+                  <button
+                    type="button"
+                    onClick={() => setActiveLogTab('transformer')}
+                    className={`px-2.5 py-1 rounded transition-colors ${activeLogTab === 'transformer' ? 'bg-zinc-800 text-white font-semibold' : 'text-zinc-400 hover:text-zinc-200'}`}
+                  >
+                    Transformer GPU Log
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveLogTab('baseline')}
+                    className={`px-2.5 py-1 rounded transition-colors ${activeLogTab === 'baseline' ? 'bg-zinc-800 text-white font-semibold' : 'text-zinc-400 hover:text-zinc-200'}`}
+                  >
+                    Baseline CV Folds
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveLogTab('ensemble')}
+                    className={`px-2.5 py-1 rounded transition-colors ${activeLogTab === 'ensemble' ? 'bg-zinc-800 text-white font-semibold' : 'text-zinc-400 hover:text-zinc-200'}`}
+                  >
+                    Ensemble Fusion
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={fetchTrainingLogs}
+                  className="p-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 rounded border border-zinc-800 transition"
+                  title="Refresh Logs"
+                >
+                  <RefreshCw size={12} />
+                </button>
+              </div>
+            </div>
+
+            {/* Terminal Window Content */}
+            <div className="mt-3">
+              {activeLogTab === 'transformer' && (
+                <pre className="text-[11px] font-mono text-zinc-300 max-h-72 overflow-y-auto whitespace-pre-wrap p-3 bg-zinc-900/60 rounded-lg border border-zinc-800/80 leading-relaxed no-scrollbar select-text">
+                  {trainingLogs?.transformer_log || 'Belum ada log transformer yang tercatat. Jalankan training di Tab 4 untuk melihat log live GPU.'}
+                </pre>
+              )}
+
+              {activeLogTab === 'baseline' && (
+                <div className="text-[11px] font-mono text-zinc-300 max-h-72 overflow-y-auto p-3 bg-zinc-900/60 rounded-lg border border-zinc-800/80 space-y-2 no-scrollbar">
+                  {trainingLogs?.baseline_summary?.fold_results ? (
+                    <div>
+                      <div className="text-zinc-400 mb-2">Overall Accuracy: {((trainingLogs.baseline_summary.overall_accuracy || 0) * 100).toFixed(2)}% | Macro-F1: {((trainingLogs.baseline_summary.overall_macro_f1 || 0) * 100).toFixed(2)}%</div>
+                      <div className="space-y-1">
+                        {trainingLogs.baseline_summary.fold_results.map((f: any, idx: number) => (
+                          <div key={idx} className="flex justify-between border-b border-zinc-800 py-1">
+                            <span>Fold {f.fold || idx + 1}:</span>
+                            <span className="text-zinc-400">Acc: {(f.accuracy * 100).toFixed(2)}% | F1: {(f.macro_f1 * 100).toFixed(2)}%</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div>Belum ada hasil baseline yang tercatat. Jalankan training di Tab 3.</div>
+                  )}
+                </div>
+              )}
+
+              {activeLogTab === 'ensemble' && (
+                <div className="text-[11px] font-mono text-zinc-300 max-h-72 overflow-y-auto p-3 bg-zinc-900/60 rounded-lg border border-zinc-800/80 space-y-2 no-scrollbar">
+                  {trainingLogs?.ensemble_summary?.ensemble_macro_f1 ? (
+                    <div>
+                      <div>Ensemble Champion F1: {((trainingLogs.ensemble_summary.ensemble_macro_f1 || 0) * 100).toFixed(2)}%</div>
+                      <div>Baseline Weight: {((trainingLogs.ensemble_summary.optimal_baseline_weight || 0) * 100).toFixed(1)}%</div>
+                      <div>Transformer Weight: {((trainingLogs.ensemble_summary.optimal_transformer_weight || 0) * 100).toFixed(1)}%</div>
+                      <div>Relative Gain: +{trainingLogs.ensemble_summary.f1_gain_pct || 0}%</div>
+                    </div>
+                  ) : (
+                    <div>Belum ada log ensemble blending. Jalankan blending di atas.</div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
@@ -1642,7 +1937,7 @@ export const TextStudio: React.FC<TextStudioProps> = ({
                     </div>
 
                     <div className="bg-white border border-zinc-200/80 rounded-xl p-4 shadow-xs">
-                      <div className="text-[10px] font-mono uppercase text-zinc-400">Transformer (BERT)</div>
+                      <div className="text-[10px] font-mono uppercase text-zinc-400">Transformer (Deep NLP)</div>
                       <div className="text-lg font-bold text-zinc-900 mt-0.5">
                         {(ensembleResult.transformer_macro_f1 * 100).toFixed(2)}%
                       </div>
@@ -1659,6 +1954,84 @@ export const TextStudio: React.FC<TextStudioProps> = ({
                       <div className="text-[10px] font-mono text-emerald-700 font-semibold mt-1">
                         +{ensembleResult.f1_gain_pct >= 0 ? ensembleResult.f1_gain_pct : 0.0}% Gain vs Single Best
                       </div>
+                    </div>
+                  </div>
+
+                  {/* Multi-Model Performance Comparison (SVG Chart) */}
+                  <div className="bg-white border border-zinc-200/80 rounded-xl p-5 shadow-xs">
+                    <div className="flex items-center justify-between mb-4">
+                      <div>
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-zinc-900">
+                          Multi-Model Cross-Validation Arena (Visual Comparison)
+                        </h4>
+                        <p className="text-[11px] text-zinc-500 mt-0.5">Komparasi performa skor Macro-F1 dan Akurasi antar keluarga model</p>
+                      </div>
+                      <span className="text-[10px] font-mono bg-zinc-100 text-zinc-700 px-2 py-0.5 rounded border border-zinc-200">
+                        Higher is better
+                      </span>
+                    </div>
+
+                    {(() => {
+                      const models = [
+                        { name: 'TF-IDF Baseline', score: ensembleResult.baseline_macro_f1, acc: ensembleResult.baseline_accuracy, color: '#71717A' },
+                        { name: 'Transformer', score: ensembleResult.transformer_macro_f1, acc: ensembleResult.transformer_accuracy, color: '#2563EB' },
+                        { name: 'Ensemble Blend', score: ensembleResult.ensemble_macro_f1, acc: ensembleResult.ensemble_accuracy || ensembleResult.baseline_accuracy, color: '#059669' }
+                      ];
+                      const maxScore = Math.max(...models.map(m => m.score), 0.01);
+
+                      return (
+                        <div className="space-y-3">
+                          {models.map((m, idx) => {
+                            const barPct = Math.max(10, Math.round((m.score / Math.max(maxScore, 1.0)) * 100));
+                            return (
+                              <div key={idx} className="space-y-1">
+                                <div className="flex items-center justify-between text-xs">
+                                  <div className="flex items-center space-x-2">
+                                    <span className="w-2.5 h-2.5 rounded-full inline-block" style={{ backgroundColor: m.color }} />
+                                    <span className="font-semibold text-zinc-900">{m.name}</span>
+                                  </div>
+                                  <div className="font-mono text-xs space-x-3">
+                                    <span>Macro-F1: <strong className="text-zinc-950">{(m.score * 100).toFixed(2)}%</strong></span>
+                                    <span className="text-zinc-400">Acc: {(m.acc * 100).toFixed(1)}%</span>
+                                  </div>
+                                </div>
+                                <div className="w-full bg-zinc-100 rounded-full h-3 overflow-hidden">
+                                  <div
+                                    className="h-full rounded-full transition-all duration-700"
+                                    style={{ width: `${barPct}%`, backgroundColor: m.color }}
+                                  />
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()}
+                  </div>
+
+                  {/* Visual Fusion Split Gauge */}
+                  <div className="bg-white border border-zinc-200/80 rounded-xl p-4 shadow-xs space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-semibold text-zinc-900">Ensemble Weight Contribution</span>
+                      <span className="font-mono text-[11px] text-zinc-500">
+                        {Math.round(ensembleResult.optimal_baseline_weight * 100)}% Lexical / {Math.round(ensembleResult.optimal_transformer_weight * 100)}% Semantic
+                      </span>
+                    </div>
+                    <div className="w-full h-3.5 bg-zinc-100 rounded-full overflow-hidden flex">
+                      <div
+                        className="bg-zinc-800 h-full transition-all duration-500"
+                        style={{ width: `${Math.round(ensembleResult.optimal_baseline_weight * 100)}%` }}
+                        title={`Baseline: ${Math.round(ensembleResult.optimal_baseline_weight * 100)}%`}
+                      />
+                      <div
+                        className="bg-emerald-600 h-full transition-all duration-500"
+                        style={{ width: `${Math.round(ensembleResult.optimal_transformer_weight * 100)}%` }}
+                        title={`Transformer: ${Math.round(ensembleResult.optimal_transformer_weight * 100)}%`}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between text-[10px] font-mono text-zinc-400">
+                      <span>• TF-IDF N-Grams ({Math.round(ensembleResult.optimal_baseline_weight * 100)}%)</span>
+                      <span>• Deep Pretrained Model ({Math.round(ensembleResult.optimal_transformer_weight * 100)}%)</span>
                     </div>
                   </div>
 
@@ -1697,6 +2070,98 @@ export const TextStudio: React.FC<TextStudioProps> = ({
                     {isBlending ? <Loader2 size={13} className="animate-spin" /> : <TrendingUp size={13} />}
                     <span>Hitung Optimal Blend Sekarang</span>
                   </button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Unified Training Logs & Console Viewer */}
+          <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-5 shadow-lg text-zinc-200">
+            <div className="flex flex-col md:flex-row md:items-center justify-between pb-3 border-b border-zinc-800 gap-3">
+              <div className="flex items-center space-x-2">
+                <Terminal size={15} className="text-zinc-400" />
+                <h4 className="text-xs font-bold uppercase tracking-wider text-zinc-100">
+                  Unified Training & Execution Logs
+                </h4>
+              </div>
+
+              <div className="flex items-center space-x-2">
+                {/* Log Category Tabs */}
+                <div className="flex items-center space-x-1 bg-zinc-900 p-0.5 rounded-lg border border-zinc-800 text-[11px] font-mono">
+                  <button
+                    type="button"
+                    onClick={() => setActiveLogTab('transformer')}
+                    className={`px-2.5 py-1 rounded transition-colors ${activeLogTab === 'transformer' ? 'bg-zinc-800 text-white font-semibold' : 'text-zinc-400 hover:text-zinc-200'}`}
+                  >
+                    Transformer GPU Log
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveLogTab('baseline')}
+                    className={`px-2.5 py-1 rounded transition-colors ${activeLogTab === 'baseline' ? 'bg-zinc-800 text-white font-semibold' : 'text-zinc-400 hover:text-zinc-200'}`}
+                  >
+                    Baseline CV Folds
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveLogTab('ensemble')}
+                    className={`px-2.5 py-1 rounded transition-colors ${activeLogTab === 'ensemble' ? 'bg-zinc-800 text-white font-semibold' : 'text-zinc-400 hover:text-zinc-200'}`}
+                  >
+                    Ensemble Fusion
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={fetchTrainingLogs}
+                  className="p-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 rounded border border-zinc-800 transition"
+                  title="Refresh Logs"
+                >
+                  <RefreshCw size={12} />
+                </button>
+              </div>
+            </div>
+
+            {/* Terminal Window Content */}
+            <div className="mt-3">
+              {activeLogTab === 'transformer' && (
+                <pre className="text-[11px] font-mono text-zinc-300 max-h-72 overflow-y-auto whitespace-pre-wrap p-3 bg-zinc-900/60 rounded-lg border border-zinc-800/80 leading-relaxed no-scrollbar select-text">
+                  {trainingLogs?.transformer_log || 'Belum ada log transformer yang tercatat. Jalankan training di Tab 4 untuk melihat log live GPU.'}
+                </pre>
+              )}
+
+              {activeLogTab === 'baseline' && (
+                <div className="text-[11px] font-mono text-zinc-300 max-h-72 overflow-y-auto p-3 bg-zinc-900/60 rounded-lg border border-zinc-800/80 space-y-2 no-scrollbar">
+                  {trainingLogs?.baseline_summary?.fold_results ? (
+                    <div>
+                      <div className="text-zinc-400 mb-2">Overall Accuracy: {((trainingLogs.baseline_summary.overall_accuracy || 0) * 100).toFixed(2)}% | Macro-F1: {((trainingLogs.baseline_summary.overall_macro_f1 || 0) * 100).toFixed(2)}%</div>
+                      <div className="space-y-1">
+                        {trainingLogs.baseline_summary.fold_results.map((f: any, idx: number) => (
+                          <div key={idx} className="flex justify-between border-b border-zinc-800 py-1">
+                            <span>Fold {f.fold || idx + 1}:</span>
+                            <span className="text-zinc-400">Acc: {(f.accuracy * 100).toFixed(2)}% | F1: {(f.macro_f1 * 100).toFixed(2)}%</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div>Belum ada hasil baseline yang tercatat. Jalankan training di Tab 3.</div>
+                  )}
+                </div>
+              )}
+
+              {activeLogTab === 'ensemble' && (
+                <div className="text-[11px] font-mono text-zinc-300 max-h-72 overflow-y-auto p-3 bg-zinc-900/60 rounded-lg border border-zinc-800/80 space-y-2 no-scrollbar">
+                  {trainingLogs?.ensemble_summary?.ensemble_macro_f1 ? (
+                    <div>
+                      <div>Ensemble Champion F1: {((trainingLogs.ensemble_summary.ensemble_macro_f1 || 0) * 100).toFixed(2)}%</div>
+                      <div>Baseline Weight: {((trainingLogs.ensemble_summary.optimal_baseline_weight || 0) * 100).toFixed(1)}%</div>
+                      <div>Transformer Weight: {((trainingLogs.ensemble_summary.optimal_transformer_weight || 0) * 100).toFixed(1)}%</div>
+                      <div>Relative Gain: +{trainingLogs.ensemble_summary.f1_gain_pct || 0}%</div>
+                    </div>
+                  ) : (
+                    <div>Belum ada log ensemble blending. Jalankan blending di atas.</div>
+                  )}
                 </div>
               )}
             </div>

@@ -288,6 +288,8 @@ export default function App() {
 
   // New Case Modal
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
+  const [isGuideOpen, setIsGuideOpen] = useState<boolean>(false);
+  const [activeGuideTab, setActiveGuideTab] = useState<'cheatsheet' | 'tabular' | 'nlp' | 'unsupervised' | 'offline'>('cheatsheet');
   const [inspectPath, setInspectPath] = useState<string>('');
   const [inspectData, setInspectData] = useState<any>(null);
   const [inspectLoading, setInspectLoading] = useState<boolean>(false);
@@ -1678,6 +1680,16 @@ class CustomFeatureHook(BaseFeatureHook):
 
           {/* Right: Consolidated Actions */}
           <div className="flex items-center space-x-2.5 flex-shrink-0">
+            {/* In-App User Guide Button */}
+            <button
+              type="button"
+              onClick={() => setIsGuideOpen(true)}
+              className="flex items-center space-x-1.5 text-xs font-medium border border-zinc-200 hover:border-zinc-400 hover:bg-zinc-50 text-zinc-800 px-3 py-1.5 rounded-md transition-colors whitespace-nowrap"
+            >
+              <BookOpen size={13} className="text-zinc-600" />
+              <span>User Guide</span>
+            </button>
+
             {/* Unified Export Dropdown */}
             <div className="relative">
               <button
@@ -4675,6 +4687,176 @@ class CustomFeatureHook(BaseFeatureHook):
       </main>
 
       {/* MODAL: REGISTER NEW CASE */}
+            {/* In-App User Guide & Competition Cheatsheet Modal */}
+      {isGuideOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white border border-zinc-200 rounded-xl max-w-4xl w-full max-h-[90vh] overflow-hidden shadow-2xl flex flex-col">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between p-5 border-b border-zinc-200 bg-zinc-50">
+              <div className="flex items-center space-x-2.5">
+                <div className="w-7 h-7 bg-zinc-950 text-white rounded-lg flex items-center justify-center">
+                  <BookOpen size={15} />
+                </div>
+                <div>
+                  <h2 className="text-sm font-bold text-zinc-950">Platform User Guide & Competition Cheatsheet</h2>
+                  <p className="text-xs text-zinc-500">Panduan taktis dan alur kerja pemenangan kompetisi data science (Tabular & NLP)</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsGuideOpen(false)}
+                className="text-zinc-400 hover:text-zinc-900 p-1 rounded-md transition"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Guide Category Tabs */}
+            <div className="flex items-center space-x-1 px-5 pt-3 border-b border-zinc-200 bg-white overflow-x-auto no-scrollbar">
+              {[
+                { id: 'cheatsheet', label: '1. Competition Protocol' },
+                { id: 'tabular', label: '2. Tabular Pipeline' },
+                { id: 'nlp', label: '3. Text & NLP Studio' },
+                { id: 'unsupervised', label: '4. Unsupervised Workflow' },
+                { id: 'offline', label: '5. Offline & Multi-PC Setup' }
+              ].map(t => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setActiveGuideTab(t.id as any)}
+                  className={`px-3.5 py-2 text-xs font-semibold rounded-t-lg transition border-b-2 whitespace-nowrap ${
+                    activeGuideTab === t.id
+                      ? 'border-zinc-950 text-zinc-950 bg-zinc-50 font-bold'
+                      : 'border-transparent text-zinc-500 hover:text-zinc-900 hover:bg-zinc-50'
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Guide Content Body */}
+            <div className="p-6 overflow-y-auto space-y-4 text-xs text-zinc-700 leading-relaxed max-h-[calc(90vh-140px)] select-text">
+              {activeGuideTab === 'cheatsheet' && (
+                <div className="space-y-4">
+                  <div className="p-4 bg-emerald-50/70 border border-emerald-200 rounded-xl space-y-1">
+                    <h3 className="font-bold text-emerald-950 text-sm">Protokol Waktu Kompetisi (3 Jam Skenario)</h3>
+                    <p className="text-emerald-900">Alokasi waktu optimal untuk memaksimalkan skor leaderboard dan menghindari kepanikan di akhir:</p>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 font-mono">
+                    <div className="p-3 bg-zinc-50 border border-zinc-200 rounded-lg">
+                      <div className="font-bold text-zinc-900 text-xs">Menit 00 - 30: Ingest & EDA</div>
+                      <div className="text-zinc-600 mt-1">Normalisasi dataset, periksa missing values, cek P95 word length dan class imbalance.</div>
+                    </div>
+                    <div className="p-3 bg-zinc-50 border border-zinc-200 rounded-lg">
+                      <div className="font-bold text-zinc-900 text-xs">Menit 30 - 90: Baseline & Auto-FE</div>
+                      <div className="text-zinc-600 mt-1">Bangun model baseline valid (CV terkunci). Terapkan Auto-FE / Text Cleaning editorial boilerplate.</div>
+                    </div>
+                    <div className="p-3 bg-zinc-50 border border-zinc-200 rounded-lg">
+                      <div className="font-bold text-zinc-900 text-xs">Menit 90 - 135: Tuning & Deep Models</div>
+                      <div className="text-zinc-600 mt-1">Latih LightGBM/CatBoost pada Tabular atau Transformer (IndoBERT/XLM-R) pada NLP dengan GPU.</div>
+                    </div>
+                    <div className="p-3 bg-zinc-50 border border-zinc-200 rounded-lg">
+                      <div className="font-bold text-zinc-900 text-xs">Menit 135 - 165: Ensembling & Submission</div>
+                      <div className="text-zinc-600 mt-1">Kombinasikan prediksi OOF antar model via Probability Blending / Caruana Hill Climbing. Unduh submission.csv.</div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {activeGuideTab === 'tabular' && (
+                <div className="space-y-4">
+                  <h3 className="text-sm font-bold text-zinc-900">Alur Kerja Tabular Master Studio</h3>
+                  <ol className="list-decimal pl-4 space-y-2">
+                    <li><strong>Tab 1 (Dataset & EDA)</strong>: Menampilkan korelasi fitur, rasio target, serta histogram sebaran populasi.</li>
+                    <li><strong>Tab 2 (Feature Engineering)</strong>: Mengaktifkan Auto-FE untuk interaksi kategorikal, statistik baris numerik, dan ekstraksi tanggal. Semua enkoder dihitung ketat pada training fold (Zero Data Leakage).</li>
+                    <li><strong>Tab 3 (Model Training)</strong>: Melatih keluarga GBDT (LightGBM, XGBoost, CatBoost). Mendukung StratifiedKFold, GroupKFold, dan TimeSeries.</li>
+                    <li><strong>Tab 4 (Hyperparameter Tuning)</strong>: Mengoptimasi parameter pohon menggunakan Optuna Bayesian Search (TPE) dan menampilkan Top 5 settingan terbaik.</li>
+                    <li><strong>Tab 5 (Ensemble & Blend)</strong>: Menggabungkan probabilitas model menggunakan Caruana Hill Climbing dalam hitungan sub-detik (&lt;50ms).</li>
+                  </ol>
+                </div>
+              )}
+
+              {activeGuideTab === 'nlp' && (
+                <div className="space-y-4">
+                  <h3 className="text-sm font-bold text-zinc-900">Alur Kerja Text &amp; NLP Studio</h3>
+                  <div className="space-y-3">
+                    <div className="p-3 bg-zinc-50 border border-zinc-200 rounded-lg">
+                      <strong>Tab 1: Preprocessing &amp; Field Fusion</strong>
+                      <p className="text-zinc-600 mt-0.5">Gabungkan kolom teks terpisah (judul, isi, tag) menjadi satu representasi bertag <code>[JUDUL] ... [BODY] ...</code>. Gunakan preset regex dan akhiri frasa dengan <code>...</code> untuk memotong teks editorial rekomendasi.</p>
+                    </div>
+                    <div className="p-3 bg-zinc-50 border border-zinc-200 rounded-lg">
+                      <strong>Tab 2: Visual Corpus EDA</strong>
+                      <p className="text-zinc-600 mt-0.5">Periksa rekomendasi P95 max sequence length, disparitas panjang antar kelas, dan distribusi unigram/bigram frekuensi tinggi.</p>
+                    </div>
+                    <div className="p-3 bg-zinc-50 border border-zinc-200 rounded-lg">
+                      <strong>Tab 3: TF-IDF &amp; Baseline CV</strong>
+                      <p className="text-zinc-600 mt-0.5">Jalankan model baseline cepat atau klik "Auto-Tune Baseline" untuk mencari Top 5 kombinasi n-gram dan C-parameter secara otomatis.</p>
+                    </div>
+                    <div className="p-3 bg-zinc-50 border border-zinc-200 rounded-lg">
+                      <strong>Tab 4: Deep Learning (Transformers)</strong>
+                      <p className="text-zinc-600 mt-0.5">Pilih backbone: <code>xlm-roberta-base</code> (Mixed/Slang), <code>indobert-base-p1</code> (Indonesia Formal), <code>indobertweet</code> (Komentar Medsos), atau <code>roberta-base</code> (Inggris). Sistem otomatis merekomendasikan learning rate dan batch size optimal.</p>
+                    </div>
+                    <div className="p-3 bg-zinc-50 border border-zinc-200 rounded-lg">
+                      <strong>Tab 5: Model Arena, Training Logs &amp; Blending</strong>
+                      <p className="text-zinc-600 mt-0.5">Gabungkan probabilitas leksikal TF-IDF dengan semantik Transformer menggunakan slider pembobot otomatis. Unduh <code>submission_ensemble.csv</code>.</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {activeGuideTab === 'unsupervised' && (
+                <div className="space-y-4">
+                  <h3 className="text-sm font-bold text-zinc-900">Penanganan Dataset Teks Tanpa Label (Unsupervised)</h3>
+                  <div className="space-y-3">
+                    <div className="p-3.5 bg-zinc-50 border border-zinc-200 rounded-lg space-y-1.5">
+                      <div className="font-bold text-zinc-900">Skenario 1: Panitia Meminta Prediksi Sentimen / Kategori Tertentu (Zero-Shot Pseudo-Labeling)</div>
+                      <p className="text-zinc-600">Jalankan model pretrained (seperti <code>w11wo/indonesian-roberta</code> atau XLM-R NLI) untuk memprediksi probabilitas label. Filter sampel dengan keyakinan &gt;= 0.85 sebagai target, lalu simpan ke <code>cases/&lt;case_id&gt;/train.csv</code> untuk melanjutkan ke Tab 1 sebagai dataset terawasi (supervised).</p>
+                    </div>
+                    <div className="p-3.5 bg-zinc-50 border border-zinc-200 rounded-lg space-y-1.5">
+                      <div className="font-bold text-zinc-900">Skenario 2: Eksplorasi Klaster &amp; Pemetaan Topik Aspirasi (BERTopic / K-Means)</div>
+                      <p className="text-zinc-600">Ekstrak vektor embedding padat dari Transformer, lakukan reduksi dimensi via UMAP/SVD, lalu jalankan K-Means / HDBSCAN. Beri nomor kluster (0, 1, 2) sebagai kolom target, lalu masukkan ke Tab 1.</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {activeGuideTab === 'offline' && (
+                <div className="space-y-4">
+                  <h3 className="text-sm font-bold text-zinc-900">Distribusi Pelatihan 3 Orang &amp; Kesiapan 100% Offline</h3>
+                  <div className="space-y-2">
+                    <p><strong>Sebelum Lomba (Saat ada internet):</strong></p>
+                    <pre className="p-2.5 bg-zinc-900 text-zinc-200 rounded-lg font-mono text-[11px]">
+python scripts/precache_nlp_models.py --preset all
+                    </pre>
+                    <p className="text-zinc-600">Perintah ini mengunduh seluruh bobot tokenizer dan model transformer ke cache lokal sehingga komputer siap dipakai di ruangan tanpa internet.</p>
+                    
+                    <p className="pt-2"><strong>Protokol Paralel 3 Orang:</strong></p>
+                    <ul className="list-disc pl-5 space-y-1 text-zinc-600">
+                      <li>Orang 1 melatih LightGBM di Laptop A.</li>
+                      <li>Orang 2 melatih CatBoost di Laptop B.</li>
+                      <li>Orang 3 melatih Transformer di PC Dosen (Laptop C).</li>
+                      <li>Salin berkas <code>.npy</code> hasil OOF ke folder <code>experiments/</code> di salah satu mesin, lalu buka Tab Ensemble untuk menggabungkannya dalam hitungan detik.</li>
+                    </ul>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t border-zinc-200 bg-zinc-50 flex items-center justify-end">
+              <button
+                type="button"
+                onClick={() => setIsGuideOpen(false)}
+                className="px-4 py-2 bg-zinc-900 hover:bg-zinc-800 text-white font-semibold text-xs rounded-lg transition"
+              >
+                Tutup Panduan
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white border border-zinc-200 rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl p-6">

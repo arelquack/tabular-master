@@ -842,3 +842,96 @@ class NLPBaselineTrainer:
             "test_probs_matrix": test_probs_matrix,
             "class_names": all_classes
         }
+
+
+    @classmethod
+    def tune_baseline(
+        cls,
+        train_df: pd.DataFrame,
+        text_col: str,
+        label_col: str,
+        test_df: Optional[pd.DataFrame] = None,
+        id_col: Optional[str] = "id",
+        n_splits: int = 3,
+        random_state: int = 2026
+    ) -> Dict[str, Any]:
+        """
+        Grid ablation search over TF-IDF and regularizer hyperparameters.
+        Evaluates CV F1-macro, automatically selects best configuration,
+        and returns Top 5 comparison trials for ablation analysis.
+        """
+        import time
+
+        param_grid = [
+            {"ngram_range": (1, 2), "c_param": 1.0, "max_features": 25000},
+            {"ngram_range": (1, 2), "c_param": 2.5, "max_features": 35000},
+            {"ngram_range": (1, 3), "c_param": 1.5, "max_features": 30000},
+            {"ngram_range": (1, 1), "c_param": 1.0, "max_features": 15000},
+            {"ngram_range": (1, 2), "c_param": 0.5, "max_features": 20000},
+            {"ngram_range": (1, 2), "c_param": 5.0, "max_features": 40000},
+            {"ngram_range": (1, 3), "c_param": 2.0, "max_features": 50000},
+            {"ngram_range": (1, 1), "c_param": 2.0, "max_features": 25000},
+        ]
+
+        results = []
+        for p in param_grid:
+            t0 = time.time()
+            try:
+                res = cls.train_baseline(
+                    train_df=train_df,
+                    text_col=text_col,
+                    label_col=label_col,
+                    test_df=None,
+                    id_col=id_col,
+                    n_splits=n_splits,
+                    max_features=p["max_features"],
+                    ngram_range=p["ngram_range"],
+                    c_param=p["c_param"],
+                    random_state=random_state
+                )
+                dt = round(time.time() - t0, 2)
+                f1 = res.get("overall_macro_f1", res.get("overall_accuracy", 0))
+                acc = res.get("overall_accuracy", 0)
+                results.append({
+                    "score": f1,
+                    "accuracy": acc,
+                    "params": p,
+                    "duration_seconds": dt,
+                    "features": res.get("features_extracted", 0),
+                    "full_res": res
+                })
+            except Exception:
+                continue
+
+        results.sort(key=lambda x: x["score"], reverse=True)
+        top_5 = []
+        for rank, r in enumerate(results[:5], 1):
+            top_5.append({
+                "rank": rank,
+                "score": round(r["score"], 4),
+                "accuracy": round(r["accuracy"], 4),
+                "ngram_range": f"{r['params']['ngram_range'][0]}-{r['params']['ngram_range'][1]}",
+                "c_param": r["params"]["c_param"],
+                "max_features": r["params"]["max_features"],
+                "duration_seconds": r["duration_seconds"]
+            })
+
+        best = results[0] if results else None
+        best_full = None
+        if best:
+            best_full = cls.train_baseline(
+                train_df=train_df,
+                text_col=text_col,
+                label_col=label_col,
+                test_df=test_df,
+                id_col=id_col,
+                n_splits=n_splits,
+                max_features=best["params"]["max_features"],
+                ngram_range=best["params"]["ngram_range"],
+                c_param=best["params"]["c_param"],
+                random_state=random_state
+            )
+            best_full["top_5_ablation"] = top_5
+            best_full["best_tuned_params"] = best["params"]
+
+        return best_full or {}

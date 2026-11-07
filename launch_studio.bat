@@ -22,19 +22,15 @@ if exist "%SCRIPT_DIR%.venv\Scripts\python.exe" (
     if %errorlevel% equ 0 (
         set "VENV_PY=python"
     ) else (
-        echo [ERROR] Python environment tidak ditemukan!
-        echo Silakan siapkan virtual environment:
-        echo   python -m venv .venv
-        echo   .\.venv\Scripts\pip install -r requirements.txt
-        echo.
-        pause
-        exit /b 1
+        echo [INFO] Environment belum terpasang. Menjalankan setup.bat otomatis...
+        call "%SCRIPT_DIR%setup.bat"
+        set "VENV_PY=%SCRIPT_DIR%.venv\Scripts\python.exe"
     )
 )
 
-echo Using Python: %VENV_PY%
-echo Starting FastAPI Engine on http://localhost:8000 ...
-echo Press Ctrl+C in this console to stop the platform.
+echo Menggunakan Python: %VENV_PY%
+echo Memeriksa kesiapan FastApi Backend pada http://localhost:8000 ...
+echo Tekan Ctrl+C pada konsol ini untuk menghentikan server.
 echo.
 
 start "" "http://localhost:8000"

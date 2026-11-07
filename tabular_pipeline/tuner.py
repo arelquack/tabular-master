@@ -246,9 +246,23 @@ class HyperparameterTuner:
             best_params["random_seed"] = self.seed
             best_params["verbose"] = False
 
+        completed_trials = [t for t in study.trials if t.state.name == "COMPLETE" and t.value is not None]
+        reverse = self.direction == "maximize"
+        sorted_trials = sorted(completed_trials, key=lambda t: t.value, reverse=reverse)
+        top_5 = []
+        for rank, t in enumerate(sorted_trials[:5], 1):
+            top_5.append({
+                "rank": rank,
+                "trial_id": t.number,
+                "score": round(float(t.value), 5),
+                "params": t.params,
+                "duration_seconds": round(t.duration.total_seconds(), 2) if t.duration else None
+            })
+
         return {
             "model": m_name,
             "best_score": round(study.best_value, 5),
             "best_params": best_params,
+            "top_5_trials": top_5,
             "total_trials": len(study.trials),
         }

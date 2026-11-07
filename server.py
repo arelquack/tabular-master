@@ -1778,6 +1778,98 @@ def execute_nlp_train(case_id: str, req: NLPTrainRequest):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+@app.post("/api/cases/{case_id}/nlp-tune-baseline")
+def execute_nlp_baseline_tune(case_id: str, req: NLPTrainRequest):
+    case_dir = get_case_dir(case_id)
+    train_path = os.path.join(case_dir, "train.csv")
+    if not os.path.exists(train_path):
+        raise HTTPException(status_code=404, detail="train.csv not found")
+
+    train_df = pd.read_csv(train_path)
+    test_path = os.path.join(case_dir, "test.csv")
+    test_df = pd.read_csv(test_path) if os.path.exists(test_path) else None
+
+    try:
+        from tabular_pipeline.text_engine import NLPBaselineTrainer
+        res = NLPBaselineTrainer.tune_baseline(
+            train_df=train_df,
+            test_df=test_df,
+            text_col=req.text_col,
+            label_col=req.label_col,
+            id_col=req.id_col or "id",
+            n_splits=req.n_splits or 3
+        )
+
+        oof_probs_mat = res.pop("oof_probs_matrix", None)
+        oof_idx = res.pop("oof_indices", None)
+        test_probs_mat = res.pop("test_probs_matrix", None)
+        classes_lst = res.pop("class_names", None)
+
+        if oof_probs_mat is not None:
+            np.save(os.path.join(case_dir, "baseline_oof_probs.npy"), np.array(oof_probs_mat, dtype=np.float32))
+        if oof_idx is not None:
+            np.save(os.path.join(case_dir, "baseline_oof_indices.npy"), np.array(oof_idx))
+        if classes_lst is not None:
+            np.save(os.path.join(case_dir, "baseline_classes.npy"), np.array(classes_lst))
+        if test_probs_mat is not None:
+            np.save(os.path.join(case_dir, "baseline_test_probs.npy"), np.array(test_probs_mat, dtype=np.float32))
+
+        test_pred_df = res.pop("test_pred_df", None)
+        if test_pred_df is not None:
+            sub_path = os.path.join(case_dir, "submission.csv")
+            sub_nlp_path = os.path.join(case_dir, "submission_nlp.csv")
+            test_pred_df.to_csv(sub_path, index=False)
+            test_pred_df.to_csv(sub_nlp_path, index=False)
+            res["submission_saved"] = True
+            res["submission_rows"] = len(test_pred_df)
+
+        with open(os.path.join(case_dir, "nlp_results.json"), "w", encoding="utf-8") as rf:
+            json.dump(res, rf, indent=2)
+
+        return res
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/api/cases/{case_id}/nlp-training-logs")
+def get_nlp_training_logs(case_id: str):
+    case_dir = get_case_dir(case_id)
+    if not os.path.exists(case_dir):
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    transformer_log_p = os.path.join(case_dir, "transformer_train.log")
+    transformer_log = ""
+    if os.path.exists(transformer_log_p):
+        try:
+            with open(transformer_log_p, "r", encoding="utf-8", errors="ignore") as f:
+                transformer_log = f.read()
+        except Exception:
+            pass
+
+    baseline_res_p = os.path.join(case_dir, "nlp_results.json")
+    baseline_summary = {}
+    if os.path.exists(baseline_res_p):
+        try:
+            with open(baseline_res_p, "r", encoding="utf-8") as f:
+                baseline_summary = json.load(f)
+        except Exception:
+            pass
+
+    ensemble_res_p = os.path.join(case_dir, "nlp_ensemble_results.json")
+    ensemble_summary = {}
+    if os.path.exists(ensemble_res_p):
+        try:
+            with open(ensemble_res_p, "r", encoding="utf-8") as f:
+                ensemble_summary = json.load(f)
+        except Exception:
+            pass
+
+    return {
+        "case_id": case_id,
+        "transformer_log": transformer_log,
+        "baseline_summary": baseline_summary,
+        "ensemble_summary": ensemble_summary
+    }
+
 active_transformer_tasks = {}
 
 @app.post("/api/cases/{case_id}/nlp-train-transformer")
