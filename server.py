@@ -1173,7 +1173,7 @@ except Exception:
             [sys.executable, "-c", py_tk_code],
             capture_output=True,
             text=True,
-            timeout=25
+            timeout=4
         )
         if proc.stdout.strip():
             selected = proc.stdout.strip()
@@ -1212,7 +1212,7 @@ $d.Dispose()
                 ["powershell", "-Sta", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_cmd],
                 capture_output=True,
                 text=True,
-                timeout=25
+                timeout=4
             )
             if proc.stdout.strip():
                 selected = proc.stdout.strip()

@@ -1282,7 +1282,7 @@ export const TextStudio: React.FC<TextStudioProps> = ({
                   className="w-full mt-2 flex items-center justify-center space-x-2 border border-zinc-300 hover:border-zinc-950 bg-white hover:bg-zinc-50 text-zinc-900 text-xs font-semibold py-2 rounded-lg transition disabled:opacity-50"
                 >
                   {isTuningBaseline ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} className="text-zinc-700" />}
-                  <span>{isTuningBaseline ? 'Running Grid Ablation...' : 'Auto-Tune Baseline (Top 5 Ablation)'}</span>
+                  <span>{isTuningBaseline ? 'Running Grid Ablation (~5-10s)...' : 'Auto-Tune Baseline (Top 5 Ablation)'}</span>
                 </button>
               </div>
 

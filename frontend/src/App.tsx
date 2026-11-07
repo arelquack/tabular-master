@@ -295,13 +295,12 @@ export default function App() {
   const [inspectData, setInspectData] = useState<any>(null);
   const [inspectLoading, setInspectLoading] = useState<boolean>(false);
   const [scannedCsvs, setScannedCsvs] = useState<Array<{ path: string; filename: string; size_mb: number }>>([]);
-  const [isBrowsingTrain, setIsBrowsingTrain] = useState<boolean>(false);
-  const [isBrowsingTest, setIsBrowsingTest] = useState<boolean>(false);
   const browserFileInputRef = React.useRef<HTMLInputElement>(null);
-  const [uploadTargetField, setUploadTargetField] = useState<'train' | 'test' | 'text_train' | 'text_test'>('train');
+  const browserFolderInputRef = React.useRef<HTMLInputElement>(null);
+  const [uploadTargetField, setUploadTargetField] = useState<'train' | 'test' | 'text_train' | 'text_test' | 'relocate_train' | 'relocate_test'>('train');
   const [isUploadingDataset, setIsUploadingDataset] = useState<boolean>(false);
 
-  const triggerBrowserUpload = (field: 'train' | 'test' | 'text_train' | 'text_test') => {
+  const triggerBrowserUpload = (field: 'train' | 'test' | 'text_train' | 'text_test' | 'relocate_train' | 'relocate_test') => {
     setUploadTargetField(field);
     if (browserFileInputRef.current) {
       browserFileInputRef.current.value = '';
@@ -309,9 +308,40 @@ export default function App() {
     }
   };
 
+  const triggerBrowserFolder = (field: 'text_train' | 'text_test') => {
+    setUploadTargetField(field);
+    if (browserFolderInputRef.current) {
+      browserFolderInputRef.current.value = '';
+      browserFolderInputRef.current.click();
+    }
+  };
+
   const handleBrowserFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    // Fast-path: Check if selected file already exists in workspace
+    const existing = scannedCsvs.find(f => f.filename.toLowerCase() === file.name.toLowerCase());
+    if (existing) {
+      if (uploadTargetField === 'train') {
+        setNewCase(prev => ({ ...prev, train_path: existing.path }));
+        setInspectPath(existing.path);
+        handleInspect(existing.path);
+      } else if (uploadTargetField === 'test') {
+        setNewCase(prev => ({ ...prev, test_path: existing.path }));
+      } else if (uploadTargetField === 'text_train') {
+        setTextSourcePath(existing.path);
+        setNewCase(prev => ({ ...prev, train_path: existing.path }));
+      } else if (uploadTargetField === 'text_test') {
+        setTextTestSourcePath(existing.path);
+        setNewCase(prev => ({ ...prev, test_path: existing.path }));
+      } else if (uploadTargetField === 'relocate_train') {
+        setRelocateTrainPath(existing.path);
+      } else if (uploadTargetField === 'relocate_test') {
+        setRelocateTestPath(existing.path);
+      }
+      return;
+    }
 
     setIsUploadingDataset(true);
     try {
@@ -335,6 +365,10 @@ export default function App() {
         } else if (uploadTargetField === 'text_test') {
           setTextTestSourcePath(data.path);
           setNewCase(prev => ({ ...prev, test_path: data.path }));
+        } else if (uploadTargetField === 'relocate_train') {
+          setRelocateTrainPath(data.path);
+        } else if (uploadTargetField === 'relocate_test') {
+          setRelocateTestPath(data.path);
         }
         await fetchScannedCsvs();
       }
@@ -345,6 +379,32 @@ export default function App() {
       if (browserFileInputRef.current) {
         browserFileInputRef.current.value = '';
       }
+    }
+  };
+
+  const handleBrowserFolderSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    const firstRel = files[0].webkitRelativePath || '';
+    const folderName = firstRel.split('/')[0] || '';
+    if (!folderName) return;
+
+    // Check if any scanned files share this directory in workspace
+    const match = scannedCsvs.find(f => f.path.startsWith(folderName + '/') || f.path.includes('/' + folderName + '/'));
+    let chosenPath = folderName;
+    if (match) {
+      const idx = match.path.indexOf(folderName);
+      chosenPath = match.path.substring(0, idx + folderName.length);
+    } else {
+      chosenPath = 'cases/' + folderName;
+    }
+
+    if (uploadTargetField === 'text_train') {
+      setTextSourcePath(chosenPath);
+      setNewCase(prev => ({ ...prev, train_path: chosenPath }));
+    } else if (uploadTargetField === 'text_test') {
+      setTextTestSourcePath(chosenPath);
+      setNewCase(prev => ({ ...prev, test_path: chosenPath }));
     }
   };
 
@@ -633,21 +693,8 @@ class CustomFeatures(BaseFeatureHook):
     }
   };
 
-  const handleBrowseRelocate = async (field: 'train' | 'test') => {
-    try {
-      const title = field === 'train' ? 'Select Training Dataset (CSV)' : 'Select Test Dataset (CSV)';
-      const res = await fetch(`/api/browse-file?title=${encodeURIComponent(title)}`);
-      const data = await res.json();
-      if (data?.path) {
-        if (field === 'train') {
-          setRelocateTrainPath(data.path);
-        } else {
-          setRelocateTestPath(data.path);
-        }
-      }
-    } catch (err) {
-      console.error('File dialog error:', err);
-    }
+  const handleBrowseRelocate = (field: 'train' | 'test') => {
+    triggerBrowserUpload(field === 'train' ? 'relocate_train' : 'relocate_test');
   };
 
   const handleSaveLb = async (runId: string) => {
@@ -1509,40 +1556,15 @@ class CustomFeatureHook(BaseFeatureHook):
     }
   };
 
-  // Browse file or folder using native Windows File Dialog
-  const handleBrowseFile = async (
+  // Browse file or folder using native browser dialog with zero hang
+  const handleBrowseFile = (
     field: 'train' | 'test' | 'text_train' | 'text_test',
     mode: 'file' | 'folder' = 'file'
   ) => {
-    if (field === 'train' || field === 'text_train') setIsBrowsingTrain(true);
-    else setIsBrowsingTest(true);
-
-    try {
-      const title = mode === 'folder'
-        ? 'Select Dataset Folder (Text Files Directory)'
-        : 'Select Dataset File (CSV, Excel, JSONL, TXT)';
-      const res = await fetch(`/api/browse-file?title=${encodeURIComponent(title)}&mode=${mode}`);
-      const data = await res.json();
-      if (data?.path) {
-        if (field === 'train') {
-          setNewCase(prev => ({ ...prev, train_path: data.path }));
-          setInspectPath(data.path);
-          handleInspect(data.path);
-        } else if (field === 'test') {
-          setNewCase(prev => ({ ...prev, test_path: data.path }));
-        } else if (field === 'text_train') {
-          setTextSourcePath(data.path);
-          setNewCase(prev => ({ ...prev, train_path: data.path }));
-        } else if (field === 'text_test') {
-          setTextTestSourcePath(data.path);
-          setNewCase(prev => ({ ...prev, test_path: data.path }));
-        }
-      }
-    } catch (err) {
-      console.error('File dialog error:', err);
-    } finally {
-      if (field === 'train' || field === 'text_train') setIsBrowsingTrain(false);
-      else setIsBrowsingTest(false);
+    if (mode === 'folder') {
+      triggerBrowserFolder(field as 'text_train' | 'text_test');
+    } else {
+      triggerBrowserUpload(field);
     }
   };
 
@@ -5043,12 +5065,12 @@ python scripts/precache_nlp_models.py --preset all
                       <button
                         type="button"
                         onClick={() => handleBrowseFile('train')}
-                        disabled={isBrowsingTrain}
+                        disabled={isUploadingDataset && uploadTargetField === 'train'}
                         className="px-3 py-2 border border-zinc-300 hover:border-zinc-950 bg-zinc-50 hover:bg-zinc-100 text-xs font-medium rounded whitespace-nowrap flex items-center space-x-1 text-zinc-900 transition"
                         title="Open native Windows Explorer file picker"
                       >
-                        {isBrowsingTrain ? <Loader2 size={12} className="animate-spin" /> : <FolderOpen size={12} />}
-                        <span>{isBrowsingTrain ? 'Picking...' : 'Browse...'}</span>
+                        {isUploadingDataset && uploadTargetField === 'train' ? <Loader2 size={12} className="animate-spin" /> : <FolderOpen size={12} />}
+                        <span>{isUploadingDataset && uploadTargetField === 'train' ? 'Picking...' : 'Browse...'}</span>
                       </button>
                       <button
                         type="button"
@@ -5319,17 +5341,16 @@ python scripts/precache_nlp_models.py --preset all
                         <button
                           type="button"
                           onClick={() => handleBrowseFile('text_train', 'file')}
-                          disabled={isBrowsingTrain}
+                          disabled={isUploadingDataset && uploadTargetField === 'text_train'}
                           className="px-2.5 py-2 border border-zinc-300 hover:border-zinc-950 bg-white hover:bg-zinc-100 text-xs font-medium rounded whitespace-nowrap flex items-center space-x-1 text-zinc-900 transition"
                           title="Browse for CSV, Excel, JSONL, or TXT file"
                         >
-                          {isBrowsingTrain ? <Loader2 size={12} className="animate-spin" /> : <FolderOpen size={12} />}
-                          <span>{isBrowsingTrain ? 'Picking...' : 'File...'}</span>
+                          {isUploadingDataset && uploadTargetField === 'text_train' ? <Loader2 size={12} className="animate-spin" /> : <FolderOpen size={12} />}
+                          <span>{isUploadingDataset && uploadTargetField === 'text_train' ? 'Picking...' : 'File...'}</span>
                         </button>
                         <button
                           type="button"
                           onClick={() => handleBrowseFile('text_train', 'folder')}
-                          disabled={isBrowsingTrain}
                           className="px-2.5 py-2 border border-zinc-300 hover:border-zinc-950 bg-white hover:bg-zinc-100 text-xs font-medium rounded whitespace-nowrap flex items-center space-x-1 text-zinc-900 transition"
                           title="Browse for a folder of text files"
                         >
@@ -5399,17 +5420,16 @@ python scripts/precache_nlp_models.py --preset all
                         <button
                           type="button"
                           onClick={() => handleBrowseFile('text_test', 'file')}
-                          disabled={isBrowsingTest}
+                          disabled={isUploadingDataset && uploadTargetField === 'text_test'}
                           className="px-2.5 py-2 border border-zinc-300 hover:border-zinc-950 bg-white hover:bg-zinc-100 text-xs font-medium rounded whitespace-nowrap flex items-center space-x-1 text-zinc-900 transition"
                           title="Browse for CSV, Excel, JSONL, or TXT file"
                         >
-                          {isBrowsingTest ? <Loader2 size={12} className="animate-spin" /> : <FolderOpen size={12} />}
-                          <span>{isBrowsingTest ? 'Picking...' : 'File...'}</span>
+                          {isUploadingDataset && uploadTargetField === 'text_test' ? <Loader2 size={12} className="animate-spin" /> : <FolderOpen size={12} />}
+                          <span>{isUploadingDataset && uploadTargetField === 'text_test' ? 'Picking...' : 'File...'}</span>
                         </button>
                         <button
                           type="button"
                           onClick={() => handleBrowseFile('text_test', 'folder')}
-                          disabled={isBrowsingTest}
                           className="px-2.5 py-2 border border-zinc-300 hover:border-zinc-950 bg-white hover:bg-zinc-100 text-xs font-medium rounded whitespace-nowrap flex items-center space-x-1 text-zinc-900 transition"
                           title="Browse for folder"
                         >
@@ -5608,12 +5628,12 @@ python scripts/precache_nlp_models.py --preset all
                       <button
                         type="button"
                         onClick={() => handleBrowseFile('test')}
-                        disabled={isBrowsingTest}
+                        disabled={isUploadingDataset && uploadTargetField === 'test'}
                         className="px-3 py-2 border border-zinc-300 hover:border-zinc-950 bg-zinc-50 hover:bg-zinc-100 text-xs font-medium rounded whitespace-nowrap flex items-center space-x-1 text-zinc-900 transition"
                         title="Open native Windows Explorer file picker"
                       >
-                        {isBrowsingTest ? <Loader2 size={12} className="animate-spin" /> : <FolderOpen size={12} />}
-                        <span>{isBrowsingTest ? 'Picking...' : 'Browse...'}</span>
+                        {isUploadingDataset && uploadTargetField === 'test' ? <Loader2 size={12} className="animate-spin" /> : <FolderOpen size={12} />}
+                        <span>{isUploadingDataset && uploadTargetField === 'test' ? 'Picking...' : 'Browse...'}</span>
                       </button>
                       <button
                         type="button"
@@ -6514,6 +6534,14 @@ python scripts/precache_nlp_models.py --preset all
         onChange={handleBrowserFileUpload}
         className="hidden"
         accept=".csv,.xlsx,.xls,.json,.jsonl,.tsv,.txt,.parquet"
+      />
+      {/* Hidden browser folder input for instant folder picking */}
+      <input
+        type="file"
+        ref={browserFolderInputRef}
+        onChange={handleBrowserFolderSelect}
+        className="hidden"
+        {...({ webkitdirectory: '', directory: '' } as any)}
       />
     </div>
   );
