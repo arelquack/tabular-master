@@ -15,7 +15,8 @@ import {
   Copy,
   Sliders,
   Layers,
-  TrendingUp
+  TrendingUp,
+  Sparkles
 } from 'lucide-react';
 
 interface TextStudioProps {
@@ -679,6 +680,26 @@ export const TextStudio: React.FC<TextStudioProps> = ({
 
           {edaData && (
             <>
+              {/* Dynamic Actionable Insights */}
+              {edaData.actionable_insights && edaData.actionable_insights.length > 0 && (
+                <div className="bg-emerald-50/60 border border-emerald-200/90 rounded-xl p-5 shadow-xs">
+                  <div className="flex items-center space-x-2 mb-3">
+                    <Sparkles size={16} className="text-emerald-700" />
+                    <h3 className="text-sm font-bold text-emerald-950">
+                      Automated NLP Modeling Insights & Recommendations
+                    </h3>
+                  </div>
+                  <ul className="space-y-2">
+                    {edaData.actionable_insights.map((insight: string, idx: number) => (
+                      <li key={idx} className="flex items-start space-x-2 text-xs text-emerald-900 leading-relaxed">
+                        <span className="text-emerald-600 font-bold mt-0.5">•</span>
+                        <span>{insight}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
               {/* Length Percentiles & Quality Cards */}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <div className="bg-white border border-zinc-200/80 rounded-xl p-4 shadow-xs">
@@ -702,6 +723,138 @@ export const TextStudio: React.FC<TextStudioProps> = ({
                   <div className="text-[11px] text-zinc-500 mt-1">P95: {edaData.char_length_stats?.p95?.toLocaleString()} chars</div>
                 </div>
               </div>
+
+              {/* Word Length Distribution Histogram (SVG Chart) */}
+              {edaData.length_histogram && edaData.length_histogram.length > 0 && (() => {
+                const hist = edaData.length_histogram;
+                const maxCount = Math.max(...hist.map((b: any) => b.count), 1);
+                const p95Val = edaData.word_length_stats?.p95 || 0;
+                const maxBinEnd = hist[hist.length - 1]?.bin_end || 1;
+                const p95Pct = Math.min(Math.max((p95Val / maxBinEnd), 0.05), 0.95);
+                const p95X = 40 + p95Pct * 660;
+
+                return (
+                  <div className="bg-white border border-zinc-200/80 rounded-xl p-5 shadow-xs">
+                    <div className="flex items-center justify-between mb-4">
+                      <div>
+                        <h3 className="text-sm font-bold text-zinc-900">Word Count Distribution (Histogram)</h3>
+                        <p className="text-xs text-zinc-500 mt-0.5">Frequency across 10 word-length intervals with P95 truncation cutoff</p>
+                      </div>
+                      <div className="flex items-center space-x-3 text-xs font-mono">
+                        <span className="flex items-center space-x-1">
+                          <span className="w-3 h-3 bg-zinc-800 rounded-sm inline-block"></span>
+                          <span className="text-zinc-600">Sample Count</span>
+                        </span>
+                        <span className="flex items-center space-x-1">
+                          <span className="w-3 h-0.5 bg-rose-500 inline-block"></span>
+                          <span className="text-rose-600 font-semibold">P95 Threshold ({p95Val} words)</span>
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="w-full overflow-x-auto">
+                      <svg viewBox="0 0 740 180" className="w-full h-44">
+                        <line x1="40" y1="20" x2="700" y2="20" stroke="#F4F4F5" strokeWidth="1" />
+                        <line x1="40" y1="75" x2="700" y2="75" stroke="#F4F4F5" strokeWidth="1" />
+                        <line x1="40" y1="130" x2="700" y2="130" stroke="#E4E4E7" strokeWidth="1" />
+
+                        {hist.map((b: any, i: number) => {
+                          const barW = 52;
+                          const x = 50 + i * 64;
+                          const barH = Math.max(4, Math.round((b.count / maxCount) * 110));
+                          const y = 130 - barH;
+
+                          return (
+                            <g key={i} className="group cursor-pointer">
+                              <rect
+                                x={x}
+                                y={y}
+                                width={barW}
+                                height={barH}
+                                rx="3"
+                                className="fill-zinc-800 hover:fill-zinc-950 transition-colors"
+                              />
+                              <text
+                                x={x + barW / 2}
+                                y={y - 5}
+                                textAnchor="middle"
+                                className="text-[10px] font-mono fill-zinc-600 group-hover:fill-zinc-950 font-medium"
+                              >
+                                {b.pct}%
+                              </text>
+                              <text
+                                x={x + barW / 2}
+                                y="148"
+                                textAnchor="middle"
+                                className="text-[9px] font-mono fill-zinc-400"
+                              >
+                                {b.bin_start}-{b.bin_end}
+                              </text>
+                              <title>{`${b.bin_start} - ${b.bin_end} words: ${b.count?.toLocaleString()} docs (${b.pct}%)`}</title>
+                            </g>
+                          );
+                        })}
+
+                        <line
+                          x1={p95X}
+                          y1="15"
+                          x2={p95X}
+                          y2="130"
+                          stroke="#F43F5E"
+                          strokeWidth="2"
+                          strokeDasharray="4 3"
+                        />
+                        <text
+                          x={p95X}
+                          y="12"
+                          textAnchor="middle"
+                          className="text-[10px] font-mono fill-rose-600 font-bold"
+                        >
+                          P95: {p95Val}w
+                        </text>
+                      </svg>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Class-Conditional Text Length Profile */}
+              {edaData.class_length_profile && edaData.class_length_profile.length > 0 && (() => {
+                const profiles = edaData.class_length_profile;
+                const maxMean = Math.max(...profiles.map((p: any) => p.mean_words), 1);
+
+                return (
+                  <div className="bg-white border border-zinc-200/80 rounded-xl p-5 shadow-xs">
+                    <h3 className="text-sm font-bold text-zinc-900 mb-1">Class-Conditional Length Disparity</h3>
+                    <p className="text-xs text-zinc-500 mb-4">Comparison of average document length across classes (reveals stylometric predictive signals)</p>
+
+                    <div className="space-y-3">
+                      {profiles.map((p: any, idx: number) => {
+                        const pct = Math.max(6, Math.round((p.mean_words / maxMean) * 100));
+                        return (
+                          <div key={idx} className="space-y-1.5">
+                            <div className="flex items-center justify-between text-xs">
+                              <div className="flex items-center space-x-2">
+                                <span className="font-semibold text-zinc-900">{p.class}</span>
+                                <span className="text-[11px] font-mono text-zinc-400">({p.count} docs)</span>
+                              </div>
+                              <span className="font-mono text-xs text-zinc-700">
+                                Mean: <strong className="text-zinc-950">{p.mean_words}</strong> words | Median: <strong className="text-zinc-950">{p.median_words}</strong> words
+                              </span>
+                            </div>
+                            <div className="w-full bg-zinc-100 rounded-full h-2.5 overflow-hidden">
+                              <div
+                                className="bg-zinc-800 h-full rounded-full transition-all duration-500"
+                                style={{ width: `${pct}%` }}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Class Imbalance Warning & Badges */}
               {edaData.class_distribution && Object.keys(edaData.class_distribution).length > 0 && (
@@ -739,29 +892,51 @@ export const TextStudio: React.FC<TextStudioProps> = ({
                 </div>
               )}
 
-              {/* Top Unigrams & Bigrams */}
+              {/* Top Unigrams & Bigrams with Relative Frequency Progress Tracks */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="bg-white border border-zinc-200/80 rounded-xl p-5 shadow-xs">
                   <h3 className="text-sm font-bold text-zinc-900 mb-3">Top 20 Most Frequent Words</h3>
-                  <div className="space-y-1.5">
-                    {edaData.top_words?.map((w: any, idx: number) => (
-                      <div key={idx} className="flex items-center justify-between text-xs py-1 border-b border-zinc-100 last:border-0">
-                        <span className="font-mono text-zinc-800">{w.word}</span>
-                        <span className="font-mono text-zinc-400">{w.count?.toLocaleString()}</span>
-                      </div>
-                    ))}
+                  <div className="space-y-2">
+                    {(() => {
+                      const maxW = Math.max(...(edaData.top_words || []).map((w: any) => w.count), 1);
+                      return edaData.top_words?.map((w: any, idx: number) => {
+                        const pct = Math.max(4, Math.round((w.count / maxW) * 100));
+                        return (
+                          <div key={idx} className="flex items-center justify-between text-xs py-1 border-b border-zinc-100 last:border-0">
+                            <div className="flex items-center space-x-3 flex-1 mr-4">
+                              <span className="font-mono text-zinc-800 w-24 truncate font-medium">{w.word}</span>
+                              <div className="flex-1 bg-zinc-100 rounded-full h-1.5 overflow-hidden">
+                                <div className="bg-zinc-700 h-full rounded-full" style={{ width: `${pct}%` }} />
+                              </div>
+                            </div>
+                            <span className="font-mono text-[11px] text-zinc-500 whitespace-nowrap">{w.count?.toLocaleString()}</span>
+                          </div>
+                        );
+                      });
+                    })()}
                   </div>
                 </div>
 
                 <div className="bg-white border border-zinc-200/80 rounded-xl p-5 shadow-xs">
                   <h3 className="text-sm font-bold text-zinc-900 mb-3">Top 15 Most Frequent Bigrams</h3>
-                  <div className="space-y-1.5">
-                    {edaData.top_bigrams?.map((b: any, idx: number) => (
-                      <div key={idx} className="flex items-center justify-between text-xs py-1 border-b border-zinc-100 last:border-0">
-                        <span className="font-mono text-zinc-800">{b.bigram}</span>
-                        <span className="font-mono text-zinc-400">{b.count?.toLocaleString()}</span>
-                      </div>
-                    ))}
+                  <div className="space-y-2">
+                    {(() => {
+                      const maxB = Math.max(...(edaData.top_bigrams || []).map((b: any) => b.count), 1);
+                      return edaData.top_bigrams?.map((b: any, idx: number) => {
+                        const pct = Math.max(4, Math.round((b.count / maxB) * 100));
+                        return (
+                          <div key={idx} className="flex items-center justify-between text-xs py-1 border-b border-zinc-100 last:border-0">
+                            <div className="flex items-center space-x-3 flex-1 mr-4">
+                              <span className="font-mono text-zinc-800 w-32 truncate font-medium">{b.bigram}</span>
+                              <div className="flex-1 bg-zinc-100 rounded-full h-1.5 overflow-hidden">
+                                <div className="bg-zinc-700 h-full rounded-full" style={{ width: `${pct}%` }} />
+                              </div>
+                            </div>
+                            <span className="font-mono text-[11px] text-zinc-500 whitespace-nowrap">{b.count?.toLocaleString()}</span>
+                          </div>
+                        );
+                      });
+                    })()}
                   </div>
                 </div>
               </div>

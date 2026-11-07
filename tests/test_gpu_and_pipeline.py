@@ -80,6 +80,32 @@ class TabularGpuAndPipelineTest(unittest.TestCase):
         resolved = resolve_model_path("indobenchmark/indobert-base-p1")
         self.assertTrue(isinstance(resolved, str))
 
+    def test_universal_text_normalizer_and_eda(self):
+        import tempfile
+        from tabular_pipeline.text_engine import UniversalTextNormalizer, TextEDAReporter
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create two partitioned CSV files
+            p1 = os.path.join(tmpdir, "part_1.csv")
+            p2 = os.path.join(tmpdir, "part_2.csv")
+            pd.DataFrame({"doc": ["teks berita positif pertama hari ini", "berita ekonomi bertumbuh pesat"], "target": ["A", "B"]}).to_csv(p1, index=False)
+            pd.DataFrame({"doc": ["kabar hoax dan manipulasi informasi", "klarifikasi data dan fakta valid"], "target": ["B", "A"]}).to_csv(p2, index=False)
+
+            out_csv = os.path.join(tmpdir, "normalized_train.csv")
+            res = UniversalTextNormalizer.normalize_to_csv(
+                source_path=os.path.join(tmpdir, "part_*.csv"),
+                output_csv_path=out_csv
+            )
+            self.assertEqual(res["total_rows"], 4)
+            self.assertTrue(os.path.exists(out_csv))
+
+            norm_df = pd.read_csv(out_csv)
+            eda_rep = TextEDAReporter.generate_report(norm_df, text_col=res["detected_text_col"], label_col=res["detected_label_col"])
+            self.assertIn("length_histogram", eda_rep)
+            self.assertIn("class_length_profile", eda_rep)
+            self.assertIn("actionable_insights", eda_rep)
+            self.assertGreater(len(eda_rep["length_histogram"]), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

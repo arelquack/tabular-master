@@ -314,6 +314,14 @@ def resolve_dataset_path(raw_path: str, case_id: Optional[str] = None) -> Option
     if not clean_p:
         return None
 
+    # Candidate 0: Wildcard / Glob pattern
+    if "*" in clean_p or "?" in clean_p:
+        if glob.glob(clean_p):
+            return clean_p
+        p_root = os.path.join(ROOT_DIR, clean_p)
+        if glob.glob(p_root):
+            return p_root
+
     # Candidate 1: Exact path (absolute or relative to CWD)
     if os.path.exists(clean_p):
         return os.path.abspath(clean_p)
@@ -332,7 +340,7 @@ def resolve_dataset_path(raw_path: str, case_id: Optional[str] = None) -> Option
         return os.path.abspath(p3)
 
     # Candidate 4: Right-to-left sub-path matching (handles absolute paths copied from another machine)
-    # E.g. "D:/POLBAN/Semester 7/gemastik-final/playground-series-s6e11/train.csv" -> matches "playground-series-s6e11/train.csv"
+    # E.g. "/path/to/dataset/playground-series-s6e11/train.csv" -> matches "playground-series-s6e11/train.csv"
     parts = [seg for seg in re.split(r'[\\/]', clean_p) if seg and not seg.endswith(':')]
     if len(parts) >= 2:
         for depth in range(min(len(parts), 4), 1, -1):
@@ -1522,7 +1530,8 @@ def execute_relational_stitch_endpoint(req: ExecuteRelationalStitchRequest):
 @app.post("/api/tools/text-normalize")
 def normalize_text_endpoint(req: TextNormalizeRequest):
     p = resolve_dataset_path(req.source_path)
-    if not p or not os.path.exists(p):
+    p_exists = bool(glob.glob(p)) if (p and ("*" in p or "?" in p)) else (p and os.path.exists(p))
+    if not p or not p_exists:
         raise HTTPException(status_code=404, detail=f"Source path not found: {req.source_path}")
 
     case_dir = get_case_dir(req.case_id)
@@ -1544,7 +1553,8 @@ def normalize_text_endpoint(req: TextNormalizeRequest):
         rel_test = ""
         if req.test_source_path and req.test_source_path.strip():
             tp = resolve_dataset_path(req.test_source_path)
-            if tp and os.path.exists(tp):
+            tp_exists = bool(glob.glob(tp)) if (tp and ("*" in tp or "?" in tp)) else (tp and os.path.exists(tp))
+            if tp and tp_exists:
                 out_test = os.path.join(case_dir, "test.csv")
                 test_res = UniversalTextNormalizer.normalize_to_csv(
                     source_path=tp,

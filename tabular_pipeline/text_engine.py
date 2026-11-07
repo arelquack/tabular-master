@@ -153,9 +153,45 @@ class UniversalTextNormalizer:
         """
         Universal normalizer entrypoint. Produces clean CSV and returns metadata.
         """
-        if os.path.isdir(source_path):
-            df = cls.load_from_txt_directory(source_path)
-            detected_format = "folder_of_text_files"
+        df = None
+        detected_format = ""
+
+        # 1. Multi-file Glob / Wildcards (e.g. data/batch_*.csv or train_*.jsonl)
+        if "*" in source_path or "?" in source_path:
+            matched_files = sorted(glob.glob(source_path))
+            if not matched_files:
+                raise FileNotFoundError(f"No files matched glob pattern: {source_path}")
+            dfs = [cls.load_any_tabular_file(f) for f in matched_files]
+            df = pd.concat(dfs, ignore_index=True)
+            detected_format = f"glob_partitions ({len(matched_files)} files)"
+
+        # 2. Directory (Folder of text files or directory of CSV/JSONL partitions)
+        elif os.path.isdir(source_path):
+            has_txt = any(
+                glob.glob(os.path.join(source_path, "*.txt")) or 
+                glob.glob(os.path.join(source_path, "*", "*.txt")) or
+                glob.glob(os.path.join(source_path, "*.TXT")) or
+                glob.glob(os.path.join(source_path, "*", "*.TXT"))
+            )
+            if has_txt:
+                df = cls.load_from_txt_directory(source_path)
+                detected_format = "folder_of_text_files"
+            else:
+                # Check for partitions: csv, tsv, jsonl, parquet, excel
+                part_files = []
+                for ext in [".csv", ".tsv", ".jsonl", ".ndjson", ".parquet"]:
+                    f_list = sorted(glob.glob(os.path.join(source_path, f"*{ext}")))
+                    if f_list:
+                        part_files = f_list
+                        break
+                if part_files:
+                    dfs = [cls.load_any_tabular_file(f) for f in part_files]
+                    df = pd.concat(dfs, ignore_index=True)
+                    detected_format = f"partition_folder ({len(part_files)} files)"
+                else:
+                    raise FileNotFoundError(f"No recognizable tabular or text files found in folder: {source_path}")
+
+        # 3. Single tabular or text document file
         elif os.path.isfile(source_path):
             df = cls.load_any_tabular_file(source_path)
             detected_format = os.path.splitext(source_path)[1].lower()
@@ -529,12 +565,66 @@ class TextEDAReporter:
             vc = df[label_col].value_counts()
             class_dist = {str(k): int(v) for k, v in vc.items()}
 
+        # 1. Length distribution histogram (10 bins)
+        hist, bin_edges = np.histogram(word_lens, bins=10)
+        length_histogram = []
+        for i in range(len(hist)):
+            length_histogram.append({
+                "bin_start": int(bin_edges[i]),
+                "bin_end": int(bin_edges[i+1]),
+                "count": int(hist[i]),
+                "pct": round(float(hist[i] / max(len(word_lens), 1) * 100), 1)
+            })
+
+        # 2. Per-class length profile
+        class_length_profile = []
+        if label_col and label_col in df.columns:
+            try:
+                df_tmp = pd.DataFrame({"_wlen": word_lens, "_cat": df[label_col].astype(str)})
+                grp = df_tmp.groupby("_cat")["_wlen"].agg(["mean", "median", "count"]).reset_index()
+                for _, r in grp.iterrows():
+                    class_length_profile.append({
+                        "class": str(r["_cat"]),
+                        "mean_words": round(float(r["mean"]), 1),
+                        "median_words": int(r["median"]),
+                        "count": int(r["count"])
+                    })
+            except Exception:
+                pass
+
+        # 3. Dynamic Actionable Insights
+        word_stats = get_stats(word_lens)
+        p95_w = word_stats.get("p95", 128)
+        rec_seq = 128 if p95_w <= 100 else (256 if p95_w <= 200 else 512)
+        insights = [
+            f"95% dokumen berada di bawah {p95_w} kata. Menggunakan max_length={rec_seq} pada transformer akan mempertahankan >95% informasi tanpa memboroskan VRAM atau komputasi."
+        ]
+
+        if class_dist:
+            counts = list(class_dist.values())
+            if counts and min(counts) > 0:
+                ratio = max(counts) / min(counts)
+                if ratio > 3.0:
+                    insights.append(f"Rasio ketimpangan kelas mencapai {ratio:.1f}:1. Disarankan mengaktifkan Stratified K-Fold dan class_weight='balanced' untuk mencegah bias model ke kelas mayoritas.")
+                else:
+                    insights.append(f"Distribusi kelas relatif seimbang (rasio {ratio:.1f}:1). Standard Stratified K-Fold akan memberikan estimasi skor CV yang andal.")
+
+        if duplicates_count > 0 or html_detected > 0:
+            insights.append(f"Ditemukan {duplicates_count} duplikasi teks ({round(duplicates_count / max(len(df), 1) * 100, 1)}%) dan {html_detected} tag HTML. Jalankan pembersihan di Tab Preprocessing untuk meningkatkan kualitas korpus.")
+
+        if len(class_length_profile) >= 2:
+            sorted_by_len = sorted(class_length_profile, key=lambda x: x["mean_words"])
+            shortest = sorted_by_len[0]
+            longest = sorted_by_len[-1]
+            if longest["mean_words"] > 1.35 * shortest["mean_words"] and shortest["mean_words"] > 0:
+                insights.append(f"Terdapat perbedaan panjang teks antar kelas: kelas '{longest['class']}' rata-rata {longest['mean_words']} kata vs '{shortest['class']}' {shortest['mean_words']} kata. Fitur stilometrik (panjang kata/karakter) akan menjadi sinyal prediktif yang kuat bagi model GBDT.")
+
         return {
             "total_documents": len(df),
             "text_col": text_col,
             "label_col": label_col,
             "char_length_stats": get_stats(char_lens),
-            "word_length_stats": get_stats(word_lens),
+            "word_length_stats": word_stats,
             "vocabulary_size": vocab_size,
             "total_tokens": total_tokens,
             "lexical_richness": round(vocab_size / max(total_tokens, 1), 4),
@@ -547,7 +637,10 @@ class TextEDAReporter:
             },
             "top_words": top_words,
             "top_bigrams": top_bigrams,
-            "class_distribution": class_dist
+            "class_distribution": class_dist,
+            "length_histogram": length_histogram,
+            "class_length_profile": class_length_profile,
+            "actionable_insights": insights
         }
 
 
