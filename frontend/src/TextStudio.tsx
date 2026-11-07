@@ -43,6 +43,7 @@ export const TextStudio: React.FC<TextStudioProps> = ({
   const [stripMentions, setStripMentions] = useState<boolean>(false);
   const [stripDateline, setStripDateline] = useState<boolean>(true);
   const [reduceRepeated, setReduceRepeated] = useState<boolean>(true);
+  const [dropDuplicates, setDropDuplicates] = useState<boolean>(true);
   const [toLower, setToLower] = useState<boolean>(true);
   const [customRemovePhrases, setCustomRemovePhrases] = useState<string>('');
   const [customRegex, setCustomRegex] = useState<string>('');
@@ -152,6 +153,7 @@ export const TextStudio: React.FC<TextStudioProps> = ({
           strip_urls: stripUrls,
           strip_mentions: stripMentions,
           strip_html: stripHtml,
+          drop_duplicates: dropDuplicates,
           strip_dateline: stripDateline,
           reduce_repeated_chars: reduceRepeated,
           custom_remove_phrases: phrases.length > 0 ? phrases : null,
@@ -666,6 +668,15 @@ export const TextStudio: React.FC<TextStudioProps> = ({
                     />
                     <span>Convert to lowercase</span>
                   </label>
+                  <label className="flex items-center space-x-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={dropDuplicates}
+                      onChange={e => setDropDuplicates(e.target.checked)}
+                      className="rounded border-zinc-300 text-zinc-900 focus:ring-zinc-950"
+                    />
+                    <span className="font-medium text-zinc-900">Drop Duplicate Documents (Train Set)</span>
+                  </label>
                 </div>
               </div>
 
@@ -756,7 +767,7 @@ export const TextStudio: React.FC<TextStudioProps> = ({
               <div className="p-4 bg-emerald-50/50 border border-emerald-200/80 rounded-xl text-xs space-y-2">
                 <div className="flex items-center space-x-2 text-emerald-800 font-semibold">
                   <Check size={14} className="text-emerald-600" />
-                  <span>Column '{cleanResult.text_column}' Generated Successfully ({cleanResult.total_rows?.toLocaleString()} rows)</span>
+                  <span>Column '{cleanResult.text_column}' Generated Successfully ({cleanResult.total_rows?.toLocaleString()} rows{cleanResult.dropped_duplicates ? ` | ${cleanResult.dropped_duplicates} duplicates dropped` : ''})</span>
                 </div>
                 <div className="text-[11px] font-mono text-zinc-700 bg-white p-3 rounded-lg border border-zinc-200 max-h-24 overflow-y-auto">
                   {cleanResult.sample_cleaned?.[0] || 'No sample'}

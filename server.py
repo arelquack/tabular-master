@@ -223,6 +223,7 @@ class NLPCleanRequest(BaseModel):
     strip_html: bool = True
     strip_dateline: bool = False
     reduce_repeated_chars: bool = True
+    drop_duplicates: bool = False
     custom_remove_phrases: Optional[List[str]] = None
     custom_regex_list: Optional[List[str]] = None
     # Backwards compatibility fields
@@ -2464,6 +2465,11 @@ def execute_nlp_clean(case_id: str, req: NLPCleanRequest):
             return df
 
         train_df = process_df(train_df)
+        dropped_count = 0
+        if req.drop_duplicates:
+            before_count = len(train_df)
+            train_df = train_df.drop_duplicates(subset=[req.target_text_col], keep="first")
+            dropped_count = before_count - len(train_df)
         train_df.to_csv(train_path, index=False)
 
         if os.path.exists(test_path):
@@ -2485,6 +2491,7 @@ def execute_nlp_clean(case_id: str, req: NLPCleanRequest):
             "text_column": req.target_text_col,
             "columns_combined": cols_to_use,
             "total_rows": len(train_df),
+            "dropped_duplicates": dropped_count,
             "sample_cleaned": train_df[req.target_text_col].head(3).tolist()
         }
     except Exception as e:
