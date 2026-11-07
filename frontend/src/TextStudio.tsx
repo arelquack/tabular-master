@@ -1265,16 +1265,16 @@ export const TextStudio: React.FC<TextStudioProps> = ({
                     <div className="bg-white border border-zinc-200/80 rounded-xl p-5 shadow-xs">
                       <div className="text-[10px] font-mono uppercase text-zinc-400">Overall Accuracy</div>
                       <div className="text-3xl font-extrabold text-zinc-950 mt-1">
-                        {(baselineResult.overall_accuracy * 100).toFixed(2)}%
+                        {baselineResult.overall_accuracy != null && !isNaN(baselineResult.overall_accuracy) ? `${(baselineResult.overall_accuracy * 100).toFixed(2)}%` : "N/A"}
                       </div>
                       <div className="text-xs text-zinc-500 mt-1">Cross-Validation Out-Of-Fold</div>
                     </div>
                     <div className="bg-white border border-zinc-200/80 rounded-xl p-5 shadow-xs">
                       <div className="text-[10px] font-mono uppercase text-zinc-400">Macro-F1 Score</div>
                       <div className="text-3xl font-extrabold text-zinc-950 mt-1">
-                        {(baselineResult.overall_macro_f1 * 100).toFixed(2)}%
+                        {baselineResult.overall_macro_f1 != null && !isNaN(baselineResult.overall_macro_f1) ? `${(baselineResult.overall_macro_f1 * 100).toFixed(2)}%` : "N/A"}
                       </div>
-                      <div className="text-xs text-zinc-500 mt-1">Rare Classes Shielded: {baselineResult.rare_classes_shielded}</div>
+                      <div className="text-xs text-zinc-500 mt-1">Rare Classes Shielded: {baselineResult.rare_classes_shielded ?? 0}</div>
                     </div>
                   </div>
 

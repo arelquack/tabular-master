@@ -675,6 +675,7 @@ class NLPBaselineTrainer:
         max_features: int = 15000,
         ngram_min: int = 1,
         ngram_max: int = 2,
+        ngram_range: Optional[tuple] = None,
         n_splits: int = 5,
         c_param: float = 1.5,
         random_state: int = 42
@@ -684,6 +685,8 @@ class NLPBaselineTrainer:
         from sklearn.model_selection import StratifiedKFold, KFold
         from sklearn.metrics import accuracy_score, f1_score, mean_squared_error, mean_absolute_error, r2_score
 
+        if ngram_range is not None:
+            ngram_min, ngram_max = ngram_range
         if text_col not in train_df.columns:
             raise ValueError(f"Text column '{text_col}' not found in training dataset.")
         if label_col not in train_df.columns:
@@ -885,6 +888,8 @@ class NLPBaselineTrainer:
                     id_col=id_col,
                     n_splits=n_splits,
                     max_features=p["max_features"],
+                    ngram_min=p["ngram_range"][0],
+                    ngram_max=p["ngram_range"][1],
                     ngram_range=p["ngram_range"],
                     c_param=p["c_param"],
                     random_state=random_state
@@ -900,7 +905,8 @@ class NLPBaselineTrainer:
                     "features": res.get("features_extracted", 0),
                     "full_res": res
                 })
-            except Exception:
+            except Exception as err:
+                print(f"[tune_baseline] Trial failed for {p}: {err}")
                 continue
 
         results.sort(key=lambda x: x["score"], reverse=True)
@@ -927,6 +933,8 @@ class NLPBaselineTrainer:
                 id_col=id_col,
                 n_splits=n_splits,
                 max_features=best["params"]["max_features"],
+                ngram_min=best["params"]["ngram_range"][0],
+                ngram_max=best["params"]["ngram_range"][1],
                 ngram_range=best["params"]["ngram_range"],
                 c_param=best["params"]["c_param"],
                 random_state=random_state

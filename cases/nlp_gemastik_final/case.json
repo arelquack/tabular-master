@@ -1,0 +1,23 @@
+{
+  "id": "nlp_gemastik_final",
+  "name": "NLP Text Classification",
+  "description": "Text / NLP case normalized from cases/kredivo/kredivo_reviews_50k.csv. Text: content, Target: sentiment",
+  "train_path": "cases/nlp_gemastik_final/train.csv",
+  "test_path": "",
+  "id_col": "reviewId",
+  "target_col": "sentiment",
+  "target_column": "sentiment",
+  "text_column": "clean_text",
+  "data_type": "nlp",
+  "task_type": "multiclass",
+  "eval_metric": "f1_macro",
+  "cv_strategy": "stratified_kfold",
+  "n_splits": 5,
+  "seed": 2026,
+  "models": [
+    "lgbm",
+    "xgb",
+    "catboost"
+  ],
+  "output_dir": "experiments/nlp_gemastik_final_run"
+}
