@@ -44,7 +44,7 @@ export const TextStudio: React.FC<TextStudioProps> = ({
   const [stripDateline, setStripDateline] = useState<boolean>(true);
   const [reduceRepeated, setReduceRepeated] = useState<boolean>(true);
   const [toLower, setToLower] = useState<boolean>(true);
-  const [customRemovePhrases, setCustomRemovePhrases] = useState<string>('baca juga:\nsimak breaking news');
+  const [customRemovePhrases, setCustomRemovePhrases] = useState<string>('');
   const [customRegex, setCustomRegex] = useState<string>('');
   
   const [isCleaning, setIsCleaning] = useState<boolean>(false);
@@ -582,29 +582,73 @@ export const TextStudio: React.FC<TextStudioProps> = ({
                 </div>
               </div>
 
-              {/* Step C: Custom Removal Phrases & Regex */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Step C: Custom Removal Phrases & Quick Regex Presets */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                 <div>
-                  <label className="block text-[11px] font-mono uppercase text-zinc-500 mb-1">
-                    3. Custom Phrases to Remove (one per line)
-                  </label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[11px] font-mono uppercase text-zinc-500 font-semibold">
+                      3. Custom Phrases to Remove
+                    </label>
+                    <span className="text-[10px] text-zinc-400 font-mono">akhiri "..." untuk potong s.d akhir kalimat</span>
+                  </div>
                   <textarea
-                    rows={2}
+                    rows={3}
                     value={customRemovePhrases}
                     onChange={e => setCustomRemovePhrases(e.target.value)}
-                    placeholder="e.g.&#10;baca juga:&#10;simak breaking news"
+                    placeholder="e.g.&#10;kata_spam&#10;baca juga:...&#10;simak berita terkait:..."
                     className="w-full text-xs font-mono bg-zinc-50 border border-zinc-200 rounded-lg p-2.5 text-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-950"
                   />
+                  <p className="text-[11px] text-zinc-500 mt-1">
+                    Tulis kata untuk hapus kata saja, atau beri akhiran <code className="bg-zinc-100 text-zinc-800 px-1 py-0.5 rounded">...</code> untuk menghapus frasa beserta kelanjutan kalimat rekomendasi.
+                  </p>
                 </div>
+
                 <div>
-                  <label className="block text-[11px] font-mono uppercase text-zinc-500 mb-1">
-                    Custom Regex Patterns (Optional, one per line)
-                  </label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[11px] font-mono uppercase text-zinc-500 font-semibold">
+                      4. Regex Cleaning Presets
+                    </label>
+                    <span className="text-[10px] text-zinc-400 font-mono">klik chip untuk tambah</span>
+                  </div>
+
+                  {/* 1-Click Quick Preset Chips */}
+                  <div className="flex flex-wrap gap-1.5 mb-2">
+                    {[
+                      { label: '+ Angka/Digit', pattern: '\\d+' },
+                      { label: '+ Tanda Baca', pattern: '[^\\w\\s]' },
+                      { label: '+ Hashtags (#tag)', pattern: '#\\w+' },
+                      { label: '+ [Kurung/Gambas]', pattern: '\\[.*?\\]|\\(.*?\\)' },
+                      { label: '+ Email/HP', pattern: '\\b[\\w\\.-]+@[\\w\\.-]+\\.\\w+\\b|\\b(?:\\+62|62|08)[0-9]{8,12}\\b' },
+                    ].map(preset => {
+                      const isAdded = customRegex.includes(preset.pattern);
+                      return (
+                        <button
+                          key={preset.label}
+                          type="button"
+                          onClick={() => {
+                            if (isAdded) {
+                              setCustomRegex(prev => prev.split('\n').filter(p => p.trim() !== preset.pattern).join('\n').trim());
+                            } else {
+                              setCustomRegex(prev => (prev.trim() ? prev.trim() + '\n' + preset.pattern : preset.pattern));
+                            }
+                          }}
+                          className={`text-[10px] font-mono px-2 py-0.5 rounded border transition-colors ${
+                            isAdded
+                              ? 'bg-zinc-900 text-white border-zinc-900 font-semibold'
+                              : 'bg-zinc-100 hover:bg-zinc-200 text-zinc-700 border-zinc-200'
+                          }`}
+                        >
+                          {isAdded ? `✓ ${preset.label.replace('+', '')}` : preset.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+
                   <textarea
                     rows={2}
                     value={customRegex}
                     onChange={e => setCustomRegex(e.target.value)}
-                    placeholder="e.g.&#10;^editor\s*:.*&#10;\[advertisement\]"
+                    placeholder="Pilih preset di atas atau ketik regex kustom per baris..."
                     className="w-full text-xs font-mono bg-zinc-50 border border-zinc-200 rounded-lg p-2.5 text-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-950"
                   />
                 </div>

@@ -335,8 +335,15 @@ class UniversalTextCleaner:
 
         if custom_remove_phrases:
             for phrase in custom_remove_phrases:
-                if phrase and phrase.strip():
-                    text = re.sub(re.escape(phrase.strip()), " ", text, flags=re.IGNORECASE)
+                p = phrase.strip()
+                if not p:
+                    continue
+                if p.endswith("...") or p.endswith("*"):
+                    clean_prefix = re.escape(p.rstrip(".*").strip())
+                    pattern = rf"{clean_prefix}.*?(?:\.|\n|$)"
+                    text = re.sub(pattern, " ", text, flags=re.IGNORECASE)
+                else:
+                    text = re.sub(re.escape(p), " ", text, flags=re.IGNORECASE)
 
         if custom_regex_list:
             for pattern in custom_regex_list:
