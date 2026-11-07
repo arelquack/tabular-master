@@ -31,6 +31,10 @@ export const IndoBertStudio: React.FC<IndoBertStudioProps> = ({
   const [textCols, setTextCols] = useState<string[]>([]);
   const [targetCol, setTargetCol] = useState<string>('');
   const [useTfidf, setUseTfidf] = useState<boolean>(false);
+  const [useSentimentFeatures, setUseSentimentFeatures] = useState<boolean>(false);
+  const [analysisType, setAnalysisType] = useState<'topic' | 'sentiment'>('topic');
+  const [topicModelName, setTopicModelName] = useState('indobenchmark/indobert-base-p1');
+  const [sentimentModelName, setSentimentModelName] = useState('AzrilFahmiardi/sdd-sentiment-general');
   const [modelName] = useState<string>('indobenchmark/indobert-base-p1');
   const [maxSeqLength, setMaxSeqLength] = useState<number>(256);
   const [batchSize, setBatchSize] = useState<number>(32);
@@ -54,13 +58,20 @@ export const IndoBertStudio: React.FC<IndoBertStudioProps> = ({
   const [sandboxTexts, setSandboxTexts] = useState<Record<string, string>>({});
   const [isPredicting, setIsPredicting] = useState<boolean>(false);
   const [predictionResult, setPredictionResult] = useState<any>(null);
+  const [testFiles, setTestFiles] = useState<Array<{ path: string; filename: string; size_mb: number }>>([]);
+  const [selectedTestFile, setSelectedTestFile] = useState<string>('');
+  const [isExportingTest, setIsExportingTest] = useState<boolean>(false);
 
   const availableCols: string[] = caseDetail?.dataset_columns || [];
   const sandboxCols: string[] = results?.meta?.text_cols || textCols;
   const featureLabel = useTfidf ? 'IndoBERT + TF-IDF' : 'IndoBERT';
+  const resultEncoderLabel = results?.meta?.model_name && results.meta.model_name !== 'TF-IDF'
+    ? String(results.meta.model_name).split('/').pop()
+    : 'IndoBERT';
   const resultFeatureLabel = results?.meta?.feature_extractor === 'both'
-    ? 'IndoBERT + TF-IDF'
-    : (results?.meta?.feature_extractor === 'tfidf' ? 'TF-IDF' : 'IndoBERT');
+    ? `${resultEncoderLabel} + TF-IDF`
+    : (results?.meta?.feature_extractor === 'tfidf' ? 'TF-IDF' : (results?.meta?.feature_extractor === 'pretrained_sentiment' ? 'Indonesian Sentiment Model' : resultEncoderLabel));
+  const isSentiment = analysisType === 'sentiment';
 
   // Fetch GPU Status
   const fetchGpuStatus = async () => {
@@ -91,6 +102,12 @@ export const IndoBertStudio: React.FC<IndoBertStudioProps> = ({
         setTrainState(data);
         if (data.results) {
           setResults(data.results);
+          if (data.results.meta?.sentiment_model_name) {
+            setSentimentModelName(data.results.meta.sentiment_model_name);
+          }
+          if (data.results.meta?.model_name && ['indobenchmark/indobert-base-p1', 'indolem/indobertweet-base-uncased', 'flax-community/indonesian-roberta-base'].includes(data.results.meta.model_name)) {
+            setTopicModelName(data.results.meta.model_name);
+          }
         }
         if (data.status === 'running') {
           setIsTraining(true);
@@ -147,6 +164,18 @@ export const IndoBertStudio: React.FC<IndoBertStudioProps> = ({
     });
   }, [results]);
 
+  useEffect(() => {
+    if (results?.meta?.feature_extractor !== 'pretrained_sentiment') return;
+    fetch('/api/scan-workspace-csvs')
+      .then((res) => res.ok ? res.json() : Promise.reject(new Error('Tidak dapat memuat daftar file CSV')))
+      .then((data) => {
+        const files = (data.files || []).filter((file: any) => ['CSV', 'XLSX'].includes(file.format));
+        setTestFiles(files);
+        setSelectedTestFile((current) => files.some((file: any) => file.path === current) ? current : '');
+      })
+      .catch((err) => console.error('Gagal memuat file data tes:', err));
+  }, [selectedCaseId, results?.meta?.feature_extractor]);
+
   // Trigger Training
   const handleStartTraining = async () => {
     if (!selectedCaseId) return;
@@ -159,7 +188,7 @@ export const IndoBertStudio: React.FC<IndoBertStudioProps> = ({
       alert('Pilih setidaknya satu kolom teks sebagai fitur!');
       return;
     }
-    if (selectedModels.length === 0) {
+    if (!isSentiment && selectedModels.length === 0) {
       alert('Pilih setidaknya satu algoritma classifier (LightGBM, CatBoost, atau XGBoost)!');
       return;
     }
@@ -174,6 +203,10 @@ export const IndoBertStudio: React.FC<IndoBertStudioProps> = ({
           text_cols: textCols,
           target_col: targetCol,
           feature_extractor: useTfidf ? 'both' : 'indobert',
+          text_task: analysisType === 'sentiment' ? 'sentiment_multiclass' : 'topic_classification',
+          sentiment_model_name: sentimentModelName,
+          feature_model_name: topicModelName,
+          use_sentiment_features: useSentimentFeatures,
           tfidf_max_features: tfidfMaxFeatures,
           tfidf_ngram_min: 1,
           tfidf_ngram_max: tfidfNgramMax,
@@ -188,7 +221,7 @@ export const IndoBertStudio: React.FC<IndoBertStudioProps> = ({
 
       if (!res.ok) {
         const err = await res.json();
-        alert(err.detail || 'Gagal memulai pelatihan IndoBERT Studio');
+        alert(err.detail || 'Gagal memulai Language Studio');
         setIsTraining(false);
       } else {
         fetchIndoBertState();
@@ -223,6 +256,38 @@ export const IndoBertStudio: React.FC<IndoBertStudioProps> = ({
     }
   };
 
+  const handleLabelTestFile = async () => {
+    if (!selectedTestFile) return;
+    setIsExportingTest(true);
+    try {
+      const response = await fetch(`/api/cases/${selectedCaseId}/indobert/predict-file`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: selectedTestFile, text_cols: results?.meta?.text_cols || textCols })
+      });
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.detail || 'Gagal memprediksi file tes');
+      }
+      const blob = await response.blob();
+      const disposition = response.headers.get('Content-Disposition') || '';
+      const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+      const filename = encodedName ? decodeURIComponent(encodedName) : 'sentiment_labeled_test.csv';
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch (error: any) {
+      alert(error.message || 'Gagal memprediksi file tes');
+    } finally {
+      setIsExportingTest(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Studio Header & Hardware Acceleration Card */}
@@ -234,13 +299,13 @@ export const IndoBertStudio: React.FC<IndoBertStudioProps> = ({
             </span>
             <div>
               <h2 className="text-xl font-bold text-zinc-950 flex items-center gap-2">
-                IndoBERT Studio
+                Language Studio
                 <span className="text-xs px-2.5 py-0.5 rounded-full font-mono font-medium bg-emerald-100 text-emerald-800 border border-emerald-200">
                   indobenchmark/indobert-base-p1
                 </span>
               </h2>
               <p className="text-xs text-zinc-500 mt-0.5">
-                Indonesian text feature extraction with IndoBERT embeddings plus optional TF-IDF features, with downstream GBDT classification (LightGBM, CatBoost &amp; XGBoost).
+                {isSentiment ? 'Analisis sentimen bahasa Indonesia dengan IndoBERT yang sudah di-fine-tune untuk klasifikasi sentimen.' : 'Indonesian text feature extraction with IndoBERT embeddings plus optional TF-IDF features, with downstream GBDT classification (LightGBM, CatBoost &amp; XGBoost).'}
               </p>
             </div>
           </div>
@@ -292,15 +357,15 @@ export const IndoBertStudio: React.FC<IndoBertStudioProps> = ({
           </span>
           <span className="text-zinc-500">&rarr;</span>
           <span className="bg-emerald-950/80 text-emerald-300 px-2.5 py-1 rounded border border-emerald-800/80 font-semibold">
-            2. {featureLabel === 'IndoBERT + TF-IDF' ? 'IndoBERT Base + TF-IDF Features' : 'IndoBERT Base (768-dim Embeddings)'}
+            2. {isSentiment ? 'IndoBERT Sentiment Classifier' : `${topicModelName.split('/').pop()}${useTfidf ? ' + TF-IDF' : ' Embeddings'}`}
           </span>
           <span className="text-zinc-500">&rarr;</span>
           <span className="bg-blue-950/80 text-blue-300 px-2.5 py-1 rounded border border-blue-800/80">
-            3. LightGBM + CatBoost + XGBoost
+            {isSentiment ? '3. Pretrained Sentiment Classifier' : '3. LightGBM + CatBoost + XGBoost'}
           </span>
           <span className="text-zinc-500">&rarr;</span>
           <span className="bg-amber-950/80 text-amber-300 px-2.5 py-1 rounded border border-amber-800/80 font-bold">
-            4. Soft Voting Ensemble
+            {isSentiment ? '4. Negative / Neutral / Positive' : '4. Soft Voting Ensemble'}
           </span>
         </div>
       </div>
@@ -313,6 +378,37 @@ export const IndoBertStudio: React.FC<IndoBertStudioProps> = ({
             <Database size={15} className="text-zinc-500" />
             1. Kolom &amp; Feature Extractor
           </h3>
+
+          <div>
+            <label className="block text-xs font-semibold text-zinc-700 mb-1">Jenis Analisis</label>
+            <select value={analysisType} onChange={(e) => setAnalysisType(e.target.value as 'topic' | 'sentiment')} className="w-full text-xs bg-zinc-50 border border-zinc-200 rounded-lg p-2">
+              <option value="topic">Topik</option><option value="sentiment">Sentimen (multikelas)</option>
+            </select>
+          </div>
+
+          {isSentiment && (
+            <div className="p-3 rounded-lg border border-violet-200 bg-violet-50/50">
+              <label className="block text-xs font-semibold text-zinc-700 mb-1.5">Model Sentimen / Feature Extractor</label>
+              <select value={sentimentModelName} onChange={(e) => setSentimentModelName(e.target.value)} className="w-full text-xs bg-white border border-zinc-200 rounded-lg p-2 font-mono">
+                <option value="AzrilFahmiardi/sdd-sentiment-general">IndoBERT Sentiment — Berita Indonesia</option>
+                <option value="Aardiiiiy/indobertweet-base-Indonesian-sentiment-analysis">IndoBERTweet — Sentiment</option>
+                <option value="w11wo/indonesian-roberta-base-sentiment-classifier">Indonesian RoBERTa — Sentiment</option>
+              </select>
+              <p className="text-[11px] text-zinc-500 mt-1.5">Model terpilih akan mengklasifikasikan sentimen secara langsung dan dipakai juga untuk pelabelan file tes.</p>
+            </div>
+          )}
+
+          {!isSentiment && (
+            <div className="p-3 rounded-lg border border-sky-200 bg-sky-50/50">
+              <label className="block text-xs font-semibold text-zinc-700 mb-1.5">Model Feature Extractor Topik</label>
+              <select value={topicModelName} onChange={(e) => setTopicModelName(e.target.value)} className="w-full text-xs bg-white border border-zinc-200 rounded-lg p-2 font-mono">
+                <option value="indobenchmark/indobert-base-p1">IndoBERT Base P1</option>
+                <option value="indolem/indobertweet-base-uncased">IndoBERTweet Base</option>
+                <option value="flax-community/indonesian-roberta-base">Indonesian RoBERTa Base</option>
+              </select>
+              <p className="text-[11px] text-zinc-500 mt-1.5">Embedding dari model ini akan dipakai oleh classifier GBDT untuk klasifikasi topik.</p>
+            </div>
+          )}
 
           <div>
             <label className="block text-xs font-semibold text-zinc-700 mb-1">
@@ -337,7 +433,7 @@ export const IndoBertStudio: React.FC<IndoBertStudioProps> = ({
             </div>
           </div>
 
-          <div className={`p-3 rounded-lg border transition-all ${useTfidf ? 'bg-emerald-50/50 border-emerald-200' : 'bg-zinc-50 border-zinc-200'}`}>
+          <div className={`p-3 rounded-lg border transition-all ${useTfidf ? 'bg-emerald-50/50 border-emerald-200' : 'bg-zinc-50 border-zinc-200'} ${isSentiment ? 'hidden' : ''}`}>
             <label className="flex items-start space-x-2.5 cursor-pointer">
               <input
                 type="checkbox"
@@ -354,9 +450,14 @@ export const IndoBertStudio: React.FC<IndoBertStudioProps> = ({
             </label>
           </div>
 
+          <label className={`flex items-start gap-2.5 p-3 rounded-lg border cursor-pointer ${useSentimentFeatures ? 'bg-amber-50 border-amber-200' : 'bg-zinc-50 border-zinc-200'} ${isSentiment ? 'hidden' : ''}`}>
+            <input type="checkbox" checked={useSentimentFeatures} onChange={(e) => setUseSentimentFeatures(e.target.checked)} className="mt-0.5 rounded border-zinc-300 text-emerald-600" />
+            <span><span className="block text-xs font-bold text-zinc-900">Gunakan fitur sentiment (lexicon + negasi + emoji)</span><span className="text-[11px] text-zinc-500">Memperkuat sinyal polaritas per kolom teks.</span></span>
+          </label>
+
           <div>
             <label className="block text-xs font-semibold text-zinc-700 mb-1">
-              Target Classification Column *
+              {isSentiment ? 'Kolom Label (opsional untuk evaluasi)' : 'Target Classification Column *'}
             </label>
             <select
               value={targetCol}
@@ -482,7 +583,7 @@ export const IndoBertStudio: React.FC<IndoBertStudioProps> = ({
         </div>
 
         {/* Center: Downstream Machine Learning Classifiers */}
-        <div className="bg-white border border-zinc-200/80 rounded-xl p-5 shadow-xs space-y-4">
+        <div className={`bg-white border border-zinc-200/80 rounded-xl p-5 shadow-xs space-y-4 ${isSentiment ? 'hidden' : ''}`}>
           <h3 className="text-sm font-bold text-zinc-900 flex items-center gap-1.5">
             <BarChart3 size={15} className="text-zinc-500" />
             2. Downstream ML Classifiers
@@ -566,18 +667,18 @@ export const IndoBertStudio: React.FC<IndoBertStudioProps> = ({
               3. Eksekusi Pelatihan
             </h3>
             <p className="text-xs text-zinc-500 leading-relaxed">
-              Fitur teks diekstrak menjadi vektor IndoBERT 768 dimensi atau matriks TF-IDF sparse, lalu model GBDT dilatih dengan validasi silang (Cross-Validation).
+              {isSentiment ? 'Model IndoBERT yang sudah fine-tuned untuk sentimen Indonesia langsung memprediksi negatif, netral, atau positif. Model akan diunduh otomatis saat pertama kali digunakan.' : 'Fitur teks diekstrak menjadi vektor IndoBERT 768 dimensi atau matriks TF-IDF sparse, lalu model GBDT dilatih dengan validasi silang (Cross-Validation).'}
             </p>
 
             <div className="space-y-1.5 text-xs text-zinc-600 border-t border-zinc-100 pt-3">
               <div className="flex justify-between">
                 <span>Model BERT:</span>
-                <span className="font-mono font-medium text-zinc-900">indobert-base-p1</span>
+                <span className="font-mono font-medium text-zinc-900">{isSentiment ? sentimentModelName.split('/').pop() : topicModelName.split('/').pop()}</span>
               </div>
               <div className="flex justify-between">
                 <span>Feature Extractor:</span>
                 <span className="font-mono font-medium text-zinc-900">
-                  {featureLabel}
+                  {isSentiment ? 'Pretrained sentiment classifier' : featureLabel}
                 </span>
               </div>
               <div className="flex justify-between">
@@ -602,9 +703,9 @@ export const IndoBertStudio: React.FC<IndoBertStudioProps> = ({
           <button
             type="button"
             onClick={handleStartTraining}
-            disabled={isTraining || textCols.length === 0 || !targetCol}
+            disabled={isTraining || textCols.length === 0 || (!targetCol && !isSentiment)}
             className={`w-full py-3 px-4 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-2 shadow-sm ${
-              isTraining || textCols.length === 0 || !targetCol
+              isTraining || textCols.length === 0 || (!targetCol && !isSentiment)
                 ? 'bg-zinc-200 text-zinc-400 cursor-not-allowed'
                 : 'bg-zinc-950 text-white hover:bg-zinc-800'
             }`}
@@ -612,12 +713,12 @@ export const IndoBertStudio: React.FC<IndoBertStudioProps> = ({
             {isTraining ? (
               <>
                 <Loader2 className="animate-spin" size={16} />
-                <span>Pelatihan IndoBERT Sedang Berjalan...</span>
+                <span>{isSentiment ? 'Analisis Sentimen Sedang Berjalan...' : 'Pelatihan IndoBERT Sedang Berjalan...'}</span>
               </>
             ) : (
               <>
                 <Play size={16} />
-                <span>Mulai Pelatihan {featureLabel} + GBDT</span>
+                <span>{isSentiment ? 'Mulai Analisis Sentimen' : `Mulai Pelatihan ${featureLabel} + GBDT`}</span>
               </>
             )}
           </button>
@@ -631,7 +732,7 @@ export const IndoBertStudio: React.FC<IndoBertStudioProps> = ({
             <div className="flex items-center space-x-2">
               <span className={`h-2.5 w-2.5 rounded-full ${isTraining ? 'bg-emerald-400 animate-ping' : 'bg-emerald-500'}`} />
               <span className="text-xs font-mono font-semibold text-zinc-100">
-                Live IndoBERT Execution Terminal ({trainState?.stage || 'idle'})
+                Live Language Studio Execution Terminal ({trainState?.stage || 'idle'})
               </span>
             </div>
             <span className="text-xs font-mono text-zinc-400">
@@ -701,7 +802,7 @@ export const IndoBertStudio: React.FC<IndoBertStudioProps> = ({
               <div>
                 <h4 className="text-sm font-bold text-zinc-900">Perbandingan Model Klasifikasi ({resultFeatureLabel} Features)</h4>
                 <p className="text-xs text-zinc-500 mt-0.5">
-                  Hasil evaluasi out-of-fold validasi silang {results.meta?.total_samples?.toLocaleString()} sampel berita
+                  {results.meta?.feature_extractor === 'pretrained_sentiment' ? 'Hasil model sentimen pretrained' : 'Hasil evaluasi out-of-fold validasi silang'} {results.meta?.total_samples?.toLocaleString()} sampel berita
                 </p>
               </div>
               <span className="text-xs font-mono bg-zinc-100 text-zinc-700 px-2.5 py-1 rounded border border-zinc-200">
@@ -756,7 +857,38 @@ export const IndoBertStudio: React.FC<IndoBertStudioProps> = ({
                 </tbody>
               </table>
             </div>
+            {Object.entries(results.models || {}).map(([key, model]: [string, any]) => (
+              <div key={`${key}-class-metrics`} className="mt-3 rounded-lg border border-zinc-200 overflow-hidden">
+                <div className="px-3 py-2 bg-zinc-50 text-xs font-semibold">Recall &amp; F1 per kelas — {model.name}</div>
+                <div className="flex flex-wrap gap-2 p-3">
+                  {Object.entries(model.per_class || {}).map(([label, metric]: [string, any]) => (
+                    <span key={label} className={`text-[11px] px-2 py-1 rounded border ${label.toLowerCase().includes('neutral') || label.toLowerCase().includes('netral') ? 'bg-amber-50 border-amber-200 text-amber-900' : 'bg-zinc-50 border-zinc-200 text-zinc-700'}`}>
+                      {label}: recall {metric.recall}% · F1 {metric.f1_score}%
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
+
+          {results.meta?.feature_extractor === 'pretrained_sentiment' && (
+            <div className="bg-white border border-emerald-200 rounded-xl p-5 shadow-xs space-y-3">
+              <div>
+                <h4 className="text-sm font-bold text-zinc-900">Labeli File Data Tes &amp; Export CSV</h4>
+                <p className="text-xs text-zinc-500 mt-1">Pilih CSV atau XLSX dari workspace. Model sentimen yang sudah aktif akan memberi label pada semua baris dan mengunduh hasilnya sebagai CSV.</p>
+              </div>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <select value={selectedTestFile} onChange={(e) => setSelectedTestFile(e.target.value)} className="flex-1 text-xs bg-zinc-50 border border-zinc-200 rounded-lg p-2 font-mono">
+                  <option value="">Pilih file CSV atau XLSX...</option>
+                  {testFiles.map((file) => <option key={file.path} value={file.path}>{file.path} ({file.size_mb} MB)</option>)}
+                </select>
+                <button type="button" onClick={handleLabelTestFile} disabled={!selectedTestFile || isExportingTest} className="px-4 py-2 bg-emerald-700 text-white rounded-lg text-xs font-semibold hover:bg-emerald-800 disabled:opacity-50 flex items-center justify-center gap-2">
+                  {isExportingTest ? <><Loader2 size={14} className="animate-spin" /> Memberi label...</> : <><Database size={14} /> Labeli &amp; Unduh CSV</>}
+                </button>
+              </div>
+              <p className="text-[11px] text-zinc-500">Kolom teks yang dipilih saat analisis harus tersedia pada file tes.</p>
+            </div>
+          )}
 
           {/* Interactive Live Inference Sandbox */}
           <div className="bg-white border border-zinc-200/80 rounded-xl p-5 shadow-xs space-y-4">

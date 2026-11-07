@@ -238,7 +238,7 @@ export default function App() {
   const [caseDetail, setCaseDetail] = useState<CaseDetail | null>(null);
   
   // Data Mining Workflow Tabs
-  // Studio Mode: Tabular vs NLP / Text Studio vs IndoBERT Studio
+  // Studio Mode: Tabular vs NLP / Text Studio vs Language Studio
   const [studioMode, setStudioMode] = useState<'tabular' | 'nlp' | 'indobert'>('tabular');
 
   const [activeTab, setActiveTab] = useState<'eda' | 'fe' | 'training' | 'ablation' | 'ensemble' | 'artifacts'>('eda');
@@ -1685,7 +1685,7 @@ class CustomFeatureHook(BaseFeatureHook):
               }`}
             >
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-              IndoBERT Studio
+              Language Studio
             </button>
           </div>
 

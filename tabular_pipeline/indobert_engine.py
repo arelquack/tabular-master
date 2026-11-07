@@ -11,6 +11,59 @@ import lightgbm as lgb
 import xgboost as xgb
 from catboost import CatBoostClassifier
 
+
+class IndonesianSentimentModel:
+    """Inference wrapper for a pretrained Indonesian sentiment classifier."""
+    DEFAULT_MODEL = "AzrilFahmiardi/sdd-sentiment-general"
+
+    def __init__(self, model_name: str = DEFAULT_MODEL, use_gpu: bool = True):
+        self.model_name = model_name
+        self.use_gpu = use_gpu
+        self.tokenizer = None
+        self.model = None
+        self.device = "cpu"
+
+    def _load(self):
+        if self.model is not None:
+            return
+        import torch
+        from transformers import AutoTokenizer, AutoModelForSequenceClassification
+        self.device = "cuda" if self.use_gpu and torch.cuda.is_available() else "cpu"
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+        self.model = AutoModelForSequenceClassification.from_pretrained(self.model_name).to(self.device)
+        self.model.eval()
+
+    def predict_proba(self, texts: List[str], batch_size: int = 16, max_length: int = 256,
+                      progress_callback=None) -> Tuple[np.ndarray, List[str]]:
+        import torch
+        self._load()
+        all_probs = []
+        for start in range(0, len(texts), batch_size):
+            batch = [str(t).strip() or "[PAD]" for t in texts[start:start + batch_size]]
+            inputs = self.tokenizer(batch, padding=True, truncation=True, max_length=max_length, return_tensors="pt").to(self.device)
+            with torch.no_grad():
+                probs = torch.softmax(self.model(**inputs).logits, dim=-1).cpu().numpy()
+            all_probs.append(probs)
+            if progress_callback:
+                progress_callback(min(start + len(batch), len(texts)), len(texts))
+        if not all_probs:
+            return np.empty((0, len(self.model.config.id2label))), [self.model.config.id2label[i] for i in range(len(self.model.config.id2label))]
+        id2label = self.model.config.id2label
+        labels = [str(id2label[i]) for i in range(len(id2label))]
+        return np.vstack(all_probs), labels
+
+    def release(self):
+        self.model = None
+        self.tokenizer = None
+        import gc
+        gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+
 class IndoBERTEngine:
     """
     IndoBERT (indobenchmark/indobert-base-p1) Neural Representation Engine with
@@ -228,9 +281,11 @@ class IndoBERTEngine:
         log_callback: Optional[Callable[[str], None]] = None,
     ):
         """Fit a classifier, retrying on CPU when GPU VRAM runs out."""
+        from sklearn.utils.class_weight import compute_sample_weight
+        sample_weight = compute_sample_weight("balanced", y)
         clf = IndoBERTEngine._build_classifier(m_key, n_classes, is_binary, seed, gpu_avail)
         try:
-            clf.fit(X, y)
+            clf.fit(X, y, sample_weight=sample_weight)
             return clf
         except Exception as e:
             message = str(e).lower()
@@ -245,7 +300,7 @@ class IndoBERTEngine:
             except Exception:
                 pass
             clf = IndoBERTEngine._build_classifier(m_key, n_classes, is_binary, seed, False)
-            clf.fit(X, y)
+            clf.fit(X, y, sample_weight=sample_weight)
             return clf
 
     @staticmethod
@@ -255,13 +310,14 @@ class IndoBERTEngine:
         models_to_train: List[str] = ["lgbm", "catboost", "xgb"],
         seed: int = 2026,
         log_callback: Optional[Callable[[str], None]] = None,
+        text_task: str = "topic_classification",
     ) -> Dict[str, Any]:
         """Train final classifiers on the full dataset so the sandbox can run real inference."""
         unique_labels = sorted(list(pd.Series(y_raw).dropna().unique()))
         label2idx = {l: idx for idx, l in enumerate(unique_labels)}
         y = pd.Series(y_raw).map(label2idx).values
         n_classes = len(unique_labels)
-        is_binary = n_classes == 2
+        is_binary = text_task == "sentiment_binary"
 
         gpu_avail = False
         try:
@@ -295,7 +351,8 @@ class IndoBERTEngine:
         models_to_train: List[str] = ["lgbm", "catboost", "xgb"],
         n_splits: int = 5,
         seed: int = 2026,
-        log_callback: Optional[Callable[[str], None]] = None
+        log_callback: Optional[Callable[[str], None]] = None,
+        text_task: str = "topic_classification",
     ) -> Dict[str, Any]:
         """
         Train downstream GBDT classifiers (LightGBM, CatBoost, XGBoost) on top of IndoBERT embeddings.
@@ -307,7 +364,7 @@ class IndoBERTEngine:
         idx2label = {idx: l for idx, l in enumerate(unique_labels)}
         y = pd.Series(y_raw).map(label2idx).values
         n_classes = len(unique_labels)
-        is_binary = n_classes == 2
+        is_binary = text_task == "sentiment_binary"
 
         if log_callback:
             log_callback(f"[IndoBERT ML] Target classes ({n_classes}): {unique_labels}")

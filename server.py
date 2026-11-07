@@ -174,6 +174,7 @@ class NLPTrainRequest(BaseModel):
     ngram_max: int = 2
     n_splits: int = 5
     c_param: float = 1.5
+    use_sentiment_features: bool = False
 
 class NLPCleanRequest(BaseModel):
     columns_to_combine: Optional[List[str]] = None
@@ -206,6 +207,10 @@ class IndoBertTrainRequest(BaseModel):
     text_col: Optional[str] = None
     text_cols: Optional[List[str]] = None
     feature_extractor: Optional[str] = "indobert"
+    feature_model_name: Optional[str] = "indobenchmark/indobert-base-p1"
+    text_task: Optional[str] = "topic_classification"
+    sentiment_model_name: Optional[str] = "AzrilFahmiardi/sdd-sentiment-general"
+    use_sentiment_features: Optional[bool] = False
     tfidf_max_features: Optional[int] = 15000
     tfidf_ngram_min: Optional[int] = 1
     tfidf_ngram_max: Optional[int] = 2
@@ -221,6 +226,10 @@ class IndoBertTrainRequest(BaseModel):
 class IndoBertPredictRequest(BaseModel):
     text: Optional[str] = None
     texts: Optional[Dict[str, str]] = None
+
+class IndoBertPredictFileRequest(BaseModel):
+    path: str
+    text_cols: Optional[List[str]] = None
 
 
 class DiscoverRelationalRequest(BaseModel):
@@ -1692,7 +1701,8 @@ def execute_nlp_train(case_id: str, req: NLPTrainRequest):
             ngram_min=req.ngram_min,
             ngram_max=req.ngram_max,
             n_splits=req.n_splits,
-            c_param=req.c_param
+            c_param=req.c_param,
+            use_sentiment_features=req.use_sentiment_features
         )
 
         # Save submission if test predictions were generated
@@ -1796,7 +1806,7 @@ def execute_nlp_clean(case_id: str, req: NLPCleanRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
 # -------------------------------------------------------------
-# IndoBERT Studio Endpoints & Hardware GPU Acceleration
+# Language Studio Endpoints & Hardware GPU Acceleration
 # -------------------------------------------------------------
 @app.get("/api/system/gpu-status")
 def get_system_gpu_status():
@@ -1851,7 +1861,7 @@ def run_indobert_pipeline_task(case_id: str, req: IndoBertTrainRequest, backgrou
         "status": "running",
         "stage": "starting",
         "progress": 0,
-        "logs": [f"[{time.strftime('%H:%M:%S')}] Initializing IndoBERT Studio pipeline..."],
+        "logs": [f"[{time.strftime('%H:%M:%S')}] Initializing Language Studio pipeline..."],
         "results": None
     }
 
@@ -1898,15 +1908,123 @@ def run_indobert_pipeline_task(case_id: str, req: IndoBertTrainRequest, backgrou
                     if c in df.columns:
                         target_col = c
                         break
-                if not target_col or target_col not in df.columns:
+                if (not target_col or target_col not in df.columns) and (req.text_task or "topic_classification") == "topic_classification":
                     target_col = df.columns[-1]
 
-            if target_col not in df.columns:
+            text_task = req.text_task or "topic_classification"
+            if text_task not in {"topic_classification", "sentiment_binary", "sentiment_multiclass", "sentiment_regression", "aspect_sentiment"}:
+                raise ValueError(f"Jenis analisis tidak dikenal: {text_task}")
+            if text_task in {"sentiment_regression", "aspect_sentiment"}:
+                raise ValueError(f"Task '{text_task}' belum didukung oleh classifier sentimen saat ini.")
+            if (not target_col or target_col not in df.columns) and text_task == "topic_classification":
                 raise ValueError(f"Kolom target '{target_col}' tidak ditemukan dalam dataset. Kolom yang tersedia: {list(df.columns)}")
+
+            if text_task.startswith("sentiment"):
+                supported_sentiment_models = {
+                    "AzrilFahmiardi/sdd-sentiment-general",
+                    "Aardiiiiy/indobertweet-base-Indonesian-sentiment-analysis",
+                    "w11wo/indonesian-roberta-base-sentiment-classifier",
+                }
+                model_name = req.sentiment_model_name or "AzrilFahmiardi/sdd-sentiment-general"
+                if model_name not in supported_sentiment_models:
+                    raise ValueError(f"Model sentimen tidak didukung: {model_name}")
+                log(f"Sentiment mode: loading pretrained sentiment classifier '{model_name}' (no GBDT training).")
+                indobert_state[case_id]["stage"] = "pretrained_sentiment_inference"
+                indobert_state[case_id]["progress"] = 15
+                from tabular_pipeline.indobert_engine import IndonesianSentimentModel
+                from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, confusion_matrix, classification_report
+                sentiment_model = IndonesianSentimentModel(model_name=model_name, use_gpu=req.use_gpu)
+                combined_texts = df[text_cols].fillna("").astype(str).agg(" ".join, axis=1).tolist()
+                probabilities, raw_model_labels = sentiment_model.predict_proba(
+                    combined_texts, batch_size=req.batch_size or 16, max_length=req.max_length or 256,
+                    progress_callback=lambda current, total: indobert_state[case_id].update(progress=15 + int(65 * current / max(total, 1)))
+                )
+                sentiment_model.release()
+
+                def normalize_sentiment(value, index=None):
+                    label = str(value).strip().lower()
+                    if label in {"pos", "positif", "positive", "1"} or "posit" in label: return "positive"
+                    if label in {"neg", "negatif", "negative", "-1"} or "negat" in label: return "negative"
+                    if label in {"netral", "neutral"} or "neutral" in label: return "neutral"
+                    if label.startswith("label_") and index is not None:
+                        return {0: "negative", 1: "neutral", 2: "positive"}.get(index, label)
+                    if label == "0": return "neutral"
+                    return label
+
+                model_labels = [normalize_sentiment(v, i) for i, v in enumerate(raw_model_labels)]
+                canonical = ["negative", "neutral", "positive"]
+                order = sorted(range(len(model_labels)), key=lambda i: canonical.index(model_labels[i]) if model_labels[i] in canonical else 99)
+                model_labels = [model_labels[i] for i in order]
+                probabilities = probabilities[:, order]
+                if text_task == "sentiment_binary":
+                    keep = [i for i, label in enumerate(model_labels) if label in {"negative", "positive"}]
+                    probabilities = probabilities[:, keep]
+                    probabilities = probabilities / np.clip(probabilities.sum(axis=1, keepdims=True), 1e-12, None)
+                    model_labels = [model_labels[i] for i in keep]
+                predictions = np.asarray([model_labels[i] for i in probabilities.argmax(axis=1)], dtype=object)
+                results = {"classes": model_labels, "n_classes": len(model_labels), "models": {}, "ensemble": None}
+                if target_col and target_col in df.columns:
+                    valid_mask = df[target_col].notna().values
+                    raw_gold = df.loc[valid_mask, target_col].values
+                    raw_unique = {str(v).strip().lower() for v in raw_gold}
+                    if raw_unique and raw_unique <= {"0", "1", "2"} and "2" in raw_unique:
+                        numeric_map = {"0": "negative", "1": "neutral", "2": "positive"}
+                        gold_labels = np.asarray([numeric_map[str(v).strip().lower()] for v in raw_gold], dtype=object)
+                    elif raw_unique and raw_unique <= {"0", "1"} and text_task == "sentiment_binary":
+                        gold_labels = np.asarray([{"0": "negative", "1": "positive"}[str(v).strip().lower()] for v in raw_gold], dtype=object)
+                    else:
+                        gold_labels = np.asarray([normalize_sentiment(v) for v in raw_gold], dtype=object)
+                    if not set(gold_labels).issubset({"negative", "neutral", "positive"}):
+                        log(f"Kolom target '{target_col}' bukan label sentimen yang dikenali; evaluasi label dilewati.")
+                        gold_labels = np.asarray([], dtype=object)
+                    if len(gold_labels):
+                        pred_valid = predictions[valid_mask]
+                        label_order = [c for c in canonical if c in set(gold_labels) | set(pred_valid)]
+                        label_order += sorted((set(gold_labels) | set(pred_valid)) - set(label_order))
+                        rep = classification_report(gold_labels, pred_valid, labels=label_order, output_dict=True, zero_division=0)
+                        per_class = {c: {"precision": round(rep[c]["precision"]*100, 2), "recall": round(rep[c]["recall"]*100, 2), "f1_score": round(rep[c]["f1-score"]*100, 2), "support": int(rep[c]["support"])} for c in label_order}
+                        results["models"]["pretrained_sentiment"] = {
+                            "name": f"{model_name.split('/')[-1]} (sentiment classifier)",
+                            "accuracy": round(accuracy_score(gold_labels, pred_valid)*100, 2),
+                            "f1_macro": round(f1_score(gold_labels, pred_valid, labels=label_order, average="macro", zero_division=0)*100, 2),
+                            "f1_weighted": round(f1_score(gold_labels, pred_valid, labels=label_order, average="weighted", zero_division=0)*100, 2),
+                            "precision_macro": round(precision_score(gold_labels, pred_valid, labels=label_order, average="macro", zero_division=0)*100, 2),
+                            "recall_macro": round(recall_score(gold_labels, pred_valid, labels=label_order, average="macro", zero_division=0)*100, 2),
+                            "confusion_matrix": confusion_matrix(gold_labels, pred_valid, labels=label_order).tolist(),
+                            "per_class": per_class,
+                            "training_time_sec": 0,
+                        }
+                        results["classes"] = label_order
+                out_dir = os.path.join(ROOT_DIR, f"experiments/{case_id}_indobert")
+                os.makedirs(out_dir, exist_ok=True)
+                import joblib
+                artifact_path = os.path.join(out_dir, "inference_model.joblib")
+                joblib.dump({"pretrained_sentiment": True, "sentiment_model_name": model_name,
+                             "text_cols": text_cols, "classes": model_labels, "text_task": text_task}, artifact_path)
+                results["meta"] = {"case_id": case_id, "text_col": text_cols[0], "text_cols": text_cols,
+                    "feature_extractor": "pretrained_sentiment", "target_col": target_col,
+                    "text_task": text_task, "total_samples": len(df), "n_features": 0,
+                    "model_name": model_name, "sentiment_model_name": model_name,
+                    "trained_at": time.strftime("%Y-%m-%d %H:%M:%S")}
+                saved_json = os.path.join(case_dir, "indobert_results.json")
+                with open(saved_json, "w", encoding="utf-8") as f:
+                    json.dump(results, f, indent=2)
+                indobert_state[case_id].update(status="completed", stage="done", progress=100, results=results)
+                log("Pretrained sentiment inference completed.")
+                return
 
             feature_extractor = (req.feature_extractor or "indobert").lower().strip()
             if feature_extractor not in ["indobert", "tfidf", "both"]:
                 raise ValueError(f"Feature extractor tidak dikenal: {feature_extractor}. Pilih 'indobert', 'tfidf', atau 'both'.")
+
+            supported_feature_models = {
+                "indobenchmark/indobert-base-p1",
+                "indolem/indobertweet-base-uncased",
+                "flax-community/indonesian-roberta-base",
+            }
+            feature_model_name = req.feature_model_name or "indobenchmark/indobert-base-p1"
+            if feature_model_name not in supported_feature_models:
+                raise ValueError(f"Model feature extractor tidak didukung: {feature_model_name}")
 
             log(f"Configured Text Feature Columns: {text_cols}")
             log(f"Feature Extractor: {feature_extractor.upper()}")
@@ -1922,9 +2040,10 @@ def run_indobert_pipeline_task(case_id: str, req: IndoBertTrainRequest, backgrou
             if feature_extractor in ["indobert", "both"]:
                 # Check / Create embeddings cache
                 cols_key = re.sub(r"[^A-Za-z0-9]+", "_", "_".join(text_cols)).strip("_")
-                emb_cache_path = os.path.join(out_dir, f"embeddings_{cols_key}_{len(df)}_{req.pooling}_{req.max_length}.npy")
+                model_key = re.sub(r"[^A-Za-z0-9]+", "_", feature_model_name).strip("_")
+                emb_cache_path = os.path.join(out_dir, f"embeddings_{model_key}_{cols_key}_{len(df)}_{req.pooling}_{req.max_length}.npy")
 
-                engine = IndoBERTEngine(use_gpu=req.use_gpu)
+                engine = IndoBERTEngine(model_name=feature_model_name, use_gpu=req.use_gpu)
 
                 if os.path.exists(emb_cache_path):
                     log(f"Found cached IndoBERT embeddings on disk: {os.path.basename(emb_cache_path)}! Skipping neural inference...")
@@ -1979,6 +2098,27 @@ def run_indobert_pipeline_task(case_id: str, req: IndoBertTrainRequest, backgrou
             indobert_state[case_id]["stage"] = "training_classifiers"
             indobert_state[case_id]["progress"] = 60
             y_raw = df[target_col].values
+            # Resolve numeric 0 by dataset context: neutral for an explicit 3-class sentiment set,
+            # otherwise negative for the conventional binary 0/1 encoding.
+            if text_task.startswith("sentiment") and text_task != "sentiment_regression":
+                vals = [str(v).strip().lower() for v in y_raw]
+                has_neutral = any(v in {"netral", "neutral"} for v in vals)
+                norm = {}
+                for raw_value, v in zip(y_raw, vals):
+                    if v in {"pos", "positif", "positive", "1"}: norm[v] = "positive"
+                    elif v in {"neg", "negatif", "negative", "-1"}: norm[v] = "negative"
+                    elif v in {"netral", "neutral"}: norm[v] = "neutral"
+                    elif v == "0": norm[v] = "neutral" if has_neutral or text_task == "sentiment_multiclass" else "negative"
+                    else: norm[v] = str(raw_value)
+                y_raw = np.asarray([norm[v] for v in vals], dtype=object)
+            sentiment_extractor = None
+            if req.use_sentiment_features:
+                from tabular_pipeline.text_engine import SentimentFeatureExtractor
+                sentiment_extractor = SentimentFeatureExtractor()
+                sentiment_matrix = sentiment_extractor.transform(df, text_cols)
+                import scipy.sparse as sp
+                embeddings = sp.hstack([sp.csr_matrix(embeddings), sp.csr_matrix(sentiment_matrix)]).tocsr()
+                log(f"Sentiment features added: {sentiment_matrix.shape[1]} features")
 
             models_selected = req.models if req.models else ["lgbm", "catboost", "xgb"]
             log(f"Fitting downstream tree classifiers: {[m.upper() for m in models_selected]} with {req.n_splits}-fold CV...")
@@ -1990,6 +2130,7 @@ def run_indobert_pipeline_task(case_id: str, req: IndoBertTrainRequest, backgrou
                 n_splits=req.n_splits or 5,
                 seed=req.seed or 2026,
                 log_callback=log
+                ,text_task=text_task
             )
 
             # Metadata info
@@ -2003,9 +2144,11 @@ def run_indobert_pipeline_task(case_id: str, req: IndoBertTrainRequest, backgrou
                 "text_cols": text_cols,
                 "feature_extractor": feature_extractor,
                 "target_col": target_col,
+                "text_task": text_task,
+                "use_sentiment_features": bool(req.use_sentiment_features),
                 "total_samples": len(df),
                 "n_features": int(embeddings.shape[1]),
-                "model_name": "indobenchmark/indobert-base-p1" if feature_extractor != "tfidf" else "TF-IDF",
+                "model_name": feature_model_name if feature_extractor != "tfidf" else "TF-IDF",
                 "pooling": req.pooling or "cls",
                 "max_length": req.max_length or 256,
                 "batch_size": req.batch_size or 32,
@@ -2020,7 +2163,8 @@ def run_indobert_pipeline_task(case_id: str, req: IndoBertTrainRequest, backgrou
                 y_raw=y_raw,
                 models_to_train=models_selected,
                 seed=req.seed or 2026,
-                log_callback=log
+                log_callback=log,
+                text_task=text_task
             )
             import joblib
             artifact_path = os.path.join(out_dir, "inference_model.joblib")
@@ -2031,7 +2175,8 @@ def run_indobert_pipeline_task(case_id: str, req: IndoBertTrainRequest, backgrou
                 "label2idx": final_bundle["label2idx"],
                 "models": final_bundle["models"],
                 "tfidf_vectorizers": tfidf_vectorizers,
-                "model_name": "indobenchmark/indobert-base-p1",
+                "use_sentiment_features": bool(req.use_sentiment_features),
+                "model_name": feature_model_name,
                 "pooling": req.pooling or "cls",
                 "max_length": req.max_length or 256,
                 "batch_size": req.batch_size or 32,
@@ -2063,7 +2208,7 @@ def predict_indobert_text(case_id: str, req: IndoBertPredictRequest):
     case_dir = os.path.join(CASES_DIR, case_id)
     artifact_path = os.path.join(ROOT_DIR, f"experiments/{case_id}_indobert", "inference_model.joblib")
     if not os.path.exists(artifact_path):
-        raise HTTPException(status_code=400, detail="Model inference belum tersedia untuk case ini. Jalankan ulang training IndoBERT Studio.")
+        raise HTTPException(status_code=400, detail="Model inference belum tersedia untuk case ini. Jalankan ulang analisis di Language Studio.")
 
     try:
         import joblib
@@ -2074,7 +2219,8 @@ def predict_indobert_text(case_id: str, req: IndoBertPredictRequest):
     text_cols = artifact.get("text_cols", [])
     classes = artifact.get("classes", [])
     models = artifact.get("models", {})
-    if not classes or not models:
+    pretrained_sentiment = artifact.get("pretrained_sentiment", False)
+    if not classes or (not models and not pretrained_sentiment):
         raise HTTPException(status_code=400, detail="Artefak model tidak lengkap. Jalankan ulang training.")
 
     input_texts = req.texts or {}
@@ -2084,6 +2230,30 @@ def predict_indobert_text(case_id: str, req: IndoBertPredictRequest):
     def text_for(col: str) -> str:
         value = input_texts.get(col, "")
         return str(value) if value is not None else ""
+
+    if pretrained_sentiment:
+        try:
+            from tabular_pipeline.indobert_engine import IndonesianSentimentModel
+            combined = " ".join(text_for(col) for col in text_cols)
+            sentiment_model = IndonesianSentimentModel(artifact.get("sentiment_model_name"), use_gpu=True)
+            probs, raw_labels = sentiment_model.predict_proba([combined], batch_size=1, max_length=256)
+            sentiment_model.release()
+            def canonical_sentiment(label, index):
+                value = str(label).lower()
+                if "posit" in value: return "positive"
+                if "negat" in value: return "negative"
+                if "neutral" in value or "netral" in value: return "neutral"
+                if value.startswith("label_"):
+                    return {0: "negative", 1: "neutral", 2: "positive"}.get(index, value)
+                return value
+            model_labels = [canonical_sentiment(label, index) for index, label in enumerate(raw_labels)]
+            idx = int(np.argmax(probs[0]))
+            return {"feature_extractor": "pretrained_sentiment", "text_cols": text_cols,
+                    "texts": input_texts, "classes": model_labels,
+                    "predictions": {"sentiment_model": {"top_class": model_labels[idx],
+                    "confidence": round(float(probs[0][idx]), 4)}}}
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Prediksi sentimen gagal: {e}")
 
     feature_extractor = artifact.get("feature_extractor", "indobert")
     try:
@@ -2122,6 +2292,12 @@ def predict_indobert_text(case_id: str, req: IndoBertPredictRequest):
         else:
             X = indobert_matrix if indobert_matrix is not None else tfidf_matrix
 
+        if artifact.get("use_sentiment_features"):
+            from tabular_pipeline.text_engine import SentimentFeatureExtractor
+            sent_df = pd.DataFrame([{c: text_for(c) for c in text_cols}])
+            sent_matrix = SentimentFeatureExtractor().transform(sent_df, text_cols)
+            X = sp.hstack([sp.csr_matrix(X), sp.csr_matrix(sent_matrix)]).tocsr()
+
         predictions = {}
         prob_rows = []
         for m_key, clf in models.items():
@@ -2151,6 +2327,77 @@ def predict_indobert_text(case_id: str, req: IndoBertPredictRequest):
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Prediksi gagal: {e}")
+
+
+@app.post("/api/cases/{case_id}/indobert/predict-file")
+def predict_indobert_file(case_id: str, req: IndoBertPredictFileRequest):
+    """Label every row in a selected CSV using the active pretrained sentiment model and export CSV."""
+    artifact_path = os.path.join(ROOT_DIR, f"experiments/{case_id}_indobert", "inference_model.joblib")
+    if not os.path.isfile(artifact_path):
+        raise HTTPException(status_code=400, detail="Model belum tersedia. Jalankan analisis sentimen terlebih dahulu.")
+    try:
+        import joblib
+        artifact = joblib.load(artifact_path)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Gagal memuat model: {e}")
+    if not artifact.get("pretrained_sentiment"):
+        raise HTTPException(status_code=400, detail="Fitur labeli file saat ini memerlukan model sentimen pretrained.")
+
+    resolved = resolve_dataset_path(req.path, case_id=case_id)
+    if not resolved or not os.path.isfile(resolved):
+        raise HTTPException(status_code=404, detail="File data tes tidak ditemukan.")
+    try:
+        if os.path.commonpath([os.path.realpath(resolved), os.path.realpath(ROOT_DIR)]) != os.path.realpath(ROOT_DIR):
+            raise HTTPException(status_code=400, detail="File harus berada di dalam workspace proyek.")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Path file tidak valid.")
+    input_ext = os.path.splitext(resolved)[1].lower()
+    if input_ext not in {".csv", ".xlsx"}:
+        raise HTTPException(status_code=400, detail="Pilih file CSV atau XLSX untuk pelabelan data tes.")
+
+    try:
+        df = pd.read_excel(resolved, engine="openpyxl") if input_ext == ".xlsx" else pd.read_csv(resolved)
+        text_cols = req.text_cols or artifact.get("text_cols", [])
+        missing = [col for col in text_cols if col not in df.columns]
+        if not text_cols or missing:
+            raise HTTPException(status_code=400, detail=f"Kolom teks model tidak tersedia pada file ini: {missing or text_cols}. Kolom CSV: {list(df.columns)}")
+        texts = df[text_cols].fillna("").astype(str).agg(" ".join, axis=1).tolist()
+        from tabular_pipeline.indobert_engine import IndonesianSentimentModel
+        model = IndonesianSentimentModel(artifact.get("sentiment_model_name"), use_gpu=True)
+        probabilities, raw_labels = model.predict_proba(texts, batch_size=16, max_length=256)
+        model.release()
+
+        def canonical_label(label, index):
+            value = str(label).strip().lower()
+            if "posit" in value: return "positive"
+            if "negat" in value: return "negative"
+            if "neutral" in value or "netral" in value: return "neutral"
+            if value.startswith("label_"):
+                return {0: "negative", 1: "neutral", 2: "positive"}.get(index, value)
+            return value
+
+        labels = [canonical_label(value, index) for index, value in enumerate(raw_labels)]
+        class_order = sorted(range(len(labels)), key=lambda idx: ["negative", "neutral", "positive"].index(labels[idx]) if labels[idx] in {"negative", "neutral", "positive"} else 99)
+        labels = [labels[idx] for idx in class_order]
+        probabilities = probabilities[:, class_order]
+        if artifact.get("text_task") == "sentiment_binary" and "neutral" in labels:
+            keep = [idx for idx, label in enumerate(labels) if label in {"negative", "positive"}]
+            probabilities = probabilities[:, keep]
+            probabilities = probabilities / np.clip(probabilities.sum(axis=1, keepdims=True), 1e-12, None)
+            labels = [labels[idx] for idx in keep]
+        df["predicted_sentiment"] = [labels[idx] for idx in probabilities.argmax(axis=1)]
+        df["confidence"] = np.round(probabilities.max(axis=1), 6)
+        for idx, label in enumerate(labels):
+            df[f"probability_{label}"] = np.round(probabilities[:, idx], 6)
+        csv_content = "\ufeff" + df.to_csv(index=False)
+        filename = f"sentiment_labeled_{os.path.splitext(os.path.basename(resolved))[0]}.csv"
+        from urllib.parse import quote
+        return Response(content=csv_content, media_type="text/csv; charset=utf-8",
+                        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"})
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Gagal memberi label pada file: {e}")
 
 
 @app.post("/api/tools/merge-datasets")

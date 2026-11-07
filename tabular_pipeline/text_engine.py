@@ -520,6 +520,62 @@ class TextFeatureExtractor:
         return train_emb_df, test_emb_df
 
 
+class SentimentFeatureExtractor:
+    """Small, deterministic Indonesian sentiment and style feature extractor."""
+    NEGATIONS = {"tidak", "bukan", "jangan", "belum", "kurang"}
+    INTENSIFIERS = {"sangat": 1.5, "banget": 1.5, "amat": 1.5, "agak": 0.65, "sedikit": 0.65}
+    SLANG = {"gak": "tidak", "ga": "tidak", " nggak": "tidak", "nggak": "tidak", "enggak": "tidak", "bgt": "banget", "udh": "sudah", "aja": "saja", "krn": "karena", "tdk": "tidak"}
+    POSITIVE = {"bagus", "baik", "hebat", "mantap", "suka", "senang", "bahagia", "puas", "cinta", "keren", "indah", "berhasil", "positif", "terbaik", "cepat", "aman", "unggul", "terima", "kasih", "bantu", "menang", "sukses", "rekomendasi", "menarik"}
+    NEGATIVE = {"buruk", "jelek", "marah", "benci", "kecewa", "sedih", "kejahatan", "gagal", "lambat", "mahal", "rusak", "bohong", "korupsi", "parah", "takut", "masalah", "negatif", "tolak", "susah", "kehilangan", "ancam", "krisis", "bahaya"}
+    EMOJI = {"😡": "emoji_marah", "😠": "emoji_marah", "😢": "emoji_sedih", "😭": "emoji_sedih", "😊": "emoji_senang", "😁": "emoji_senang", "😍": "emoji_cinta", "❤️": "emoji_cinta", "❤": "emoji_cinta", "👍": "emoji_setuju", "👎": "emoji_tidak_setuju", "😂": "emoji_tertawa", "😞": "emoji_kecewa", "😔": "emoji_sedih", "🤬": "emoji_marah", "😱": "emoji_kaget"}
+
+    def __init__(self):
+        self.feature_names_ = None
+
+    @classmethod
+    def _one(cls, text: Any) -> List[float]:
+        raw = "" if text is None or (isinstance(text, float) and np.isnan(text)) else str(text)
+        tokens = re.findall(r"[\w]+|[^\w\s]", raw.lower(), flags=re.UNICODE)
+        pos = neg = negations = 0
+        slang_count = sum(1 for t in tokens if t in cls.SLANG)
+        emoji_count = sum(raw.count(e) for e in cls.EMOJI)
+        normalized = [cls.SLANG.get(t, t) for t in tokens]
+        for i, token in enumerate(normalized):
+            if token in cls.NEGATIONS:
+                negations += 1
+                continue
+            weight = 1.0
+            if i and normalized[i-1] in cls.INTENSIFIERS:
+                weight *= cls.INTENSIFIERS[normalized[i-1]]
+            if any(t in cls.NEGATIONS for t in normalized[max(0, i-3):i]):
+                weight *= -1
+            if token in cls.POSITIVE:
+                pos += weight
+            elif token in cls.NEGATIVE:
+                neg += weight
+        # Emoji participate in lexical scores and stay visible as explicit counters.
+        for emoji, token in cls.EMOJI.items():
+            count = raw.count(emoji)
+            if token in {"emoji_senang", "emoji_cinta", "emoji_setuju", "emoji_tertawa"}:
+                pos += count
+            else:
+                neg += count
+        polarity = (pos - neg) / (abs(pos) + abs(neg) + 1.0)
+        letters = [c for c in raw if c.isalpha()]
+        return [pos, neg, polarity, len(letters) and sum(c.isupper() for c in letters)/len(letters) or 0,
+                raw.count("!"), raw.count("?")+raw.count("!!!"), len(tokens), negations, emoji_count, slang_count]
+
+    def transform(self, df: pd.DataFrame, text_cols: List[str]):
+        mats = []
+        names = []
+        for col in text_cols:
+            rows = np.asarray([self._one(v) for v in df[col].fillna("").tolist()], dtype=np.float32)
+            mats.append(rows)
+            names.extend([f"sentiment_{col}_{n}" for n in ("positive", "negative", "polarity", "uppercase_ratio", "exclamation", "question", "length", "negation_count", "emoji_count", "slang_count")])
+        self.feature_names_ = names
+        return np.hstack(mats) if mats else np.empty((len(df), 0), dtype=np.float32)
+
+
 class TextEDAReporter:
     """
     Computes comprehensive EDA diagnostics for text datasets.
@@ -572,6 +628,12 @@ class TextEDAReporter:
             vc = df[label_col].value_counts()
             class_dist = {str(k): int(v) for k, v in vc.items()}
 
+        sentiment = SentimentFeatureExtractor()
+        sentiment_rows = [sentiment._one(v) for v in s]
+        sent_tokens = [SentimentFeatureExtractor.SLANG.get(t, t) for text in s.astype(str).str.lower() for t in re.findall(r"[\w]+", text)]
+        sent_counts = Counter(sent_tokens)
+        pos_words = [w for w, _ in sent_counts.most_common() if w in SentimentFeatureExtractor.POSITIVE][:10]
+        neg_words = [w for w, _ in sent_counts.most_common() if w in SentimentFeatureExtractor.NEGATIVE][:10]
         return {
             "total_documents": len(df),
             "text_col": text_col,
@@ -590,7 +652,12 @@ class TextEDAReporter:
             },
             "top_words": top_words,
             "top_bigrams": top_bigrams,
-            "class_distribution": class_dist
+            "class_distribution": class_dist,
+            "sentiment": {"top_positive_words": pos_words, "top_negative_words": neg_words,
+                "negation_count": int(sum(r[7] for r in sentiment_rows)),
+                "emoji_count": int(sum(r[8] for r in sentiment_rows)),
+                "slang_count": int(sum(r[9] for r in sentiment_rows)),
+                "polarity_mean": round(float(np.mean([r[2] for r in sentiment_rows])) if sentiment_rows else 0, 4)}
         }
 
 
@@ -619,6 +686,7 @@ class NLPBaselineTrainer:
         n_splits: int = 5,
         c_param: float = 1.5,
         random_state: int = 42
+        ,use_sentiment_features: bool = False
     ) -> Dict[str, Any]:
         from sklearn.feature_extraction.text import TfidfVectorizer
         from sklearn.linear_model import LogisticRegression
@@ -648,6 +716,10 @@ class NLPBaselineTrainer:
             strip_accents="unicode"
         )
         X_all = vec.fit_transform(clean_train[text_col])
+        sentiment_extractor = SentimentFeatureExtractor() if use_sentiment_features else None
+        if sentiment_extractor:
+            import scipy.sparse as sp
+            X_all = sp.hstack([X_all, sp.csr_matrix(sentiment_extractor.transform(clean_train, [text_col]))]).tocsr()
         feature_names = np.array(vec.get_feature_names_out())
 
         # Fit full model for test predictions & top words
@@ -670,6 +742,9 @@ class NLPBaselineTrainer:
         oof_true = []
 
         X_cv = vec.transform(df_cv[text_col])
+        if sentiment_extractor:
+            import scipy.sparse as sp
+            X_cv = sp.hstack([X_cv, sp.csr_matrix(sentiment_extractor.transform(df_cv, [text_col]))]).tocsr()
         y_cv = df_cv[label_col].values
 
         for fold, (trn_idx, val_idx) in enumerate(skf.split(X_cv, y_cv)):
@@ -680,6 +755,8 @@ class NLPBaselineTrainer:
             if len(rare_df) > 0:
                 X_rare = vec.transform(rare_df[text_col])
                 import scipy.sparse as sp
+                if sentiment_extractor:
+                    X_rare = sp.hstack([X_rare, sp.csr_matrix(sentiment_extractor.transform(rare_df, [text_col]))]).tocsr()
                 X_tr = sp.vstack([X_tr, X_rare])
                 y_tr = np.concatenate([y_tr, rare_df[label_col].values])
 
@@ -707,6 +784,9 @@ class NLPBaselineTrainer:
         if test_df is not None and len(test_df) > 0:
             test_text = test_df[text_col].fillna("").astype(str) if text_col in test_df.columns else test_df.iloc[:, 1].fillna("").astype(str)
             X_test = vec.transform(test_text)
+            if sentiment_extractor:
+                import scipy.sparse as sp
+                X_test = sp.hstack([X_test, sp.csr_matrix(sentiment_extractor.transform(test_df, [text_col]))]).tocsr()
             preds = full_clf.predict(X_test)
             probs = np.max(full_clf.predict_proba(X_test), axis=1) if hasattr(full_clf, "predict_proba") else [1.0] * len(preds)
             
