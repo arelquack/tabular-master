@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { TextStudio } from './TextStudio';
 import { 
   Play, 
-  Download, 
+  Download,
+  Upload, 
   Plus, 
   FileCode,
   FileText, 
@@ -296,6 +297,56 @@ export default function App() {
   const [scannedCsvs, setScannedCsvs] = useState<Array<{ path: string; filename: string; size_mb: number }>>([]);
   const [isBrowsingTrain, setIsBrowsingTrain] = useState<boolean>(false);
   const [isBrowsingTest, setIsBrowsingTest] = useState<boolean>(false);
+  const browserFileInputRef = React.useRef<HTMLInputElement>(null);
+  const [uploadTargetField, setUploadTargetField] = useState<'train' | 'test' | 'text_train' | 'text_test'>('train');
+  const [isUploadingDataset, setIsUploadingDataset] = useState<boolean>(false);
+
+  const triggerBrowserUpload = (field: 'train' | 'test' | 'text_train' | 'text_test') => {
+    setUploadTargetField(field);
+    if (browserFileInputRef.current) {
+      browserFileInputRef.current.value = '';
+      browserFileInputRef.current.click();
+    }
+  };
+
+  const handleBrowserFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsUploadingDataset(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await fetch('/api/upload-dataset', {
+        method: 'POST',
+        body: formData,
+      });
+      const data = await res.json();
+      if (data?.path) {
+        if (uploadTargetField === 'train') {
+          setNewCase(prev => ({ ...prev, train_path: data.path }));
+          setInspectPath(data.path);
+          handleInspect(data.path);
+        } else if (uploadTargetField === 'test') {
+          setNewCase(prev => ({ ...prev, test_path: data.path }));
+        } else if (uploadTargetField === 'text_train') {
+          setTextSourcePath(data.path);
+          setNewCase(prev => ({ ...prev, train_path: data.path }));
+        } else if (uploadTargetField === 'text_test') {
+          setTextTestSourcePath(data.path);
+          setNewCase(prev => ({ ...prev, test_path: data.path }));
+        }
+        await fetchScannedCsvs();
+      }
+    } catch (err) {
+      console.error('File upload error:', err);
+    } finally {
+      setIsUploadingDataset(false);
+      if (browserFileInputRef.current) {
+        browserFileInputRef.current.value = '';
+      }
+    }
+  };
 
   // Dataset Relocation State
   const [relocateTrainPath, setRelocateTrainPath] = useState<string>('');
@@ -5001,6 +5052,16 @@ python scripts/precache_nlp_models.py --preset all
                       </button>
                       <button
                         type="button"
+                        onClick={() => triggerBrowserUpload('train')}
+                        disabled={isUploadingDataset}
+                        className="px-3 py-2 border border-zinc-300 hover:border-zinc-950 bg-zinc-50 hover:bg-zinc-100 text-xs font-medium rounded whitespace-nowrap flex items-center space-x-1 text-zinc-900 transition"
+                        title="Upload file directly via browser file picker"
+                      >
+                        {isUploadingDataset && uploadTargetField === 'train' ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}
+                        <span>Upload...</span>
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => handleInspect()}
                         disabled={inspectLoading || !newCase.train_path}
                         className="px-3 py-2 border border-zinc-300 hover:border-zinc-900 bg-zinc-50 hover:bg-zinc-100 text-xs font-medium rounded whitespace-nowrap flex items-center space-x-1"
@@ -5263,7 +5324,7 @@ python scripts/precache_nlp_models.py --preset all
                           title="Browse for CSV, Excel, JSONL, or TXT file"
                         >
                           {isBrowsingTrain ? <Loader2 size={12} className="animate-spin" /> : <FolderOpen size={12} />}
-                          <span>File...</span>
+                          <span>{isBrowsingTrain ? 'Picking...' : 'File...'}</span>
                         </button>
                         <button
                           type="button"
@@ -5274,6 +5335,16 @@ python scripts/precache_nlp_models.py --preset all
                         >
                           <FolderOpen size={12} />
                           <span>Folder...</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => triggerBrowserUpload('text_train')}
+                          disabled={isUploadingDataset}
+                          className="px-2.5 py-2 border border-zinc-300 hover:border-zinc-950 bg-white hover:bg-zinc-100 text-xs font-medium rounded whitespace-nowrap flex items-center space-x-1 text-zinc-900 transition"
+                          title="Upload file directly via browser file picker"
+                        >
+                          {isUploadingDataset && uploadTargetField === 'text_train' ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}
+                          <span>Upload...</span>
                         </button>
                         <button
                           type="button"
@@ -5333,7 +5404,7 @@ python scripts/precache_nlp_models.py --preset all
                           title="Browse for CSV, Excel, JSONL, or TXT file"
                         >
                           {isBrowsingTest ? <Loader2 size={12} className="animate-spin" /> : <FolderOpen size={12} />}
-                          <span>File...</span>
+                          <span>{isBrowsingTest ? 'Picking...' : 'File...'}</span>
                         </button>
                         <button
                           type="button"
@@ -5344,6 +5415,16 @@ python scripts/precache_nlp_models.py --preset all
                         >
                           <FolderOpen size={12} />
                           <span>Folder...</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => triggerBrowserUpload('text_test')}
+                          disabled={isUploadingDataset}
+                          className="px-2.5 py-2 border border-zinc-300 hover:border-zinc-950 bg-white hover:bg-zinc-100 text-xs font-medium rounded whitespace-nowrap flex items-center space-x-1 text-zinc-900 transition"
+                          title="Upload file directly via browser file picker"
+                        >
+                          {isUploadingDataset && uploadTargetField === 'text_test' ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}
+                          <span>Upload...</span>
                         </button>
                       </div>
                     </div>
@@ -5533,6 +5614,16 @@ python scripts/precache_nlp_models.py --preset all
                       >
                         {isBrowsingTest ? <Loader2 size={12} className="animate-spin" /> : <FolderOpen size={12} />}
                         <span>{isBrowsingTest ? 'Picking...' : 'Browse...'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => triggerBrowserUpload('test')}
+                        disabled={isUploadingDataset}
+                        className="px-3 py-2 border border-zinc-300 hover:border-zinc-950 bg-zinc-50 hover:bg-zinc-100 text-xs font-medium rounded whitespace-nowrap flex items-center space-x-1 text-zinc-900 transition"
+                        title="Upload file directly via browser file picker"
+                      >
+                        {isUploadingDataset && uploadTargetField === 'test' ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}
+                        <span>Upload...</span>
                       </button>
                     </div>
                     {scannedCsvs.length > 0 && (
@@ -6416,6 +6507,14 @@ python scripts/precache_nlp_models.py --preset all
           </div>
         </div>
       )}
+      {/* Hidden browser file input for instant file uploads */}
+      <input
+        type="file"
+        ref={browserFileInputRef}
+        onChange={handleBrowserFileUpload}
+        className="hidden"
+        accept=".csv,.xlsx,.xls,.json,.jsonl,.tsv,.txt,.parquet"
+      />
     </div>
   );
 }

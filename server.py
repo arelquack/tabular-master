@@ -17,7 +17,7 @@ def safe_is_numeric(dt) -> bool:
         return pd.api.types.is_numeric_dtype(dt)
     except Exception:
         return False
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -1134,50 +1134,125 @@ def scan_workspace_csvs():
 def browse_file(title: str = "Select Dataset", mode: str = "file"):
     """
     Opens native Windows Explorer File or Folder Dialog.
-    Uses TopMost Form to ensure dialog appears in front of the active browser.
+    Method 1: Fast native Win32 dialog via Python tkinter subprocess (avoids PowerShell security policies and COM MTA locks).
+    Method 2: PowerShell with Single-Threaded Apartment (-Sta) fallback.
+    Returns path or empty path with fail-fast timeout, preventing browser hang.
     """
-    import subprocess
-    if mode == "folder":
-        ps_cmd = f"""
-Add-Type -AssemblyName System.Windows.Forms
-$dialog = New-Object System.Windows.Forms.FolderBrowserDialog
-$dialog.Description = "{title}"
-$dialog.SelectedPath = [System.IO.Path]::GetFullPath(".")
-$form = New-Object System.Windows.Forms.Form
-$form.TopMost = $true
-$res = $dialog.ShowDialog($form)
-if ($res -eq [System.Windows.Forms.DialogResult]::OK) {{
-    Write-Output $dialog.SelectedPath
-}}
-"""
-    else:
-        ps_cmd = f"""
-Add-Type -AssemblyName System.Windows.Forms
-$dialog = New-Object System.Windows.Forms.OpenFileDialog
-$dialog.Filter = "Datasets (*.csv;*.xlsx;*.xls;*.json;*.jsonl;*.tsv;*.txt;*.parquet)|*.csv;*.xlsx;*.xls;*.json;*.jsonl;*.tsv;*.txt;*.parquet|All Files (*.*)|*.*"
-$dialog.Title = "{title}"
-$dialog.InitialDirectory = [System.IO.Path]::GetFullPath(".")
-$form = New-Object System.Windows.Forms.Form
-$form.TopMost = $true
-$res = $dialog.ShowDialog($form)
-if ($res -eq [System.Windows.Forms.DialogResult]::OK) {{
-    Write-Output $dialog.FileName
-}}
-"""
+    selected = ""
+    safe_title = title.replace('"', '').replace("'", "")
+
+    # 1. Native Tkinter Subprocess
     try:
-        proc = subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd], capture_output=True, text=True, timeout=120)
-        selected = proc.stdout.strip()
-        if selected:
-            try:
-                rel = os.path.relpath(selected, ROOT_DIR)
-                if not rel.startswith(".."):
-                    return {"path": rel.replace("\\", "/"), "full_path": selected.replace("\\", "/")}
-            except Exception:
-                pass
-            return {"path": selected.replace("\\", "/"), "full_path": selected.replace("\\", "/")}
+        py_tk_code = f"""
+import sys
+try:
+    import tkinter as tk
+    from tkinter import filedialog
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes('-topmost', True)
+    root.focus_force()
+    if "{mode}" == "folder":
+        res = filedialog.askdirectory(title="{safe_title}")
+    else:
+        res = filedialog.askopenfilename(
+            title="{safe_title}",
+            filetypes=[
+                ("Datasets", "*.csv *.xlsx *.xls *.json *.jsonl *.tsv *.txt *.parquet"),
+                ("All Files", "*.*")
+            ]
+        )
+    root.destroy()
+    if res:
+        print(res.strip())
+except Exception:
+    pass
+"""
+        proc = subprocess.run(
+            [sys.executable, "-c", py_tk_code],
+            capture_output=True,
+            text=True,
+            timeout=25
+        )
+        if proc.stdout.strip():
+            selected = proc.stdout.strip()
+    except subprocess.TimeoutExpired:
+        return {"path": "", "full_path": "", "status": "timeout"}
     except Exception as e:
-        print(f"Error in browse_file: {e}")
-    return {"path": ""}
+        print(f"Tkinter dialog error: {e}")
+
+    # 2. PowerShell STA fallback if Tkinter dialog produced no output and did not timeout
+    if not selected:
+        try:
+            if mode == "folder":
+                ps_cmd = f"""
+[System.Reflection.Assembly]::LoadWithPartialName('System.windows.forms') | Out-Null
+$d = New-Object System.Windows.Forms.FolderBrowserDialog
+$d.Description = '{safe_title}'
+$d.SelectedPath = [System.IO.Path]::GetFullPath('.')
+if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {{
+    [Console]::Out.WriteLine($d.SelectedPath)
+}}
+$d.Dispose()
+"""
+            else:
+                ps_cmd = f"""
+[System.Reflection.Assembly]::LoadWithPartialName('System.windows.forms') | Out-Null
+$d = New-Object System.Windows.Forms.OpenFileDialog
+$d.Title = '{safe_title}'
+$d.InitialDirectory = [System.IO.Path]::GetFullPath('.')
+$d.Filter = 'Datasets (*.csv;*.xlsx;*.xls;*.json;*.jsonl;*.tsv;*.txt;*.parquet)|*.csv;*.xlsx;*.xls;*.json;*.jsonl;*.tsv;*.txt;*.parquet|All Files (*.*)|*.*'
+if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {{
+    [Console]::Out.WriteLine($d.FileName)
+}}
+$d.Dispose()
+"""
+            proc = subprocess.run(
+                ["powershell", "-Sta", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_cmd],
+                capture_output=True,
+                text=True,
+                timeout=25
+            )
+            if proc.stdout.strip():
+                selected = proc.stdout.strip()
+        except subprocess.TimeoutExpired:
+            return {"path": "", "full_path": "", "status": "timeout"}
+        except Exception as e:
+            print(f"PowerShell dialog error: {e}")
+
+    if selected:
+        clean_path = selected.replace(chr(92), "/")
+        try:
+            rel = os.path.relpath(selected, ROOT_DIR).replace(chr(92), "/")
+            if not rel.startswith(".."):
+                return {"path": rel, "full_path": clean_path, "status": "ok"}
+        except Exception:
+            pass
+        return {"path": clean_path, "full_path": clean_path, "status": "ok"}
+
+    return {"path": "", "full_path": "", "status": "cancelled"}
+
+@app.post("/api/upload-dataset")
+async def upload_dataset(file: UploadFile = File(...)):
+    """Allows uploading dataset directly from browser without OS dialogs."""
+    upload_dir = os.path.join(ROOT_DIR, "cases", "uploads")
+    os.makedirs(upload_dir, exist_ok=True)
+    filename = os.path.basename(file.filename or "uploaded_dataset.csv")
+    dest_path = os.path.join(upload_dir, filename)
+
+    content = await file.read()
+    with open(dest_path, "wb") as buffer:
+        buffer.write(content)
+
+    rel_path = os.path.relpath(dest_path, ROOT_DIR).replace(chr(92), "/")
+    size_mb = round(len(content) / (1024 * 1024), 2)
+    return {
+        "path": rel_path,
+        "full_path": dest_path.replace(chr(92), "/"),
+        "filename": filename,
+        "size_mb": size_mb,
+        "status": "success"
+    }
 
 @app.post("/api/inspect-dataset")
 def inspect_dataset(req: InspectDatasetRequest):
