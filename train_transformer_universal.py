@@ -39,7 +39,12 @@ def resolve_model_path(model_identifier: str) -> str:
         os.path.join("models", basename),
         os.path.join("models", "indobert-base-p1") if "indobert" in basename.lower() and "tweet" not in basename.lower() else None,
         os.path.join("models", "indobertweet-base-uncased") if "tweet" in basename.lower() else None,
-        os.path.join("models", "indonesian-roberta-base-sentiment") if "roberta" in basename.lower() else None,
+        os.path.join("models", "indonesian-roberta-base-sentiment") if "indonesian-roberta" in basename.lower() else None,
+        os.path.join("models", "xlm-roberta-base") if "xlm" in basename.lower() else None,
+        os.path.join("models", "roberta-base") if basename.lower() == "roberta-base" else None,
+        os.path.join("models", "distilbert-base-uncased") if "distilbert" in basename.lower() else None,
+        os.path.join("models", "deberta-v3-small") if "deberta" in basename.lower() else None,
+        os.path.join("models", "bert-base-multilingual-cased") if "multilingual" in basename.lower() else None,
     ]
     for c in candidates:
         if c and os.path.exists(c) and os.path.exists(os.path.join(c, "config.json")):
@@ -102,6 +107,9 @@ def run_training(
     text_col_2: str = None,
     label_col: str = None,
     val_size: float = 0.2,
+    weight_decay: float = 0.01,
+    warmup_ratio: float = 0.1,
+    grad_accum_steps: int = 1,
     seed: int = 2026,
     log_callback=None
 ):
@@ -348,8 +356,10 @@ def run_training(
         learning_rate=lr,
         per_device_train_batch_size=batch_size,
         per_device_eval_batch_size=batch_size * 2,
+        gradient_accumulation_steps=grad_accum_steps,
+        warmup_ratio=warmup_ratio,
         num_train_epochs=epochs,
-        weight_decay=0.01,
+        weight_decay=weight_decay,
         fp16=use_fp16,
         load_best_model_at_end=True,
         metric_for_best_model="rmse" if is_regression else "macro_f1",
@@ -504,6 +514,9 @@ if __name__ == "__main__":
     parser.add_argument("--text_col", type=str, default=None, help="Primary text column name")
     parser.add_argument("--text_col_2", type=str, default=None, help="Second text column for pairwise matching / NLI")
     parser.add_argument("--label_col", type=str, default=None, help="Target/label column name")
+    parser.add_argument("--weight_decay", type=float, default=0.01, help="L2 Weight decay regularizer")
+    parser.add_argument("--warmup_ratio", type=float, default=0.1, help="Linear warmup ratio")
+    parser.add_argument("--grad_accum_steps", type=int, default=1, help="Gradient accumulation steps")
     args = parser.parse_args()
 
     run_training(
@@ -516,5 +529,8 @@ if __name__ == "__main__":
         max_length=args.max_length,
         text_col=args.text_col,
         text_col_2=args.text_col_2,
-        label_col=args.label_col
+        label_col=args.label_col,
+        weight_decay=args.weight_decay,
+        warmup_ratio=args.warmup_ratio,
+        grad_accum_steps=args.grad_accum_steps
     )

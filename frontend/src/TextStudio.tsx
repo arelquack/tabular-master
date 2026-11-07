@@ -213,6 +213,9 @@ export const TextStudio: React.FC<TextStudioProps> = ({
   const [transformerBatchSize, setTransformerBatchSize] = useState<number>(16);
   const [transformerLr, setTransformerLr] = useState<number>(2e-5);
   const [transformerMaxLen, setTransformerMaxLen] = useState<string>('auto');
+  const [transformerWeightDecay, setTransformerWeightDecay] = useState<number>(0.01);
+  const [transformerWarmupRatio, setTransformerWarmupRatio] = useState<number>(0.1);
+  const [transformerGradAccum, setTransformerGradAccum] = useState<number>(1);
   const [transformerStatus, setTransformerStatus] = useState<any>(null);
   const [isStartingTransformer, setIsStartingTransformer] = useState<boolean>(false);
   const [copiedCli, setCopiedCli] = useState<boolean>(false);
@@ -306,6 +309,35 @@ export const TextStudio: React.FC<TextStudioProps> = ({
     };
   }, [activeNlpTab, transformerStatus?.is_running]);
 
+  const handleModelChange = (modelName: string) => {
+    setTransformerModel(modelName);
+    if (modelName.includes('deberta')) {
+      setTransformerLr(1.5e-5);
+      setTransformerBatchSize(16);
+      setTransformerWeightDecay(0.01);
+    } else if (modelName.includes('distilbert')) {
+      setTransformerLr(3e-5);
+      setTransformerBatchSize(32);
+      setTransformerWeightDecay(0.01);
+    } else if (modelName.includes('xlm-roberta')) {
+      setTransformerLr(2e-5);
+      setTransformerBatchSize(16);
+      setTransformerWeightDecay(0.01);
+    } else if (modelName.includes('indobertweet')) {
+      setTransformerLr(2.5e-5);
+      setTransformerBatchSize(16);
+      setTransformerWeightDecay(0.01);
+    } else if (modelName.includes('roberta')) {
+      setTransformerLr(2e-5);
+      setTransformerBatchSize(16);
+      setTransformerWeightDecay(0.01);
+    } else {
+      setTransformerLr(2e-5);
+      setTransformerBatchSize(16);
+      setTransformerWeightDecay(0.01);
+    }
+  };
+
   const handleLaunchTransformer = async () => {
     setIsStartingTransformer(true);
     try {
@@ -317,7 +349,10 @@ export const TextStudio: React.FC<TextStudioProps> = ({
           epochs: transformerEpochs,
           batch_size: transformerBatchSize,
           learning_rate: transformerLr,
-          max_length: transformerMaxLen === 'auto' ? null : Number(transformerMaxLen)
+          max_length: transformerMaxLen === 'auto' ? null : Number(transformerMaxLen),
+          weight_decay: transformerWeightDecay,
+          warmup_ratio: transformerWarmupRatio,
+          grad_accum_steps: transformerGradAccum
         })
       });
       if (res.ok) {
@@ -1232,15 +1267,30 @@ export const TextStudio: React.FC<TextStudioProps> = ({
               </div>
 
               <div>
-                <label className="block text-[11px] font-mono uppercase text-zinc-500 mb-1">Backbone Pretrained Model</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-[11px] font-mono uppercase text-zinc-500 font-semibold">Backbone Pretrained Model</label>
+                  <span className="text-[10px] text-zinc-400 font-mono">auto-adjusts optimal params</span>
+                </div>
                 <select
                   value={transformerModel}
-                  onChange={e => setTransformerModel(e.target.value)}
+                  onChange={e => handleModelChange(e.target.value)}
                   className="w-full text-xs font-mono bg-zinc-50 border border-zinc-200 rounded-lg px-2.5 py-2 text-zinc-900"
                 >
-                  <option value="indobenchmark/indobert-base-p1">indobenchmark/indobert-base-p1 (IndoBERT - Formal/News)</option>
-                  <option value="indolem/indobertweet-base-uncased">indolem/indobertweet-base-uncased (IndoBERTweet - Slang/Comments)</option>
-                  <option value="w11wo/indonesian-roberta-base-sentiment-classifier">w11wo/indonesian-roberta (Fine-tuned Sentiment)</option>
+                  <optgroup label="Multilingual & Mixed Languages (Indo + Eng + Slang + Code-Switching)">
+                    <option value="xlm-roberta-base">xlm-roberta-base (100 Languages, Mixed Indo-Eng, Slang)</option>
+                    <option value="bert-base-multilingual-cased">bert-base-multilingual-cased (mBERT Multilingual)</option>
+                  </optgroup>
+                  <optgroup label="Indonesian (Formal & Informal/Social Media)">
+                    <option value="indobenchmark/indobert-base-p1">indobenchmark/indobert-base-p1 (IndoBERT - Formal/News)</option>
+                    <option value="indolem/indobertweet-base-uncased">indolem/indobertweet-base-uncased (IndoBERTweet - Slang/Comments/Medsos)</option>
+                    <option value="w11wo/indonesian-roberta-base-sentiment-classifier">w11wo/indonesian-roberta (Sentiment Fine-Tuned)</option>
+                    <option value="cahya/indobert-base-indonesian-522M">cahya/indobert-base-indonesian-522M (Large Corpus IndoBERT)</option>
+                  </optgroup>
+                  <optgroup label="English (Monolingual English)">
+                    <option value="roberta-base">roberta-base (RoBERTa English Standard Benchmark)</option>
+                    <option value="distilbert-base-uncased">distilbert-base-uncased (DistilBERT English - Fast/Light)</option>
+                    <option value="microsoft/deberta-v3-small">microsoft/deberta-v3-small (DeBERTa v3 - Top Competitive NLP)</option>
+                  </optgroup>
                 </select>
               </div>
 
@@ -1293,6 +1343,42 @@ export const TextStudio: React.FC<TextStudioProps> = ({
                     <option value="128">128 tokens (Comments)</option>
                     <option value="256">256 tokens (Articles)</option>
                     <option value="512">512 tokens (Full News)</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Advanced Fine-Tuning Controls */}
+              <div className="grid grid-cols-3 gap-2 pt-1 border-t border-zinc-100">
+                <div>
+                  <label className="block text-[10px] font-mono uppercase text-zinc-400 mb-1">Weight Decay</label>
+                  <input
+                    type="number"
+                    step={0.005}
+                    value={transformerWeightDecay}
+                    onChange={e => setTransformerWeightDecay(Number(e.target.value))}
+                    className="w-full text-[11px] font-mono bg-zinc-50 border border-zinc-200 rounded px-2 py-1 text-zinc-800"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-mono uppercase text-zinc-400 mb-1">Warmup Ratio</label>
+                  <input
+                    type="number"
+                    step={0.05}
+                    value={transformerWarmupRatio}
+                    onChange={e => setTransformerWarmupRatio(Number(e.target.value))}
+                    className="w-full text-[11px] font-mono bg-zinc-50 border border-zinc-200 rounded px-2 py-1 text-zinc-800"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-mono uppercase text-zinc-400 mb-1">Grad Accum</label>
+                  <select
+                    value={transformerGradAccum}
+                    onChange={e => setTransformerGradAccum(Number(e.target.value))}
+                    className="w-full text-[11px] font-mono bg-zinc-50 border border-zinc-200 rounded px-2 py-1 text-zinc-800"
+                  >
+                    <option value={1}>1 (None)</option>
+                    <option value={2}>2 (Effective 2x)</option>
+                    <option value={4}>4 (Effective 4x)</option>
                   </select>
                 </div>
               </div>

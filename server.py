@@ -205,6 +205,9 @@ class NLPTransformerTrainRequest(BaseModel):
     batch_size: Optional[int] = 16
     learning_rate: Optional[float] = 2e-5
     max_length: Optional[int] = None
+    weight_decay: Optional[float] = 0.01
+    warmup_ratio: Optional[float] = 0.1
+    grad_accum_steps: Optional[int] = 1
 
 class NLPEnsembleRequest(BaseModel):
     baseline_weight: Optional[float] = 0.3
@@ -1800,6 +1803,12 @@ def execute_nlp_transformer_train(case_id: str, req: NLPTransformerTrainRequest)
     ]
     if req.max_length:
         cmd.extend(["--max_length", str(req.max_length)])
+    if req.weight_decay is not None:
+        cmd.extend(["--weight_decay", str(req.weight_decay)])
+    if req.warmup_ratio is not None:
+        cmd.extend(["--warmup_ratio", str(req.warmup_ratio)])
+    if req.grad_accum_steps is not None:
+        cmd.extend(["--grad_accum_steps", str(req.grad_accum_steps)])
 
     log_file = open(log_path, "w", encoding="utf-8")
     proc = subprocess.Popen(cmd, stdout=log_file, stderr=subprocess.STDOUT)
