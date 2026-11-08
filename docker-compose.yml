@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  nexus-studio:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nexus_studio_app
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      # Data persistence: cases and experiment artifacts stay on host
+      - ./cases:/app/cases
+      - ./experiments:/app/experiments
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PORT=8000
+    # Optional GPU reservation for deep learning models (IndoBERT/Transformers)
+    # Uncomment if NVIDIA Container Toolkit is installed on the host
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
