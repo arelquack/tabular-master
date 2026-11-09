@@ -210,6 +210,7 @@ class IndoBertTrainRequest(BaseModel):
     feature_model_name: Optional[str] = "indobenchmark/indobert-base-p1"
     text_task: Optional[str] = "topic_classification"
     sentiment_model_name: Optional[str] = "AzrilFahmiardi/sdd-sentiment-general"
+    model_source: Optional[str] = "online"
     use_sentiment_features: Optional[bool] = False
     tfidf_max_features: Optional[int] = 15000
     tfidf_ngram_min: Optional[int] = 1
@@ -1912,6 +1913,9 @@ def run_indobert_pipeline_task(case_id: str, req: IndoBertTrainRequest, backgrou
                     target_col = df.columns[-1]
 
             text_task = req.text_task or "topic_classification"
+            model_source = (req.model_source or "online").strip().lower()
+            if model_source not in {"online", "offline"}:
+                raise ValueError("Sumber model harus 'online' atau 'offline'.")
             if text_task not in {"topic_classification", "sentiment_binary", "sentiment_multiclass", "sentiment_regression", "aspect_sentiment"}:
                 raise ValueError(f"Jenis analisis tidak dikenal: {text_task}")
             if text_task in {"sentiment_regression", "aspect_sentiment"}:
@@ -1933,7 +1937,7 @@ def run_indobert_pipeline_task(case_id: str, req: IndoBertTrainRequest, backgrou
                 indobert_state[case_id]["progress"] = 15
                 from tabular_pipeline.indobert_engine import IndonesianSentimentModel
                 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, confusion_matrix, classification_report
-                sentiment_model = IndonesianSentimentModel(model_name=model_name, use_gpu=req.use_gpu)
+                sentiment_model = IndonesianSentimentModel(model_name=model_name, use_gpu=req.use_gpu, model_source=model_source)
                 combined_texts = df[text_cols].fillna("").astype(str).agg(" ".join, axis=1).tolist()
                 probabilities, raw_model_labels = sentiment_model.predict_proba(
                     combined_texts, batch_size=req.batch_size or 16, max_length=req.max_length or 256,
@@ -2000,11 +2004,13 @@ def run_indobert_pipeline_task(case_id: str, req: IndoBertTrainRequest, backgrou
                 import joblib
                 artifact_path = os.path.join(out_dir, "inference_model.joblib")
                 joblib.dump({"pretrained_sentiment": True, "sentiment_model_name": model_name,
+                             "model_source": model_source,
                              "text_cols": text_cols, "classes": model_labels, "text_task": text_task}, artifact_path)
                 results["meta"] = {"case_id": case_id, "text_col": text_cols[0], "text_cols": text_cols,
                     "feature_extractor": "pretrained_sentiment", "target_col": target_col,
                     "text_task": text_task, "total_samples": len(df), "n_features": 0,
                     "model_name": model_name, "sentiment_model_name": model_name,
+                    "model_source": model_source,
                     "trained_at": time.strftime("%Y-%m-%d %H:%M:%S")}
                 saved_json = os.path.join(case_dir, "indobert_results.json")
                 with open(saved_json, "w", encoding="utf-8") as f:
@@ -2040,10 +2046,10 @@ def run_indobert_pipeline_task(case_id: str, req: IndoBertTrainRequest, backgrou
             if feature_extractor in ["indobert", "both"]:
                 # Check / Create embeddings cache
                 cols_key = re.sub(r"[^A-Za-z0-9]+", "_", "_".join(text_cols)).strip("_")
-                model_key = re.sub(r"[^A-Za-z0-9]+", "_", feature_model_name).strip("_")
+                model_key = re.sub(r"[^A-Za-z0-9]+", "_", f"{model_source}_{feature_model_name}").strip("_")
                 emb_cache_path = os.path.join(out_dir, f"embeddings_{model_key}_{cols_key}_{len(df)}_{req.pooling}_{req.max_length}.npy")
 
-                engine = IndoBERTEngine(model_name=feature_model_name, use_gpu=req.use_gpu)
+                engine = IndoBERTEngine(model_name=feature_model_name, use_gpu=req.use_gpu, model_source=model_source)
 
                 if os.path.exists(emb_cache_path):
                     log(f"Found cached IndoBERT embeddings on disk: {os.path.basename(emb_cache_path)}! Skipping neural inference...")
@@ -2149,6 +2155,7 @@ def run_indobert_pipeline_task(case_id: str, req: IndoBertTrainRequest, backgrou
                 "total_samples": len(df),
                 "n_features": int(embeddings.shape[1]),
                 "model_name": feature_model_name if feature_extractor != "tfidf" else "TF-IDF",
+                "model_source": model_source,
                 "pooling": req.pooling or "cls",
                 "max_length": req.max_length or 256,
                 "batch_size": req.batch_size or 32,
@@ -2177,6 +2184,7 @@ def run_indobert_pipeline_task(case_id: str, req: IndoBertTrainRequest, backgrou
                 "tfidf_vectorizers": tfidf_vectorizers,
                 "use_sentiment_features": bool(req.use_sentiment_features),
                 "model_name": feature_model_name,
+                "model_source": model_source,
                 "pooling": req.pooling or "cls",
                 "max_length": req.max_length or 256,
                 "batch_size": req.batch_size or 32,
@@ -2235,7 +2243,7 @@ def predict_indobert_text(case_id: str, req: IndoBertPredictRequest):
         try:
             from tabular_pipeline.indobert_engine import IndonesianSentimentModel
             combined = " ".join(text_for(col) for col in text_cols)
-            sentiment_model = IndonesianSentimentModel(artifact.get("sentiment_model_name"), use_gpu=True)
+            sentiment_model = IndonesianSentimentModel(artifact.get("sentiment_model_name"), use_gpu=True, model_source=artifact.get("model_source", "online"))
             probs, raw_labels = sentiment_model.predict_proba([combined], batch_size=1, max_length=256)
             sentiment_model.release()
             def canonical_sentiment(label, index):
@@ -2264,7 +2272,7 @@ def predict_indobert_text(case_id: str, req: IndoBertPredictRequest):
 
         if feature_extractor in ["indobert", "both"]:
             from tabular_pipeline.indobert_engine import IndoBERTEngine
-            engine = IndoBERTEngine(model_name=artifact.get("model_name", "indobenchmark/indobert-base-p1"), use_gpu=True)
+            engine = IndoBERTEngine(model_name=artifact.get("model_name", "indobenchmark/indobert-base-p1"), use_gpu=True, model_source=artifact.get("model_source", "online"))
             column_embeddings = [
                 engine.extract_embeddings(
                     texts=[text_for(col)],
@@ -2363,7 +2371,7 @@ def predict_indobert_file(case_id: str, req: IndoBertPredictFileRequest):
             raise HTTPException(status_code=400, detail=f"Kolom teks model tidak tersedia pada file ini: {missing or text_cols}. Kolom CSV: {list(df.columns)}")
         texts = df[text_cols].fillna("").astype(str).agg(" ".join, axis=1).tolist()
         from tabular_pipeline.indobert_engine import IndonesianSentimentModel
-        model = IndonesianSentimentModel(artifact.get("sentiment_model_name"), use_gpu=True)
+        model = IndonesianSentimentModel(artifact.get("sentiment_model_name"), use_gpu=True, model_source=artifact.get("model_source", "online"))
         probabilities, raw_labels = model.predict_proba(texts, batch_size=16, max_length=256)
         model.release()
 

@@ -12,13 +12,55 @@ import xgboost as xgb
 from catboost import CatBoostClassifier
 
 
+OFFLINE_MODEL_ALIASES = {
+    "indobenchmark/indobert-base-p1": ["indobert-base-p1"],
+    "indolem/indobertweet-base-uncased": ["indobertweet-base-uncased"],
+    "flax-community/indonesian-roberta-base": ["indonesian-roberta-base", "indonesian-roberta-base-sentiment"],
+    "AzrilFahmiardi/sdd-sentiment-general": ["sdd-sentiment-general"],
+    "Aardiiiiy/indobertweet-base-Indonesian-sentiment-analysis": ["indobertweet-base-Indonesian-sentiment-analysis"],
+    "w11wo/indonesian-roberta-base-sentiment-classifier": ["indonesian-roberta-base-sentiment", "indonesian-roberta-base-sentiment-classifier"],
+}
+
+
+def resolve_transformer_model(model_name: str, model_source: str = "online") -> Tuple[str, bool]:
+    """Return a model identifier/path and strict local_files_only flag."""
+    source = (model_source or "online").strip().lower()
+    if source not in {"online", "offline"}:
+        raise ValueError("Sumber model harus 'online' atau 'offline'.")
+    if source == "online":
+        return model_name, False
+
+    from pathlib import Path
+    project_root = Path(__file__).resolve().parent.parent
+    direct = Path(model_name)
+    candidates = [direct] if direct.is_absolute() or direct.parts else []
+    if direct.is_absolute():
+        candidates = [direct]
+    else:
+        candidates = [project_root / direct]
+    folder_names = OFFLINE_MODEL_ALIASES.get(model_name, [model_name.split("/")[-1]])
+    for root in (project_root / "models", project_root / "models-bert"):
+        candidates.extend(root / folder for folder in folder_names)
+    for candidate in candidates:
+        if (candidate / "config.json").is_file() and any(
+            (candidate / weight).is_file()
+            for weight in ("model.safetensors", "pytorch_model.bin", "model.safetensors.index.json", "pytorch_model.bin.index.json")
+        ):
+            return str(candidate.resolve()), True
+    raise FileNotFoundError(
+        f"Checkpoint '{model_name}' tidak ditemukan lokal. Mode offline mencari di folder models/ dan models-bert/. "
+        "Jalankan package_offline_bundle.sh untuk mengunduh model yang dibutuhkan."
+    )
+
+
 class IndonesianSentimentModel:
     """Inference wrapper for a pretrained Indonesian sentiment classifier."""
     DEFAULT_MODEL = "AzrilFahmiardi/sdd-sentiment-general"
 
-    def __init__(self, model_name: str = DEFAULT_MODEL, use_gpu: bool = True):
+    def __init__(self, model_name: str = DEFAULT_MODEL, use_gpu: bool = True, model_source: str = "online"):
         self.model_name = model_name
         self.use_gpu = use_gpu
+        self.model_source = model_source
         self.tokenizer = None
         self.model = None
         self.device = "cpu"
@@ -29,8 +71,9 @@ class IndonesianSentimentModel:
         import torch
         from transformers import AutoTokenizer, AutoModelForSequenceClassification
         self.device = "cuda" if self.use_gpu and torch.cuda.is_available() else "cpu"
-        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-        self.model = AutoModelForSequenceClassification.from_pretrained(self.model_name).to(self.device)
+        resolved_name, local_files_only = resolve_transformer_model(self.model_name, self.model_source)
+        self.tokenizer = AutoTokenizer.from_pretrained(resolved_name, local_files_only=local_files_only)
+        self.model = AutoModelForSequenceClassification.from_pretrained(resolved_name, local_files_only=local_files_only).to(self.device)
         self.model.eval()
 
     def predict_proba(self, texts: List[str], batch_size: int = 16, max_length: int = 256,
@@ -106,9 +149,10 @@ class IndoBERTEngine:
             status["details"] = f"Torch check error: {str(e)}"
         return status
 
-    def __init__(self, model_name: str = DEFAULT_MODEL, use_gpu: bool = True):
+    def __init__(self, model_name: str = DEFAULT_MODEL, use_gpu: bool = True, model_source: str = "online"):
         self.model_name = model_name
         self.use_gpu = use_gpu
+        self.model_source = model_source
         self.tokenizer = None
         self.model = None
         self.device = "cpu"
@@ -135,8 +179,9 @@ class IndoBERTEngine:
             log_callback(f"[IndoBERT] Loading tokenizer & weights for '{self.model_name}'...")
         
         start_t = time.time()
-        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-        self.model = AutoModel.from_pretrained(self.model_name)
+        resolved_name, local_files_only = resolve_transformer_model(self.model_name, self.model_source)
+        self.tokenizer = AutoTokenizer.from_pretrained(resolved_name, local_files_only=local_files_only)
+        self.model = AutoModel.from_pretrained(resolved_name, local_files_only=local_files_only)
         self.model.to(self.device)
         self.model.eval()
         

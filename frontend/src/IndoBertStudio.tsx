@@ -35,6 +35,7 @@ export const IndoBertStudio: React.FC<IndoBertStudioProps> = ({
   const [analysisType, setAnalysisType] = useState<'topic' | 'sentiment'>('topic');
   const [topicModelName, setTopicModelName] = useState('indobenchmark/indobert-base-p1');
   const [sentimentModelName, setSentimentModelName] = useState('AzrilFahmiardi/sdd-sentiment-general');
+  const [modelSource, setModelSource] = useState<'online' | 'offline'>('online');
   const [modelName] = useState<string>('indobenchmark/indobert-base-p1');
   const [maxSeqLength, setMaxSeqLength] = useState<number>(256);
   const [batchSize, setBatchSize] = useState<number>(32);
@@ -104,6 +105,9 @@ export const IndoBertStudio: React.FC<IndoBertStudioProps> = ({
           setResults(data.results);
           if (data.results.meta?.sentiment_model_name) {
             setSentimentModelName(data.results.meta.sentiment_model_name);
+          }
+          if (data.results.meta?.model_source === 'online' || data.results.meta?.model_source === 'offline') {
+            setModelSource(data.results.meta.model_source);
           }
           if (data.results.meta?.model_name && ['indobenchmark/indobert-base-p1', 'indolem/indobertweet-base-uncased', 'flax-community/indonesian-roberta-base'].includes(data.results.meta.model_name)) {
             setTopicModelName(data.results.meta.model_name);
@@ -205,6 +209,7 @@ export const IndoBertStudio: React.FC<IndoBertStudioProps> = ({
           feature_extractor: useTfidf ? 'both' : 'indobert',
           text_task: analysisType === 'sentiment' ? 'sentiment_multiclass' : 'topic_classification',
           sentiment_model_name: sentimentModelName,
+          model_source: modelSource,
           feature_model_name: topicModelName,
           use_sentiment_features: useSentimentFeatures,
           tfidf_max_features: tfidfMaxFeatures,
@@ -384,6 +389,19 @@ export const IndoBertStudio: React.FC<IndoBertStudioProps> = ({
             <select value={analysisType} onChange={(e) => setAnalysisType(e.target.value as 'topic' | 'sentiment')} className="w-full text-xs bg-zinc-50 border border-zinc-200 rounded-lg p-2">
               <option value="topic">Topik</option><option value="sentiment">Sentimen (multikelas)</option>
             </select>
+          </div>
+
+          <div className={`p-3 rounded-lg border ${modelSource === 'offline' ? 'border-amber-200 bg-amber-50/50' : 'border-sky-200 bg-sky-50/50'}`}>
+            <label className="block text-xs font-semibold text-zinc-700 mb-1.5">Sumber Model</label>
+            <select value={modelSource} onChange={(e) => setModelSource(e.target.value as 'online' | 'offline')} className="w-full text-xs bg-white border border-zinc-200 rounded-lg p-2">
+              <option value="online">Online — Hugging Face Hub</option>
+              <option value="offline">Offline — checkpoint lokal</option>
+            </select>
+            <p className="text-[11px] text-zinc-500 mt-1.5">
+              {modelSource === 'offline'
+                ? 'Mode offline hanya membuka model dari folder models/ atau models-bert/; model yang belum tersedia tidak akan diunduh.'
+                : 'Mode online memuat model dari Hugging Face dan dapat mengunduhnya saat pertama kali digunakan.'}
+            </p>
           </div>
 
           {isSentiment && (
@@ -667,7 +685,7 @@ export const IndoBertStudio: React.FC<IndoBertStudioProps> = ({
               3. Eksekusi Pelatihan
             </h3>
             <p className="text-xs text-zinc-500 leading-relaxed">
-              {isSentiment ? 'Model IndoBERT yang sudah fine-tuned untuk sentimen Indonesia langsung memprediksi negatif, netral, atau positif. Model akan diunduh otomatis saat pertama kali digunakan.' : 'Fitur teks diekstrak menjadi vektor IndoBERT 768 dimensi atau matriks TF-IDF sparse, lalu model GBDT dilatih dengan validasi silang (Cross-Validation).'}
+              {isSentiment ? `Model sentimen memprediksi negatif, netral, atau positif. Sumber model: ${modelSource}.` : `Fitur teks diekstrak lalu model GBDT dilatih dengan validasi silang. Sumber model: ${modelSource}.`}
             </p>
 
             <div className="space-y-1.5 text-xs text-zinc-600 border-t border-zinc-100 pt-3">
