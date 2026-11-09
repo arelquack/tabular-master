@@ -29,8 +29,8 @@ echo "[2/3] Menginstal dependencies dari requirements.txt..."
 "$VENV_DIR/bin/pip" install -r requirements.txt
 
 echo ""
-echo "[3/3] Memeriksa dan mengunduh pre-trained NLP models untuk kesiapan offline..."
-"$VENV_DIR/bin/python" scripts/precache_nlp_models.py --preset all
+echo "[3/3] Memeriksa dan mengunduh pre-trained NLP models ke folder ./models/ ..."
+"$VENV_DIR/bin/python" scripts/download_models.py
 
 echo ""
 echo "============================================================"

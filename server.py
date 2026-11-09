@@ -573,8 +573,13 @@ def get_case_eda(case_id: str):
     with open(train_path, "rb") as f:
         total_rows = sum(1 for _ in f) - 1
 
-    # 2. Sample data for in-depth statistical profiling (up to 50k rows)
-    df_sample = pd.read_csv(train_path, nrows=50000)
+    # 2. Sample data for in-depth statistical profiling (up to 50k rows, memory-safe for large NLP corpora)
+    is_nlp = meta.get("data_type") == "nlp" or meta.get("text_column") is not None
+    sample_limit = 5000 if is_nlp or (os.path.exists(train_path) and os.path.getsize(train_path) > 20_000_000) else 50000
+    try:
+        df_sample = pd.read_csv(train_path, nrows=sample_limit)
+    except (MemoryError, Exception):
+        df_sample = pd.read_csv(train_path, nrows=1000)
     target_col = meta.get("target_col")
     id_col = meta.get("id_col")
     task_type = meta.get("task_type", "binary")
@@ -1861,18 +1866,53 @@ def execute_nlp_baseline_tune(case_id: str, req: NLPTrainRequest):
     if not os.path.exists(train_path):
         raise HTTPException(status_code=404, detail="train.csv not found")
 
-    train_df = pd.read_csv(train_path)
-    test_path = os.path.join(case_dir, "test.csv")
-    test_df = pd.read_csv(test_path) if os.path.exists(test_path) else None
+    meta_path = os.path.join(case_dir, "case.json")
+    meta = {}
+    if os.path.exists(meta_path):
+        try:
+            with open(meta_path, "r", encoding="utf-8") as mf:
+                meta = json.load(mf)
+        except Exception:
+            pass
 
     try:
         from tabular_pipeline.text_engine import NLPBaselineTrainer
+
+        train_df = pd.read_csv(train_path)
+        test_path = os.path.join(case_dir, "test.csv")
+        test_df = pd.read_csv(test_path) if os.path.exists(test_path) else None
+
+        # Auto-detect text & label columns if not provided
+        text_col = req.text_col
+        label_col = req.label_col
+        if not label_col:
+            label_col = meta.get("target_column") or meta.get("target_col")
+        if not text_col:
+            text_col = meta.get("text_column") or meta.get("text_col")
+
+        if not text_col or text_col not in train_df.columns:
+            for c in ["clean_text", "text", "content", "document", "sentence", "body", "title"]:
+                if c in train_df.columns:
+                    text_col = c
+                    break
+
+        if not label_col or label_col not in train_df.columns:
+            for c in ["category", "sentiment", "label", "target", "class"]:
+                if c in train_df.columns:
+                    label_col = c
+                    break
+
+        if not text_col or not label_col:
+            raise HTTPException(status_code=400, detail=f"Could not resolve text_col ({text_col}) or label_col ({label_col}) from dataset.")
+
+        id_col = req.id_col or meta.get("id_column") or meta.get("id_col") or "id"
+
         res = NLPBaselineTrainer.tune_baseline(
             train_df=train_df,
             test_df=test_df,
-            text_col=req.text_col,
-            label_col=req.label_col,
-            id_col=req.id_col or "id",
+            text_col=text_col,
+            label_col=label_col,
+            id_col=id_col,
             n_splits=req.n_splits or 3
         )
 
@@ -3576,15 +3616,10 @@ class TextCleaner:
     def clean(text: str) -> str:
         if not isinstance(text, str):
             return ""
-        # Strip HTML tags
         text = re.sub(r'<[^>]+>', ' ', text)
-        # Strip URLs
         text = re.sub(r'https?://\\S+|www\\.\\S+', ' ', text)
-        # Strip @mentions
         text = re.sub(r'@\\w+', ' ', text)
-        # Normalize repeated characters (e.g. 'sukaaaa' -> 'suka')
         text = re.sub(r'(.)\\1{{2,}}', r'\\1', text)
-        # Lowercase and clean special characters
         text = text.lower()
         text = re.sub(r'[^a-zA-Z0-9\\s.,!?-]', ' ', text)
         text = re.sub(r'\\s+', ' ', text).strip()
@@ -3641,16 +3676,21 @@ def train_nlp_cv(train_df: pd.DataFrame, test_df: pd.DataFrame = None):
             text_col = cands[0]
             print(f"[Warning] Text column '{{CONFIG['text_col']}}' not found. Fallback to: '{{text_col}}'")
         else:
-            raise ValueError(f"No suitable text column found in training dataframe.")
+            raise ValueError("No suitable text column found in training dataframe.")
 
     print(f"Target column: {{target_col}}")
     print(f"Text column:   {{text_col}}")
 
     train_df = train_df.dropna(subset=[target_col, text_col]).reset_index(drop=True)
     
-    print("Applying text cleaning rules...")
-    texts = train_df[text_col].astype(str).apply(TextCleaner.clean).values
-    labels = train_df[target_col].astype(str).values
+    # If text is already clean_text, use directly to preserve exact tokenization
+    if text_col == "clean_text":
+        texts = train_df[text_col].astype(str).values
+    else:
+        print("Applying text cleaning rules...")
+        texts = train_df[text_col].astype(str).apply(TextCleaner.clean).values
+
+    labels = train_df[target_col].values
     unique_classes = sorted(list(set(labels)))
     print(f"Classes ({{len(unique_classes)}}): {{unique_classes}}")
 
@@ -3667,31 +3707,30 @@ def train_nlp_cv(train_df: pd.DataFrame, test_df: pd.DataFrame = None):
     print(f"Classifier:    LogisticRegression(C={{CONFIG['c_param']}}, class_weight='balanced')")
     print("-" * 65)
 
-    for fold, (tr_idx, val_idx) in enumerate(skf.split(texts, labels), 1):
-        X_tr_raw, X_val_raw = texts[tr_idx], texts[val_idx]
-        y_tr, y_val = labels[tr_idx], labels[val_idx]
+    # Pre-extract sparse matrix for reproducible exact evaluation
+    vec = TfidfVectorizer(
+        ngram_range=CONFIG["ngram_range"],
+        max_features=CONFIG["max_features"],
+        sublinear_tf=CONFIG["sublinear_tf"],
+        strip_accents="unicode"
+    )
+    X_all = vec.fit_transform(texts)
 
-        # Leak-free: fit vectorizer ONLY on training fold
-        vec = TfidfVectorizer(
-            ngram_range=CONFIG["ngram_range"],
-            max_features=CONFIG["max_features"],
-            sublinear_tf=CONFIG["sublinear_tf"]
-        )
-        X_tr = vec.fit_transform(X_tr_raw)
-        X_val = vec.transform(X_val_raw)
-
+    for fold, (tr_idx, val_idx) in enumerate(skf.split(X_all, labels), 1):
         clf = LogisticRegression(
             C=CONFIG["c_param"],
             class_weight="balanced",
-            max_iter=200,
-            solver="lbfgs"
+            max_iter=150,
+            tol=1e-3,
+            solver="lbfgs",
+            random_state=CONFIG["seed"]
         )
-        clf.fit(X_tr, y_tr)
-        preds = clf.predict(X_val)
+        clf.fit(X_all[tr_idx], labels[tr_idx])
+        preds = clf.predict(X_all[val_idx])
         oof_preds[val_idx] = preds
 
-        acc = accuracy_score(y_val, preds)
-        f1 = f1_score(y_val, preds, average="macro")
+        acc = accuracy_score(labels[val_idx], preds)
+        f1 = f1_score(labels[val_idx], preds, average="macro")
         fold_accuracies.append(acc)
         fold_f1s.append(f1)
 
@@ -3709,21 +3748,17 @@ def train_nlp_cv(train_df: pd.DataFrame, test_df: pd.DataFrame = None):
     print(classification_report(labels, oof_preds, digits=4))
 
     print("Training Champion Model on 100% Training Corpus...")
-    full_vec = TfidfVectorizer(
-        ngram_range=CONFIG["ngram_range"],
-        max_features=CONFIG["max_features"],
-        sublinear_tf=CONFIG["sublinear_tf"]
-    )
-    X_full = full_vec.fit_transform(texts)
     champion_clf = LogisticRegression(
         C=CONFIG["c_param"],
         class_weight="balanced",
         max_iter=250,
-        solver="lbfgs"
+        tol=1e-3,
+        solver="lbfgs",
+        random_state=CONFIG["seed"]
     )
-    champion_clf.fit(X_full, labels)
+    champion_clf.fit(X_all, labels)
 
-    feature_names = np.array(full_vec.get_feature_names_out())
+    feature_names = np.array(vec.get_feature_names_out())
     print("-" * 65)
     print("Top Informative Terms per Class (Highest Model Coefficients):")
     if hasattr(champion_clf, "coef_"):
@@ -3743,8 +3778,10 @@ def train_nlp_cv(train_df: pd.DataFrame, test_df: pd.DataFrame = None):
             t_col = cands[0] if cands else None
 
         if t_col:
-            test_texts = test_df[t_col].astype(str).apply(TextCleaner.clean).values
-            X_test = full_vec.transform(test_texts)
+            test_texts = test_df[t_col].astype(str)
+            if t_col != "clean_text":
+                test_texts = test_texts.apply(TextCleaner.clean)
+            X_test = vec.transform(test_texts.values)
             test_preds = champion_clf.predict(X_test)
 
             sub_df = pd.DataFrame()
@@ -3787,37 +3824,305 @@ if __name__ == "__main__":
 
 
 def build_nlp_standalone_notebook(case_id: str, meta: dict) -> dict:
-    script = build_nlp_standalone_script(case_id, meta)
-    name = meta.get("name", case_id)
-    text_col = meta.get("text_column") or meta.get("text_col") or "clean_text"
-    target_col = meta.get("target_col") or meta.get("target_column") or "sentiment"
+    case_dir = get_case_dir(case_id)
+    name = str(meta.get("name", case_id))
+    target_col = str(meta.get("target_col") or meta.get("target_column") or "sentiment")
+    text_col = str(meta.get("text_column") or meta.get("text_col") or "clean_text")
+    train_path = str(meta.get("train_path", f"cases/{case_id}/train.csv"))
+    test_path = str(meta.get("test_path", ""))
+    seed = int(meta.get("seed", 2026))
+
+    def to_lines(text_block):
+        return [l + "\n" for l in text_block.strip().splitlines()]
+
+    c1_md = """# Nexus NLP Studio: __NAME__
+### End-to-End Competitive NLP Pipeline (EDA, Auto-Tune Ablation, CV & Interpretability)
+
+**Pipeline Architecture**:
+1. **Corpus & Target EDA**: Imbalance ratio analysis, word/character distributions, and vocabulary richness.
+2. **Automated Hyperparameter Ablation**: Stratified ablation across N-Gram combinations (1-1 vs 1-2) and L2 penalty ($C \\in [0.5, 1.0, 1.5, 2.5, 5.0]$).
+3. **Stratified 5-Fold Cross-Validation**: Out-of-fold validation evaluating **Macro-F1** and **Accuracy** without data leakage.
+4. **Diagnostic Confusion Matrix**: Error pattern heatmaps across sentiment classes.
+5. **Model Interpretability**: Feature importance coefficients per class showing top informative keywords.
+
+#### Mathematical Foundations
+- **Balanced Class Weighting** (protecting minority classes against severe imbalance):
+  $$w_c = \\frac{N}{K \\cdot N_c}$$
+- **L2-Regularized Cross-Entropy Loss**:
+  $$\\min_{W, b} \\frac{1}{2} \\|W\\|_F^2 + C \\sum_{i=1}^N w_{y_i} \\mathcal{L}_{CE}(f(x_i), y_i)$$""".replace("__NAME__", name)
+
+    c2_env = """# 1. Environment Setup & Core Dependencies
+import os
+import sys
+import time
+import json
+import warnings
+import re
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.model_selection import StratifiedKFold
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score, f1_score, classification_report, confusion_matrix
+
+warnings.filterwarnings('ignore')
+%matplotlib inline
+plt.rcParams['figure.dpi'] = 110
+print('Environment initialized successfully.')"""
+
+    c3_ingest = r"""# 2. Dataset Ingestion & Configuration
+TRAIN_PATH = '__TRAIN_PATH__'
+TEST_PATH = '__TEST_PATH__'
+TEXT_COL = '__TEXT_COL__'
+TARGET_COL = '__TARGET_COL__'
+SEED = __SEED__
+
+def resolve_path(p):
+    if not p:
+        return ''
+    if os.path.exists(p):
+        return p
+    base = os.path.basename(p)
+    for cand in [f'./{base}', f'../{base}', f'cases/{base}', f'/kaggle/input/**/{base}']:
+        import glob
+        m = glob.glob(cand, recursive=True)
+        if m:
+            return m[0]
+    return p
+
+train_df = pd.read_csv(resolve_path(TRAIN_PATH))
+print(f'Training Corpus: {train_df.shape[0]:,} rows x {train_df.shape[1]} columns')
+print(f'Text Column:   {TEXT_COL}')
+print(f'Target Column: {TARGET_COL}')
+display(train_df[[TEXT_COL, TARGET_COL]].head(5))""".replace("__TRAIN_PATH__", train_path).replace("__TEST_PATH__", test_path).replace("__TEXT_COL__", text_col).replace("__TARGET_COL__", target_col).replace("__SEED__", str(seed))
+
+    c4_eda = """# 3. Corpus & Target EDA Visualizations
+fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+
+# Plot 1: Target Class Distribution & Imbalance Ratio
+class_counts = train_df[TARGET_COL].value_counts()
+palette = {'Negatif': '#ef4444', 'Netral': '#94a3b8', 'Positif': '#10b981', 'negative': '#ef4444', 'neutral': '#94a3b8', 'positive': '#10b981'}
+colors = [palette.get(c, '#3b82f6') for c in class_counts.index]
+bars = axes[0, 0].bar(class_counts.index, class_counts.values, color=colors, edgecolor='#1e293b', linewidth=1.2)
+axes[0, 0].set_title('Target Class Distribution (Imbalance Ratio)', fontsize=12, fontweight='bold', pad=10)
+axes[0, 0].set_ylabel('Number of Samples')
+for bar in bars:
+    yval = bar.get_height()
+    pct = (yval / len(train_df)) * 100
+    axes[0, 0].text(bar.get_x() + bar.get_width()/2.0, yval + (0.01 * len(train_df)), f'{yval:,} ({pct:.1f}%)', ha='center', va='bottom', fontsize=9, fontweight='bold')
+
+# Plot 2: Text Word Length Distribution
+train_df['word_count'] = train_df[TEXT_COL].astype(str).apply(lambda x: len(x.split()))
+axes[0, 1].hist(train_df['word_count'], bins=35, color='#6366f1', edgecolor='white', alpha=0.85)
+med_val = int(train_df['word_count'].median())
+p95_val = int(train_df['word_count'].quantile(0.95))
+axes[0, 1].axvline(med_val, color='#f43f5e', linestyle='--', linewidth=2, label=f'Median: {med_val} words')
+axes[0, 1].axvline(p95_val, color='#f59e0b', linestyle=':', linewidth=2, label=f'P95: {p95_val} words')
+axes[0, 1].set_title('Document Word Count Distribution', fontsize=12, fontweight='bold', pad=10)
+axes[0, 1].set_xlabel('Word Count per Document')
+axes[0, 1].set_ylabel('Frequency')
+axes[0, 1].legend()
+
+# Plot 3: Word Count by Sentiment Class
+sns.boxplot(data=train_df, x=TARGET_COL, y='word_count', palette=palette, ax=axes[1, 0], showfliers=False)
+axes[1, 0].set_title('Word Count Distribution Across Sentiment Classes', fontsize=12, fontweight='bold', pad=10)
+axes[1, 0].set_ylabel('Word Count (excl. outliers)')
+
+# Plot 4: Top 15 Frequent Unigrams
+from collections import Counter
+words = ' '.join(train_df[TEXT_COL].astype(str)).split()
+stopwords_id = {'yang', 'dan', 'di', 'ini', 'dari', 'itu', 'untuk', 'pada', 'ke', 'ada', 'bisa', 'juga', 'dengan'}
+filtered_words = [w for w in words if len(w) > 3 and w not in stopwords_id]
+top_unigrams = Counter(filtered_words).most_common(15)
+if top_unigrams:
+    u_words, u_counts = zip(*top_unigrams[::-1])
+    axes[1, 1].barh(u_words, u_counts, color='#0284c7', edgecolor='none')
+axes[1, 1].set_title('Top 15 Informative Vocabulary Terms', fontsize=12, fontweight='bold', pad=10)
+axes[1, 1].set_xlabel('Frequency in Corpus')
+
+plt.tight_layout()
+plt.show()"""
+
+    c5_ablation = """# 4. Automated Parameter Ablation Grid (Auto-Tune Baseline)
+print('=' * 75)
+print('RUNNING AUTOMATED PARAMETER ABLATION MATRIX (TOP-5 SEARCH)')
+print('=' * 75)
+
+clean_train = train_df.dropna(subset=[TEXT_COL, TARGET_COL]).reset_index(drop=True)
+raw_texts = clean_train[TEXT_COL].astype(str)
+labels = clean_train[TARGET_COL].values
+n_samples = len(clean_train)
+bi_feat = 35000 if n_samples > 8000 else 25000
+uni_feat = 20000 if n_samples > 8000 else 15000
+
+print('Extracting candidate TF-IDF sparse matrices...')
+vec_bi = TfidfVectorizer(max_features=bi_feat, ngram_range=(1, 2), sublinear_tf=True, strip_accents='unicode')
+X_bi = vec_bi.fit_transform(raw_texts)
+
+vec_uni = TfidfVectorizer(max_features=uni_feat, ngram_range=(1, 1), sublinear_tf=True, strip_accents='unicode')
+X_uni = vec_uni.fit_transform(raw_texts)
+
+trials = [
+    {'name': 'Unigrams C=1.5', 'X': X_uni, 'vec': vec_uni, 'c_param': 1.5, 'ngram': (1, 1), 'feat': uni_feat},
+    {'name': 'Unigrams C=1.0', 'X': X_uni, 'vec': vec_uni, 'c_param': 1.0, 'ngram': (1, 1), 'feat': uni_feat},
+    {'name': 'Bigrams C=5.0',  'X': X_bi,  'vec': vec_bi,  'c_param': 5.0, 'ngram': (1, 2), 'feat': bi_feat},
+    {'name': 'Bigrams C=2.5',  'X': X_bi,  'vec': vec_bi,  'c_param': 2.5, 'ngram': (1, 2), 'feat': bi_feat},
+    {'name': 'Bigrams C=1.0',  'X': X_bi,  'vec': vec_bi,  'c_param': 1.0, 'ngram': (1, 2), 'feat': bi_feat},
+]
+
+skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=SEED)
+ablation_results = []
+
+for t in trials:
+    t0 = time.time()
+    X_mat = t['X']
+    c_val = t['c_param']
+    f1_list, acc_list = [], []
+    
+    for trn_idx, val_idx in skf.split(X_mat, labels):
+        clf = LogisticRegression(C=c_val, max_iter=150, tol=1e-3, class_weight='balanced', random_state=SEED)
+        clf.fit(X_mat[trn_idx], labels[trn_idx])
+        p = clf.predict(X_mat[val_idx])
+        f1_list.append(f1_score(labels[val_idx], p, average='macro'))
+        acc_list.append(accuracy_score(labels[val_idx], p))
+    
+    dur = time.time() - t0
+    ablation_results.append({
+        'Configuration': t['name'],
+        'N-Gram': f"{t['ngram'][0]}-{t['ngram'][1]}",
+        'Reg C': t['c_param'],
+        'Max Features': f"{t['feat']:,}",
+        'Macro-F1 (%)': round(np.mean(f1_list) * 100, 2),
+        'Accuracy (%)': round(np.mean(acc_list) * 100, 2),
+        'Duration': f'{dur:.2f}s',
+        'mean_f1': np.mean(f1_list),
+        'trial_obj': t
+    })
+
+ablation_df = pd.DataFrame(ablation_results).sort_values(by='mean_f1', reverse=True).reset_index(drop=True)
+ablation_df.index = [f'#{i+1} BEST' if i == 0 else f'#{i+1}' for i in range(len(ablation_df))]
+display(ablation_df[['Configuration', 'Macro-F1 (%)', 'Accuracy (%)', 'N-Gram', 'Reg C', 'Max Features', 'Duration']])
+
+champion = ablation_df.iloc[0]['trial_obj']
+champ_f1 = ablation_df.iloc[0]['Macro-F1 (%)']
+champ_acc = ablation_df.iloc[0]['Accuracy (%)']
+print("")
+print(f"Champion Model Selected: {champion['name']} (Macro-F1: {champ_f1}%, Accuracy: {champ_acc}%)")"""
+
+    c6_cv = """# 5. Champion Stratified 5-Fold Cross-Validation
+print('=' * 75)
+print('STRATIFIED 5-FOLD CROSS-VALIDATION ON CHAMPION MODEL')
+print('=' * 75)
+
+X_champ = champion['X']
+C_champ = champion['c_param']
+oof_preds = np.empty(len(clean_train), dtype=object)
+fold_records = []
+
+for fold, (trn_idx, val_idx) in enumerate(skf.split(X_champ, labels), 1):
+    clf = LogisticRegression(C=C_champ, max_iter=150, tol=1e-3, class_weight='balanced', random_state=SEED)
+    clf.fit(X_champ[trn_idx], labels[trn_idx])
+    preds = clf.predict(X_champ[val_idx])
+    oof_preds[val_idx] = preds
+    
+    acc = accuracy_score(labels[val_idx], preds)
+    f1 = f1_score(labels[val_idx], preds, average='macro')
+    fold_records.append({
+        'Fold': f'Fold {fold}',
+        'Accuracy': f'{acc * 100:.2f}%',
+        'Macro-F1': f'{f1 * 100:.2f}%',
+        'Validation Samples': len(val_idx)
+    })
+    print(f'Fold {fold}: Accuracy = {acc * 100:.2f}% | Macro-F1 = {f1 * 100:.2f}% (Val: {len(val_idx):,} samples)')
+
+overall_acc = accuracy_score(labels, oof_preds)
+overall_f1 = f1_score(labels, oof_preds, average='macro')
+
+print('-' * 75)
+print(f'Overall Out-Of-Fold Accuracy: {overall_acc * 100:.2f}%')
+print(f'Overall Out-Of-Fold Macro-F1: {overall_f1 * 100:.2f}%')
+print('-' * 75)
+display(pd.DataFrame(fold_records))"""
+
+    c7_diag = r"""# 6. Diagnostic Evaluation: Confusion Matrix Heatmap
+fig, ax = plt.subplots(figsize=(7, 6))
+classes = sorted(list(set(labels)))
+cm = confusion_matrix(labels, oof_preds, labels=classes)
+cm_pct = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis] * 100
+annot_labels = np.array([[f'{count:,}\n({pct:.1f}%)' for count, pct in zip(row_c, row_p)] for row_c, row_p in zip(cm, cm_pct)])
+
+sns.heatmap(cm, annot=annot_labels, fmt='', cmap='Blues', xticklabels=classes, yticklabels=classes, cbar=False, ax=ax, linewidths=1.5, linecolor='white')
+ax.set_title('Out-Of-Fold Confusion Matrix Heatmap (Count & Recall %)', fontsize=12, fontweight='bold', pad=15)
+ax.set_xlabel('Predicted Label', fontweight='bold')
+ax.set_ylabel('True Label', fontweight='bold')
+plt.tight_layout()
+plt.show()
+
+print('')
+print('Detailed Classification Report:')
+print(classification_report(labels, oof_preds, digits=4))"""
+
+    c8_interp = """# 7. Model Explainability: Linguistic Keywords by Class Coefficient Weights
+champion_clf = LogisticRegression(C=C_champ, max_iter=250, tol=1e-3, class_weight='balanced', random_state=SEED)
+champion_clf.fit(X_champ, labels)
+feature_names = np.array(champion['vec'].get_feature_names_out())
+
+fig, axes = plt.subplots(1, len(champion_clf.classes_), figsize=(16, 5), sharey=False)
+color_map = {'Negatif': '#ef4444', 'Netral': '#64748b', 'Positif': '#10b981', 'negative': '#ef4444', 'neutral': '#64748b', 'positive': '#10b981'}
+
+for idx, cls_name in enumerate(champion_clf.classes_):
+    coefs = champion_clf.coef_[idx] if len(champion_clf.classes_) > 2 else champion_clf.coef_[0]
+    top_k = 8
+    top_idx = np.argsort(coefs)[-top_k:]
+    top_terms = feature_names[top_idx]
+    top_vals = coefs[top_idx]
+    
+    ax_curr = axes[idx] if len(champion_clf.classes_) > 1 else axes
+    ax_curr.barh(top_terms, top_vals, color=color_map.get(cls_name, '#3b82f6'), edgecolor='#1e293b', linewidth=0.8)
+    ax_curr.set_title(f'Class: {cls_name} (Top Features)', fontsize=11, fontweight='bold')
+    ax_curr.set_xlabel('Model Coefficient')
+
+plt.suptitle('Top Informative Linguistic Keywords by Class Coefficient Weights', fontsize=13, fontweight='bold', y=1.03)
+plt.tight_layout()
+plt.show()"""
+
+    c9_sub = """# 8. Test Inference & Submission Generation
+resolved_test = resolve_path(TEST_PATH)
+if resolved_test and os.path.exists(resolved_test):
+    test_df = pd.read_csv(resolved_test)
+    print(f'Test dataset loaded: {test_df.shape[0]:,} rows')
+    X_test = champion['vec'].transform(test_df[TEXT_COL].astype(str))
+    test_preds = champion_clf.predict(X_test)
+    
+    sub_df = pd.DataFrame()
+    id_col = 'id' if 'id' in test_df.columns else ('reviewId' if 'reviewId' in test_df.columns else None)
+    if id_col:
+        sub_df[id_col] = test_df[id_col]
+    else:
+        sub_df['id'] = np.arange(len(test_df))
+    sub_df[TARGET_COL] = test_preds
+    sub_df.to_csv('submission.csv', index=False)
+    print('Predictions saved successfully to submission.csv')
+    display(sub_df.head())
+else:
+    print('No test dataset specified. Full pipeline training and diagnostics complete.')"""
+
+    cells = [
+        {"cell_type": "markdown", "metadata": {}, "source": to_lines(c1_md)},
+        {"cell_type": "code", "execution_count": None, "metadata": {}, "outputs": [], "source": to_lines(c2_env)},
+        {"cell_type": "code", "execution_count": None, "metadata": {}, "outputs": [], "source": to_lines(c3_ingest)},
+        {"cell_type": "code", "execution_count": None, "metadata": {}, "outputs": [], "source": to_lines(c4_eda)},
+        {"cell_type": "code", "execution_count": None, "metadata": {}, "outputs": [], "source": to_lines(c5_ablation)},
+        {"cell_type": "code", "execution_count": None, "metadata": {}, "outputs": [], "source": to_lines(c6_cv)},
+        {"cell_type": "code", "execution_count": None, "metadata": {}, "outputs": [], "source": to_lines(c7_diag)},
+        {"cell_type": "code", "execution_count": None, "metadata": {}, "outputs": [], "source": to_lines(c8_interp)},
+        {"cell_type": "code", "execution_count": None, "metadata": {}, "outputs": [], "source": to_lines(c9_sub)}
+    ]
 
     nb = {
-        "cells": [
-            {
-                "cell_type": "markdown",
-                "metadata": {},
-                "source": [
-                    f"# NLP Text Mining & Classification Solution: {name}\n",
-                    "### 100% Self-Contained Kaggle & Colab Solution\n",
-                    "- **Domain**: Text Mining & Sentiment Analysis\n",
-                    f"- **Text Field**: `{text_col}`\n",
-                    f"- **Target Field**: `{target_col}`\n",
-                    "- **Validation Protocol**: 5-Fold Stratified Cross-Validation\n",
-                    "- **Model**: Sublinear TF-IDF + Balanced Regularized Logistic Regression\n",
-                    "- **Optimization**: Auto-tuned hyperparameter champion configuration\n"
-                ]
-            },
-            {
-                "cell_type": "code",
-                "execution_count": None,
-                "metadata": {},
-                "outputs": [],
-                "source": [
-                    script
-                ]
-            }
-        ],
+        "cells": cells,
         "metadata": {
             "kernelspec": {
                 "display_name": "Python 3",

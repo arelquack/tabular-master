@@ -715,10 +715,18 @@ class NLPBaselineTrainer:
         df_cv = clean_train[clean_train[label_col].isin(stratifiable_classes)].copy()
         rare_df = clean_train[~clean_train[label_col].isin(stratifiable_classes)].copy()
 
-        # TF-IDF Vectorizer
+        # Dynamic memory protection for high-cardinality multiclass tasks
+        num_classes = len(all_classes)
+        n_samples = len(clean_train)
+        if num_classes > 5 and max_features * num_classes > 250000:
+            max_features = max(5000, 250000 // num_classes)
+
+        # TF-IDF Vectorizer (min_df=2 shields memory from millions of 1-off noise tokens)
+        min_df_val = 2 if n_samples > 1000 else 1
         vec = TfidfVectorizer(
             max_features=max_features,
             ngram_range=(ngram_min, ngram_max),
+            min_df=min_df_val,
             sublinear_tf=True,
             strip_accents="unicode"
         )
@@ -877,24 +885,35 @@ class NLPBaselineTrainer:
         labels = clean_train[label_col].values
         n_samples = len(clean_train)
 
-        # Adaptive feature limits based on corpus size
-        bi_feat = 35000 if n_samples > 8000 else 25000
-        uni_feat = 20000 if n_samples > 8000 else 15000
+        # Dynamic memory protection for high-cardinality multiclass tasks (e.g. Kompas with 28 classes)
+        n_classes = len(np.unique(labels))
+        max_param_budget = 160000 if n_classes > 5 else 350000
+        max_allowed_feat = max(5000, max_param_budget // max(1, n_classes))
 
-        # Step 1: Pre-extract sparse TF-IDF matrices (only 2 vectorizer passes instead of 8)
+        # Adaptive feature limits based on corpus size and cardinality
+        bi_feat = min(35000 if n_samples > 8000 else 25000, max_allowed_feat)
+        uni_feat = min(20000 if n_samples > 8000 else 15000, max_allowed_feat)
+
+        import gc
+        gc.collect()
+
+        # Step 1: Pre-extract sparse TF-IDF matrices with min_df=2 memory protection
+        min_df_val = 2 if n_samples > 1000 else 1
         try:
-            vec_bi = TfidfVectorizer(max_features=bi_feat, ngram_range=(1, 2), sublinear_tf=True, strip_accents="unicode")
+            vec_bi = TfidfVectorizer(max_features=bi_feat, ngram_range=(1, 2), min_df=min_df_val, sublinear_tf=True, strip_accents="unicode")
             X_bi = vec_bi.fit_transform(raw_texts)
         except Exception:
-            vec_bi = TfidfVectorizer(max_features=bi_feat, ngram_range=(1, 2), sublinear_tf=True)
+            vec_bi = TfidfVectorizer(max_features=bi_feat, ngram_range=(1, 2), min_df=min_df_val, sublinear_tf=True)
             X_bi = vec_bi.fit_transform(raw_texts)
 
         try:
-            vec_uni = TfidfVectorizer(max_features=uni_feat, ngram_range=(1, 1), sublinear_tf=True, strip_accents="unicode")
+            vec_uni = TfidfVectorizer(max_features=uni_feat, ngram_range=(1, 1), min_df=min_df_val, sublinear_tf=True, strip_accents="unicode")
             X_uni = vec_uni.fit_transform(raw_texts)
         except Exception:
-            vec_uni = TfidfVectorizer(max_features=uni_feat, ngram_range=(1, 1), sublinear_tf=True)
+            vec_uni = TfidfVectorizer(max_features=uni_feat, ngram_range=(1, 1), min_df=min_df_val, sublinear_tf=True)
             X_uni = vec_uni.fit_transform(raw_texts)
+
+        gc.collect()
 
         # Strategic, diverse hyperparameter candidates exploring C in [0.5, 1.0, 2.0, 2.5, 5.0]
         trial_configs = [
@@ -906,7 +925,16 @@ class NLPBaselineTrainer:
             {"name": "Unigrams C=1.0", "X": X_uni, "c_param": 1.0, "ngram_range": (1, 1), "max_features": uni_feat},
         ]
 
+        # Shield rare classes with < n_splits samples from cross-validation splits
+        class_counts = pd.Series(labels).value_counts()
+        stratifiable_classes = class_counts[class_counts >= n_splits].index
+        is_stratifiable = pd.Series(labels).isin(stratifiable_classes).values
+        cv_indices = np.where(is_stratifiable)[0]
+        labels_cv = labels[cv_indices]
+
         skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
+        trial_max_iter = 100
+        trial_tol = 1e-3
         results = []
 
         for cfg in trial_configs:
@@ -916,8 +944,10 @@ class NLPBaselineTrainer:
             f1_folds = []
             acc_folds = []
 
-            for trn_idx, val_idx in skf.split(X_mat, labels):
-                clf = LogisticRegression(C=c_val, max_iter=150, tol=1e-3, class_weight="balanced", random_state=random_state)
+            for trn_sub_idx, val_sub_idx in skf.split(X_mat[cv_indices], labels_cv):
+                trn_idx = cv_indices[trn_sub_idx]
+                val_idx = cv_indices[val_sub_idx]
+                clf = LogisticRegression(C=c_val, max_iter=trial_max_iter, tol=trial_tol, class_weight="balanced", random_state=random_state)
                 clf.fit(X_mat[trn_idx], labels[trn_idx])
                 preds = clf.predict(X_mat[val_idx])
                 f1_folds.append(f1_score(labels[val_idx], preds, average="macro"))
@@ -926,6 +956,8 @@ class NLPBaselineTrainer:
             dt = round(time.time() - t_start, 2)
             mean_f1 = sum(f1_folds) / len(f1_folds) if f1_folds else 0.0
             mean_acc = sum(acc_folds) / len(acc_folds) if acc_folds else 0.0
+
+            gc.collect()
 
             results.append({
                 "score": mean_f1,

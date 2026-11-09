@@ -1,1 +1,135 @@
-{}
+{
+  "model_type": "TF-IDF + Balanced Logistic Regression",
+  "features_extracted": 30809,
+  "n_splits": 5,
+  "overall_accuracy": 0.9276,
+  "overall_macro_f1": 0.8739,
+  "fold_results": [
+    {
+      "fold": 1,
+      "accuracy": 0.9344,
+      "macro_f1": 0.8815,
+      "val_samples": 5657
+    },
+    {
+      "fold": 2,
+      "accuracy": 0.9374,
+      "macro_f1": 0.8893,
+      "val_samples": 5657
+    },
+    {
+      "fold": 3,
+      "accuracy": 0.9247,
+      "macro_f1": 0.8629,
+      "val_samples": 5657
+    },
+    {
+      "fold": 4,
+      "accuracy": 0.9164,
+      "macro_f1": 0.8645,
+      "val_samples": 5657
+    },
+    {
+      "fold": 5,
+      "accuracy": 0.9249,
+      "macro_f1": 0.8715,
+      "val_samples": 5657
+    }
+  ],
+  "top_words_per_class": {
+    "negative": [
+      "limit",
+      "pengajuan",
+      "cicilan",
+      "bunga",
+      "acc",
+      "lunas",
+      "ditolak",
+      "tolak",
+      "kecewa",
+      "potongan"
+    ],
+    "neutral": [
+      "ribet",
+      "lumayan",
+      "cukup",
+      "biasa",
+      "rumit",
+      "luar biasa",
+      "bingung",
+      "cukup membantu",
+      "tidak ribet",
+      "luar"
+    ],
+    "positive": [
+      "bunga rendah",
+      "limit besar",
+      "bunga ringan",
+      "mantap",
+      "terbaik",
+      "membantu",
+      "bunga kecil",
+      "oke",
+      "mudah",
+      "puas"
+    ]
+  },
+  "test_predictions_sample": [],
+  "total_train_samples": 28285,
+  "rare_classes_shielded": 0,
+  "top_5_ablation": [
+    {
+      "rank": 1,
+      "score": 0.874,
+      "accuracy": 0.9276,
+      "ngram_range": "1-2",
+      "c_param": 5.0,
+      "max_features": 35000,
+      "duration_seconds": 2.51
+    },
+    {
+      "rank": 2,
+      "score": 0.8731,
+      "accuracy": 0.9257,
+      "ngram_range": "1-2",
+      "c_param": 2.5,
+      "max_features": 35000,
+      "duration_seconds": 2.67
+    },
+    {
+      "rank": 3,
+      "score": 0.8678,
+      "accuracy": 0.9193,
+      "ngram_range": "1-2",
+      "c_param": 1.0,
+      "max_features": 35000,
+      "duration_seconds": 2.32
+    },
+    {
+      "rank": 4,
+      "score": 0.867,
+      "accuracy": 0.9155,
+      "ngram_range": "1-2",
+      "c_param": 0.5,
+      "max_features": 35000,
+      "duration_seconds": 2.42
+    },
+    {
+      "rank": 5,
+      "score": 0.8533,
+      "accuracy": 0.9144,
+      "ngram_range": "1-1",
+      "c_param": 1.5,
+      "max_features": 20000,
+      "duration_seconds": 1.81
+    }
+  ],
+  "best_tuned_params": {
+    "c_param": 5.0,
+    "ngram_range": [
+      1,
+      2
+    ],
+    "max_features": 35000
+  }
+}

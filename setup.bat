@@ -39,8 +39,8 @@ if %errorlevel% neq 0 (
 )
 
 echo.
-echo [3/3] Memeriksa dan mengunduh pre-trained NLP models untuk kesiapan offline...
-"%VENV_DIR%\Scripts\python.exe" scripts\precache_nlp_models.py --preset all
+echo [3/3] Memeriksa dan mengunduh pre-trained NLP models ke folder ./models/ ...
+"%VENV_DIR%\Scripts\python.exe" scripts\download_models.py
 
 echo.
 echo ============================================================

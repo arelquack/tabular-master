@@ -1,38 +1,38 @@
 {
   "model_type": "TF-IDF + Balanced Logistic Regression",
-  "features_extracted": 10963,
+  "features_extracted": 12272,
   "n_splits": 5,
-  "overall_accuracy": 0.8139,
-  "overall_macro_f1": 0.7167,
+  "overall_accuracy": 0.8104,
+  "overall_macro_f1": 0.6857,
   "fold_results": [
     {
       "fold": 1,
-      "accuracy": 0.8251,
-      "macro_f1": 0.7199,
+      "accuracy": 0.8077,
+      "macro_f1": 0.6797,
       "val_samples": 749
     },
     {
       "fold": 2,
-      "accuracy": 0.7957,
-      "macro_f1": 0.6859,
+      "accuracy": 0.8077,
+      "macro_f1": 0.6923,
       "val_samples": 749
     },
     {
       "fold": 3,
-      "accuracy": 0.8104,
-      "macro_f1": 0.7352,
+      "accuracy": 0.7971,
+      "macro_f1": 0.68,
       "val_samples": 749
     },
     {
       "fold": 4,
-      "accuracy": 0.7984,
-      "macro_f1": 0.7005,
+      "accuracy": 0.8184,
+      "macro_f1": 0.6822,
       "val_samples": 749
     },
     {
       "fold": 5,
-      "accuracy": 0.8398,
-      "macro_f1": 0.7411,
+      "accuracy": 0.8211,
+      "macro_f1": 0.6925,
       "val_samples": 749
     }
   ],
@@ -43,11 +43,11 @@
       "negara",
       "bodoh",
       "hancur",
-      "demo",
       "provokator",
-      "adalah",
       "penjilat",
-      "wowo"
+      "demo",
+      "wowo",
+      "polisi"
     ],
     "Netral": [
       "siapa",
@@ -59,77 +59,22 @@
       "berita",
       "dimana",
       "nonton",
-      "jam"
+      "siapa yg"
     ],
     "Positif": [
       "semangat",
       "keadilan",
       "berjuang",
-      "perjuangan",
       "merdeka",
       "mantap",
-      "suara",
-      "undang",
+      "perjuangan",
       "keren",
-      "presiden"
+      "lanjutkan",
+      "presiden",
+      "suara rakyat"
     ]
   },
   "test_predictions_sample": [],
   "total_train_samples": 3745,
-  "rare_classes_shielded": 0,
-  "top_5_ablation": [
-    {
-      "rank": 1,
-      "score": 0.7167,
-      "accuracy": 0.8139,
-      "ngram_range": "1-1",
-      "c_param": 1.0,
-      "max_features": 15000,
-      "duration_seconds": 1.45
-    },
-    {
-      "rank": 2,
-      "score": 0.7155,
-      "accuracy": 0.8182,
-      "ngram_range": "1-1",
-      "c_param": 2.0,
-      "max_features": 25000,
-      "duration_seconds": 1.72
-    },
-    {
-      "rank": 3,
-      "score": 0.6837,
-      "accuracy": 0.7995,
-      "ngram_range": "1-2",
-      "c_param": 0.5,
-      "max_features": 20000,
-      "duration_seconds": 2.05
-    },
-    {
-      "rank": 4,
-      "score": 0.6771,
-      "accuracy": 0.8075,
-      "ngram_range": "1-2",
-      "c_param": 1.0,
-      "max_features": 25000,
-      "duration_seconds": 3.1
-    },
-    {
-      "rank": 5,
-      "score": 0.6678,
-      "accuracy": 0.8083,
-      "ngram_range": "1-3",
-      "c_param": 1.5,
-      "max_features": 30000,
-      "duration_seconds": 3.4
-    }
-  ],
-  "best_tuned_params": {
-    "ngram_range": [
-      1,
-      1
-    ],
-    "c_param": 1.0,
-    "max_features": 15000
-  }
+  "rare_classes_shielded": 0
 }

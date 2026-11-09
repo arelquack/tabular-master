@@ -1,3 +1,9 @@
+"""
+Universal Offline NLP Model Downloader & Verification Tool
+Designed for Gemastik Final Competition (PC Panitia / PC Dosen)
+Ensures 100% offline capability without internet connectivity.
+"""
+
 import os
 import sys
 
@@ -5,7 +11,7 @@ MODELS = [
     {
         "repo_id": "indobenchmark/indobert-base-p1",
         "local_dir": "models/indobert-base-p1",
-        "description": "Standard Indonesian BERT (Formal & General News/Articles, e.g. Kompas)"
+        "description": "Standard Indonesian BERT (Formal & General News/Articles, e.g. Kompas, Formal Text)"
     },
     {
         "repo_id": "indolem/indobertweet-base-uncased",
@@ -19,10 +25,30 @@ MODELS = [
     }
 ]
 
+def verify_offline_load(local_dir: str) -> bool:
+    """Verifies that the downloaded model can be loaded with local_files_only=True (zero internet)."""
+    try:
+        from transformers import AutoTokenizer, AutoModelForSequenceClassification
+        tok = AutoTokenizer.from_pretrained(local_dir, local_files_only=True)
+        mod = AutoModelForSequenceClassification.from_pretrained(local_dir, local_files_only=True, num_labels=2)
+        return tok is not None and mod is not None
+    except Exception as e:
+        # Fallback test with AutoModel if sequence classification head has specific dimension
+        try:
+            from transformers import AutoTokenizer, AutoModel
+            tok = AutoTokenizer.from_pretrained(local_dir, local_files_only=True)
+            mod = AutoModel.from_pretrained(local_dir, local_files_only=True)
+            return tok is not None and mod is not None
+        except Exception as e2:
+            print(f"      [VERIFY FAILED]: {e2}")
+            return False
+
 def main():
-    print("=" * 70)
-    print(" OFFLINE MODEL PACKAGER & DOWNLOADER (FOR PC PANITIA / PC DOSEN)")
-    print("=" * 70)
+    print("=" * 75)
+    print(" OFFLINE MODEL PACKAGER & DOWNLOADER (GEMASTIK FINAL DEPLOYMENT)")
+    print("=" * 75)
+    print("Target Destination: ./models/ inside project root directory")
+    print("Ensures all weights are portable and copyable via Flashdisk to PC Panitia.\n")
 
     try:
         from huggingface_hub import snapshot_download
@@ -42,38 +68,41 @@ def main():
         sys.exit(1)
 
     os.makedirs("models", exist_ok=True)
+    all_success = True
 
     for item in MODELS:
         repo_id = item["repo_id"]
         local_dir = item["local_dir"]
         desc = item["description"]
 
-        print(f"\n[+] Target: '{repo_id}'")
-        print(f"    Folder: '{local_dir}'")
-        print(f"    Desc  : {desc}")
+        print(f"\n[+] Target Model : '{repo_id}'")
+        print(f"    Target Dir   : '{local_dir}'")
+        print(f"    Description  : {desc}")
 
+        # Check if already downloaded and verified
         if os.path.exists(local_dir) and os.path.exists(os.path.join(local_dir, "config.json")):
-            print(f"    [SKIP] Already exists locally at '{local_dir}'.")
-            continue
+            print("    [CHECK] Checking existing local cache...")
+            if verify_offline_load(local_dir):
+                print(f"    [VERIFIED OFFLINE READY] Model '{repo_id}' is ready in '{local_dir}'!")
+                continue
+            else:
+                print("    [WARN] Existing folder corrupted or incomplete. Re-downloading...")
 
-        print(f"    [DOWNLOADING] Fetching weights and config files...")
+        print("    [DOWNLOADING] Downloading complete weights and tokenizer files...")
         success = False
 
-        # Method 1: snapshot_download (fastest, complete, handles all files & safetensors)
         if has_hub:
             try:
                 snapshot_download(
                     repo_id=repo_id,
                     local_dir=local_dir,
-                    local_dir_use_symlinks=False,
                     ignore_patterns=["*.msgpack", "*.h5", "*.ot", "*.onnx"]
                 )
-                print(f"    [SUCCESS] Downloaded via huggingface_hub to '{local_dir}'!")
+                print(f"    [DOWNLOAD OK] Snapshot downloaded successfully via huggingface_hub.")
                 success = True
             except Exception as e:
-                print(f"    [WARN] snapshot_download failed: {e}. Trying transformers fallback...")
+                print(f"    [WARN] snapshot_download encountered issue: {e}. Trying transformers fallback...")
 
-        # Method 2: transformers AutoModel fallback
         if not success and has_hf:
             try:
                 tokenizer = AutoTokenizer.from_pretrained(repo_id)
@@ -83,19 +112,29 @@ def main():
                 except Exception:
                     model = AutoModel.from_pretrained(repo_id)
                 model.save_pretrained(local_dir)
-                print(f"    [SUCCESS] Downloaded via transformers to '{local_dir}'!")
+                print(f"    [DOWNLOAD OK] Saved successfully via transformers API.")
                 success = True
             except Exception as e:
-                print(f"    [ERROR] transformers download failed: {e}")
+                print(f"    [ERROR] transformers fallback failed: {e}")
 
-        if not success:
-            print(f"    [FAILED] Could not download '{repo_id}'. Check internet connection.")
+        if success:
+            print("    [VERIFYING] Testing offline loading (local_files_only=True)...")
+            if verify_offline_load(local_dir):
+                print(f"    [SUCCESS] '{repo_id}' verified 100% OFFLINE READY!")
+            else:
+                print(f"    [WARNING] Model downloaded but offline verification produced an alert.")
+        else:
+            print(f"    [FAILED] Failed to download '{repo_id}'. Check internet connection on PC Dosen.")
+            all_success = False
 
-    print("\n" + "=" * 70)
-    print(" ALL PRETRAINED MODELS READY IN './models/'")
-    print(" You can now copy the entire './models/' folder to a flashdisk")
-    print(" to use offline on PC Panitia / PC Dosen without internet!")
-    print("=" * 70)
+    print("\n" + "=" * 75)
+    if all_success:
+        print(" [SUCCESS] ALL PRETRAINED MODELS READY IN './models/'")
+        print(" You can now safely copy the entire project folder to a Flashdisk")
+        print(" and run 100% OFFLINE on PC Panitia with zero internet connection!")
+    else:
+        print(" [WARNING] Some models failed to download. Please re-run on PC Dosen with internet.")
+    print("=" * 75)
 
 if __name__ == "__main__":
     main()

@@ -38,7 +38,49 @@ Skrip di atas secara otomatis mengeksekusi tiga tahapan:
 
 ---
 
-## 3. Menjalankan Aplikasi
+## 3. Alur Deployment Flashdisk untuk PC Panitia (100% Offline Tanpa Internet)
+
+Jika babak final Gemastik dilaksanakan pada komputer panitia yang **tidak memiliki akses internet**, ikuti alur tiga langkah berikut:
+
+### Langkah A: Di PC Dosen (Koneksi Internet Cepat)
+1. Clone repositori ini dan masuk ke direktori proyek:
+   ```bash
+   git clone <URL_REPO>
+   cd gemastik-final
+   ```
+2. Jalankan skrip packaging bundle:
+   ```cmd
+   package_offline_bundle.bat
+   # (atau ./package_offline_bundle.sh di Linux/macOS)
+   ```
+   Skrip ini secara otomatis:
+   - Mengunduh seluruh pustaka Python dalam bentuk file binary wheel (`.whl`) ke direktori `./wheels/`.
+   - Mengunduh seluruh bobot model NLP pretrained (IndoBERT, IndoBERTweet, RoBERTa) ke direktori `./models/`.
+   - Memverifikasi integritas offline bundle.
+
+3. Salin (Copy-Paste) seluruh isi folder `gemastik-final` ke **Flashdisk**.
+   *(Folder `.venv` opsional tidak perlu dicopy karena akan dibuat ulang secara lokal di PC Panitia).*
+
+---
+
+### Langkah B: Di PC Panitia (Hari H / Zero Internet)
+1. Tancapkan Flashdisk ke PC Panitia.
+2. Salin folder `gemastik-final` dari Flashdisk ke Desktop / Drive C: PC Panitia.
+3. Jalankan penginstal offline:
+   ```cmd
+   install_offline.bat
+   # (atau ./install_offline.sh di Linux)
+   ```
+   Skrip ini membuat `.venv` lokal dan menginstal seluruh pustaka dari folder lokal `./wheels/` dalam 15–30 detik tanpa koneksi internet.
+4. Jalankan platform:
+   ```cmd
+   launch_studio.bat
+   ```
+   Browser akan otomatis terbuka ke `http://localhost:8000`. Seluruh model Transformer di `./models/` akan dimuat secara offline tanpa akses jaringan (`TRANSFORMERS_OFFLINE=1`).
+
+---
+
+## 4. Menjalankan Aplikasi Secara Normal
 
 Setelah proses instalasi selesai, luncurkan aplikasi melalui:
 

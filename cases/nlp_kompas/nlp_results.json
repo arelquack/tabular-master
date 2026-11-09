@@ -1,38 +1,38 @@
 {
   "model_type": "TF-IDF + Balanced Logistic Regression",
-  "features_extracted": 40000,
+  "features_extracted": 5714,
   "n_splits": 5,
-  "overall_accuracy": 0.8442,
-  "overall_macro_f1": 0.6566,
+  "overall_accuracy": 0.8322,
+  "overall_macro_f1": 0.6959,
   "fold_results": [
     {
       "fold": 1,
-      "accuracy": 0.8453,
-      "macro_f1": 0.6808,
+      "accuracy": 0.8279,
+      "macro_f1": 0.6848,
       "val_samples": 1784
     },
     {
       "fold": 2,
-      "accuracy": 0.8335,
-      "macro_f1": 0.6439,
+      "accuracy": 0.8251,
+      "macro_f1": 0.7408,
       "val_samples": 1784
     },
     {
       "fold": 3,
-      "accuracy": 0.8414,
-      "macro_f1": 0.69,
+      "accuracy": 0.8262,
+      "macro_f1": 0.7077,
       "val_samples": 1784
     },
     {
       "fold": 4,
-      "accuracy": 0.847,
-      "macro_f1": 0.6849,
+      "accuracy": 0.8363,
+      "macro_f1": 0.7275,
       "val_samples": 1784
     },
     {
       "fold": 5,
-      "accuracy": 0.8536,
-      "macro_f1": 0.6577,
+      "accuracy": 0.8452,
+      "macro_f1": 0.6695,
       "val_samples": 1783
     }
   ],
@@ -45,33 +45,33 @@
       "yang diterima",
       "siaran pers",
       "siaran",
-      "pers",
       "diterima",
+      "pers",
       "dalam siaran"
     ],
     "Agri": [
-      "wangi",
       "pemulihan",
-      "model ini",
       "bumdes",
       "alam",
       "produk",
-      "interaksi",
       "konvensional",
       "lahan",
-      "kini menjadi"
+      "akan ada",
+      "kini menjadi",
+      "warga desa",
+      "praktik"
     ],
     "Bola": [
-      "pemain",
       "bola",
-      "piala",
       "timnas",
-      "pertandingan",
-      "sepak",
-      "sepak bola",
-      "pelatih",
+      "pemain",
+      "piala",
       "klub",
-      "stadion"
+      "atlet",
+      "sepak",
+      "pertandingan",
+      "sepak bola",
+      "olahraga"
     ],
     "Cahaya": [
       "islam",
@@ -79,119 +79,119 @@
       "pesantren",
       "kementerian agama",
       "doa",
-      "umat",
       "al",
-      "allah",
       "ulama",
-      "saw"
+      "umat",
+      "saw",
+      "mui"
     ],
     "Cek fakta": [
       "narasi",
-      "hoaks",
       "faktakompas",
+      "hoaks",
       "unggahan",
       "beredar",
-      "kompascom",
-      "faktakompas com",
-      "cek",
       "narasi yang",
-      "diklaim"
+      "cek",
+      "foto",
+      "diklaim",
+      "dibagikan"
     ],
     "Edukasi": [
       "pendidikan",
       "sekolah",
-      "universitas",
       "dikutip dari",
+      "universitas",
       "content kompas",
       "mahasiswa",
-      "siswa",
-      "lulusan",
+      "dikutip",
       "sma",
-      "akademik"
+      "siswa",
+      "tahun 2026"
     ],
     "Food": [
       "kopi",
-      "mcdonald",
-      "foodplace",
       "ayam",
-      "hidangan",
       "daging",
-      "rasa",
+      "hidangan",
       "disajikan",
-      "resep",
-      "minuman"
+      "rasa",
+      "menu",
+      "simak",
+      "minuman",
+      "dilansir"
     ],
     "Global": [
       "as",
       "iran",
-      "perang",
+      "china",
       "sebagaimana",
-      "trump",
+      "perancis",
       "pernyataan",
       "pertahanan",
-      "militer",
-      "serikat as",
-      "bahwa"
+      "bahwa",
+      "perang",
+      "serikat as"
     ],
     "Health": [
       "pasien",
       "dr",
       "gigi",
       "kesehatan",
-      "aimi",
       "perawatan",
-      "spesialis",
-      "terapi",
-      "dokter gigi",
-      "berat badan"
+      "susu",
+      "berat",
+      "medis",
+      "obat",
+      "dokter"
     ],
     "Homey": [
       "kucing",
-      "kotak pasir",
       "pilihan",
       "kenyamanan",
       "tren",
       "jangka panjang",
       "panjang",
       "harian",
+      "material",
       "dekade",
-      "material"
+      "kotak"
     ],
     "Hype": [
       "film",
       "aktor",
       "lagu",
-      "film ini",
       "konser",
+      "tulis",
       "the",
       "penonton",
       "aku",
-      "tulis",
-      "sarwendah"
+      "kuasa",
+      "by"
     ],
     "Ikn": [
-      "ikn",
-      "basuki",
-      "otorita ikn",
-      "otorita",
       "ibu kota",
       "pembangunan",
-      "kota nusantara",
       "nusantara",
       "ibu",
-      "hunian"
+      "konstruksi",
+      "hunian",
+      "triliun",
+      "perumahan",
+      "investasi",
+      "proyek"
     ],
     "Katanetizen": [
       "sering",
-      "opini",
       "sering kali",
-      "dan telah",
       "beragam",
+      "dan telah",
       "gaji",
-      "benefit",
-      "sederhana",
       "dengan judul",
-      "dipenuhi"
+      "sederhana",
+      "dipenuhi",
+      "judul",
+      "pengalaman"
     ],
     "Lestari": [
       "iklim",
@@ -199,59 +199,59 @@
       "sampah",
       "keberlanjutan",
       "emisi",
-      "lestari",
-      "ekonomi",
       "perubahan",
-      "karbon",
-      "perubahan iklim"
+      "tantangan",
+      "hutan",
+      "pengelolaan",
+      "pertamina"
     ],
     "Lifestyle": [
-      "tubuh",
       "terasa",
-      "olahraga",
-      "berolahraga",
+      "tubuh",
       "kamu",
+      "berolahraga",
+      "olahraga",
       "dr",
-      "seseorang",
-      "shio",
       "kafein",
-      "kebiasaan"
+      "teh",
+      "orangtua",
+      "seseorang"
     ],
     "Microsite": [
-      "pkk",
-      "andalas",
-      "nagari",
-      "program pemberdayaan",
       "bibit",
       "kader",
       "pengabdian",
-      "kandang ayam",
       "pemberdayaan",
-      "kandang"
+      "kandang",
+      "obat",
+      "ayam",
+      "universitas",
+      "wanita",
+      "tanaman"
     ],
     "Money": [
       "bank",
       "perusahaan",
+      "purbaya",
       "harga",
       "keuangan",
-      "purbaya",
+      "promo",
       "pt",
       "investasi",
-      "persen",
-      "ekonomi",
+      "asuransi",
       "content pt"
     ],
     "News": [
       "jakarta",
-      "prabowo",
       "dia",
-      "dki",
+      "prabowo",
       "metro",
-      "dpr",
+      "dki",
       "tni",
-      "dki jakarta",
-      "ri",
-      "jakarta pusat"
+      "jakarta pusat",
+      "ujar",
+      "jakarta timur",
+      "dpr"
     ],
     "Otomotif": [
       "kendaraan",
@@ -259,45 +259,45 @@
       "motor",
       "listrik",
       "jalan",
-      "motor listrik",
       "mesin",
+      "sim",
+      "konsumen",
       "bbm",
-      "giias",
-      "giias 2026"
+      "berkendara"
     ],
     "Properti": [
-      "properti",
       "perumahan",
+      "properti",
+      "kementerian",
       "kawasan",
-      "pembangunan",
       "pu",
       "bangunan",
-      "dody",
-      "kementerian",
-      "hunian",
-      "rumah"
+      "bpn",
+      "rumah",
+      "pembangunan",
+      "dody"
     ],
     "Prov": [
-      "neptu",
-      "bmkg",
+      "kalender",
       "hujan",
-      "nilai neptu",
-      "kalender jawa",
+      "bmkg",
+      "sepekan",
       "cuaca",
-      "weton",
-      "title bmkg",
-      "sapar",
-      "kalender"
+      "meteorologi",
+      "nilai",
+      "jawa",
+      "berpotensi",
+      "juli 2026"
     ],
     "Regional": [
       "kabupaten",
       "kecamatan",
       "katanya",
       "ujarnya",
-      "warga",
-      "korban",
       "kami",
+      "warga",
       "desa",
+      "korban",
       "jawa",
       "dinas"
     ],
@@ -305,73 +305,73 @@
       "meteor",
       "bumi",
       "pengamatan",
-      "orbit",
       "atmosfer",
+      "pola",
+      "laut",
+      "hujan",
       "peneliti",
-      "komet",
       "penelitian",
-      "cincin",
-      "cahaya"
+      "terbang"
     ],
     "Skola": [
       "jawaban",
       "kunci jawaban",
-      "sulingjar",
-      "referensi",
-      "guru",
       "kunci",
-      "siswa",
+      "guru",
       "belajar",
-      "sulingjar 2026",
+      "siswa",
+      "kepala sekolah",
+      "contoh",
+      "masing",
       "kelas"
     ],
     "Stori": [
       "belanda",
       "kemerdekaan",
       "kemudian",
-      "perang",
-      "sejarah",
       "yang kemudian",
       "merdeka",
-      "kolonial",
+      "sejarah",
+      "perang",
+      "lahir",
       "bangsa",
-      "militer"
+      "pulau jawa"
     ],
     "Tekno": [
       "ai",
       "perangkat",
-      "pengguna",
       "perusahaan",
+      "pengguna",
       "teknologi",
-      "apple",
-      "buatan",
       "sistem",
-      "internet",
-      "ponsel"
+      "buatan",
+      "whatsapp",
+      "ponsel",
+      "internet"
     ],
     "Travel": [
       "wisata",
       "wisatawan",
       "pengunjung",
       "penerbangan",
-      "destinasi",
+      "com",
+      "dok",
       "pariwisata",
+      "kompas",
       "gunung",
-      "penumpang",
-      "perjalanan",
-      "tiket"
+      "kompas com"
     ],
     "Tren": [
       "content kompas",
-      "dikutip",
       "lantas",
+      "dikutip",
       "kompas com",
       "kompas",
-      "com",
       "sejumlah",
-      "dilansir",
       "hujan lebat",
-      "lantas apa"
+      "com",
+      "dilansir",
+      "anda"
     ]
   },
   "test_predictions_sample": [],
@@ -380,56 +380,56 @@
   "top_5_ablation": [
     {
       "rank": 1,
-      "score": 0.6566,
-      "accuracy": 0.8442,
+      "score": 0.6887,
+      "accuracy": 0.8366,
       "ngram_range": "1-2",
       "c_param": 5.0,
-      "max_features": 40000,
-      "duration_seconds": 162.36
+      "max_features": 5714,
+      "duration_seconds": 21.0
     },
     {
       "rank": 2,
-      "score": 0.6494,
-      "accuracy": 0.8192,
-      "ngram_range": "1-3",
-      "c_param": 2.0,
-      "max_features": 50000,
-      "duration_seconds": 178.1
+      "score": 0.6875,
+      "accuracy": 0.8149,
+      "ngram_range": "1-2",
+      "c_param": 2.5,
+      "max_features": 5714,
+      "duration_seconds": 22.61
     },
     {
       "rank": 3,
-      "score": 0.648,
-      "accuracy": 0.825,
+      "score": 0.6472,
+      "accuracy": 0.7716,
       "ngram_range": "1-2",
-      "c_param": 2.5,
-      "max_features": 35000,
-      "duration_seconds": 276.07
+      "c_param": 1.0,
+      "max_features": 5714,
+      "duration_seconds": 14.63
     },
     {
       "rank": 4,
-      "score": 0.6414,
-      "accuracy": 0.8087,
-      "ngram_range": "1-3",
+      "score": 0.6443,
+      "accuracy": 0.7842,
+      "ngram_range": "1-1",
       "c_param": 1.5,
-      "max_features": 30000,
-      "duration_seconds": 198.2
+      "max_features": 5714,
+      "duration_seconds": 25.28
     },
     {
       "rank": 5,
-      "score": 0.6218,
-      "accuracy": 0.7844,
-      "ngram_range": "1-2",
+      "score": 0.6222,
+      "accuracy": 0.7595,
+      "ngram_range": "1-1",
       "c_param": 1.0,
-      "max_features": 25000,
-      "duration_seconds": 156.81
+      "max_features": 5714,
+      "duration_seconds": 18.47
     }
   ],
   "best_tuned_params": {
+    "c_param": 5.0,
     "ngram_range": [
       1,
       2
     ],
-    "c_param": 5.0,
-    "max_features": 40000
+    "max_features": 5714
   }
 }
