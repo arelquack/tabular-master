@@ -201,6 +201,7 @@ class NLPTrainRequest(BaseModel):
 
 class NLPTransformerTrainRequest(BaseModel):
     model_name: Optional[str] = "indobenchmark/indobert-base-p1"
+    model_source: Optional[str] = "online"
     epochs: Optional[int] = 3
     batch_size: Optional[int] = 16
     learning_rate: Optional[float] = 2e-5
@@ -1993,6 +1994,9 @@ def execute_nlp_transformer_train(case_id: str, req: NLPTransformerTrainRequest)
     case_dir = get_case_dir(case_id)
     if not os.path.exists(case_dir):
         raise HTTPException(status_code=404, detail=f"Case not found: {case_id}")
+    model_source = (req.model_source or "online").strip().lower()
+    if model_source not in {"online", "offline"}:
+        raise HTTPException(status_code=400, detail="model_source harus 'online' atau 'offline'.")
     
     # Check if already running
     proc = active_transformer_tasks.get(case_id)
@@ -2005,6 +2009,7 @@ def execute_nlp_transformer_train(case_id: str, req: NLPTransformerTrainRequest)
         "train_transformer_universal.py",
         "--case", case_id,
         "--model", req.model_name or "indobenchmark/indobert-base-p1",
+        "--model_source", model_source,
         "--epochs", str(req.epochs or 3),
         "--batch_size", str(req.batch_size or 16),
         "--lr", str(req.learning_rate or 2e-5)
@@ -2027,6 +2032,7 @@ def execute_nlp_transformer_train(case_id: str, req: NLPTransformerTrainRequest)
         "case_id": case_id,
         "pid": proc.pid,
         "model": req.model_name,
+        "model_source": model_source,
         "epochs": req.epochs
     }
 

@@ -334,6 +334,7 @@ export const TextStudio: React.FC<TextStudioProps> = ({
 
   // Transformer Pipeline State
   const [transformerModel, setTransformerModel] = useState<string>('indobenchmark/indobert-base-p1');
+  const [transformerModelSource, setTransformerModelSource] = useState<'online' | 'offline'>('online');
   const [transformerEpochs, setTransformerEpochs] = useState<number>(3);
   const [transformerBatchSize, setTransformerBatchSize] = useState<number>(16);
   const [transformerLr, setTransformerLr] = useState<number>(2e-5);
@@ -475,6 +476,7 @@ export const TextStudio: React.FC<TextStudioProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model_name: transformerModel,
+          model_source: transformerModelSource,
           epochs: transformerEpochs,
           batch_size: transformerBatchSize,
           learning_rate: transformerLr,
@@ -1608,6 +1610,20 @@ export const TextStudio: React.FC<TextStudioProps> = ({
               </div>
 
               <div>
+                <label className="text-[11px] font-mono uppercase text-zinc-500 font-semibold">Model Source</label>
+                <select
+                  value={transformerModelSource}
+                  onChange={e => setTransformerModelSource(e.target.value as 'online' | 'offline')}
+                  className="w-full mt-1 mb-3 text-xs font-mono bg-zinc-50 border border-zinc-200 rounded-lg px-2.5 py-2 text-zinc-900"
+                >
+                  <option value="online">Online — unduh dari Hugging Face bila belum ada di cache</option>
+                  <option value="offline">Offline — gunakan checkpoint lokal saja</option>
+                </select>
+                <p className="text-[10px] text-zinc-500 mb-3">
+                  {transformerModelSource === 'offline'
+                    ? 'Mode offline tidak mengakses internet. Model terpilih harus tersedia di folder models/ atau models-bert/.'
+                    : 'Mode online dapat mengunduh checkpoint dari Hugging Face saat pertama kali digunakan.'}
+                </p>
                 <div className="flex items-center justify-between mb-1">
                   <label className="text-[11px] font-mono uppercase text-zinc-500 font-semibold">Backbone Pretrained Model</label>
                   <span className="text-[10px] text-zinc-400 font-mono">auto-adjusts optimal params</span>

@@ -23,34 +23,55 @@ except ImportError:
     sys.exit(1)
 
 
-def resolve_model_path(model_identifier: str) -> str:
-    """Resolve HuggingFace model path from local offline cache or repo ID."""
+def resolve_model_path(model_identifier: str, model_source: str = "online") -> str:
+    """Resolve model identifiers while keeping online/offline behavior explicit."""
+    model_source = (model_source or "online").strip().lower()
+    if model_source not in {"online", "offline"}:
+        raise ValueError("model_source harus 'online' atau 'offline'.")
     if "wirasana" in model_identifier.lower():
         model_identifier = "w11wo/indonesian-roberta-base-sentiment-classifier"
 
-    # 1. Exact path check
-    if os.path.exists(model_identifier) and os.path.exists(os.path.join(model_identifier, "config.json")):
+    if model_source == "online":
         return model_identifier
 
-    # 2. Check models/ directory
+    # Offline mode never falls back to the Hugging Face Hub.
+    if os.path.exists(model_identifier) and os.path.exists(os.path.join(model_identifier, "config.json")):
+        return os.path.abspath(model_identifier)
+
     basename = model_identifier.split("/")[-1]
-    candidates = [
-        os.path.join("models", model_identifier),
-        os.path.join("models", basename),
-        os.path.join("models", "indobert-base-p1") if "indobert" in basename.lower() and "tweet" not in basename.lower() else None,
-        os.path.join("models", "indobertweet-base-uncased") if "tweet" in basename.lower() else None,
-        os.path.join("models", "indonesian-roberta-base-sentiment") if "indonesian-roberta" in basename.lower() else None,
-        os.path.join("models", "xlm-roberta-base") if "xlm" in basename.lower() else None,
-        os.path.join("models", "roberta-base") if basename.lower() == "roberta-base" else None,
-        os.path.join("models", "distilbert-base-uncased") if "distilbert" in basename.lower() else None,
-        os.path.join("models", "deberta-v3-small") if "deberta" in basename.lower() else None,
-        os.path.join("models", "bert-base-multilingual-cased") if "multilingual" in basename.lower() else None,
-    ]
+    lower_name = basename.lower()
+    aliases = []
+    if "indobertweet" in lower_name:
+        aliases = ["indobertweet-base-uncased"]
+    elif lower_name in {"indobert-base-p1", "indonesian-bert-base-p1"}:
+        aliases = ["indobert-base-p1"]
+    elif "indonesian-roberta" in lower_name:
+        aliases = ["indonesian-roberta-base-sentiment", "indonesian-roberta-base"]
+    elif "xlm" in lower_name:
+        aliases = ["xlm-roberta-base"]
+    elif lower_name == "roberta-base":
+        aliases = ["roberta-base"]
+    elif "distilbert" in lower_name:
+        aliases = ["distilbert-base-uncased"]
+    elif "deberta" in lower_name:
+        aliases = ["deberta-v3-small"]
+    elif "multilingual" in lower_name:
+        aliases = ["bert-base-multilingual-cased"]
+    model_dirs = [model_identifier, basename, *aliases]
+    project_root = os.path.dirname(os.path.abspath(__file__))
+    candidates = [os.path.join(project_root, root, model_dir) for root in ("models", "models-bert") for model_dir in model_dirs]
     for c in candidates:
-        if c and os.path.exists(c) and os.path.exists(os.path.join(c, "config.json")):
+        has_weights = os.path.isdir(c) and any(
+            os.path.isfile(os.path.join(c, name))
+            for name in ("model.safetensors", "pytorch_model.bin", "model.safetensors.index.json", "pytorch_model.bin.index.json")
+        )
+        if c and os.path.exists(c) and os.path.exists(os.path.join(c, "config.json")) and has_weights:
             print(f"[OFFLINE CACHE] Resolved '{model_identifier}' to local folder '{c}'")
             return c
-    return model_identifier
+    raise FileNotFoundError(
+        f"Model '{model_identifier}' tidak ditemukan secara lokal. Mode offline mencari folder models/ atau models-bert/. "
+        "Jalankan package_offline_bundle.sh pada komputer yang memiliki internet terlebih dahulu."
+    )
 
 
 class PyTorchTextDataset(torch.utils.data.Dataset):
@@ -98,6 +119,7 @@ class UniversalTrainer(Trainer):
 def run_training(
     case_id: str,
     model_name: str = "indobenchmark/indobert-base-p1",
+    model_source: str = "online",
     task_type: str = "classification",
     epochs: int = 3,
     batch_size: int = 16,
@@ -118,13 +140,16 @@ def run_training(
         if log_callback:
             log_callback(msg)
 
-    model_name = resolve_model_path(model_name)
+    model_source = (model_source or "online").strip().lower()
+    model_name = resolve_model_path(model_name, model_source)
+    local_files_only = model_source == "offline"
     device = "cuda" if torch.cuda.is_available() else "cpu"
     gpu_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "None (CPU)"
     log(f"============================================================")
     log(f" UNIVERSAL TRANSFORMER PIPELINE: {case_id}")
     log(f" Active Device: {device.upper()} | GPU: {gpu_name}")
     log(f" Backbone Model: {model_name}")
+    log(f" Model Source: {model_source.upper()}")
     log(f" Mode: {task_type.upper()}")
     log(f"============================================================")
 
@@ -270,7 +295,7 @@ def run_training(
 
     # 6. Tokenizer & Native PyTorch Dataset Preparation
     log(f"Initializing tokenizer for '{model_name}'...")
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    tokenizer = AutoTokenizer.from_pretrained(model_name, local_files_only=local_files_only)
 
     if is_pairwise:
         train_encodings = tokenizer(
@@ -313,6 +338,7 @@ def run_training(
     log(f"Loading transformer model ({'Regression' if is_regression else 'Classification'})...")
     model = AutoModelForSequenceClassification.from_pretrained(
         model_name,
+        local_files_only=local_files_only,
         num_labels=num_labels,
         problem_type="regression" if is_regression else "single_label_classification",
         id2label=id2label,
@@ -474,6 +500,7 @@ def run_training(
     summary_results = {
         "case_id": case_id,
         "model_name": model_name,
+        "model_source": model_source,
         "task_type": task_type,
         "is_pairwise": is_pairwise,
         "device": device,
@@ -506,6 +533,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Universal Transformer Fine-Tuning Runner")
     parser.add_argument("--case", type=str, default="sentimen_karhutla", help="Case ID in cases/ folder")
     parser.add_argument("--model", type=str, default="indobenchmark/indobert-base-p1", help="Pretrained model identifier")
+    parser.add_argument("--model_source", type=str, default="online", choices=["online", "offline"], help="Load model from Hugging Face Hub or local models/ cache")
     parser.add_argument("--task_type", type=str, default="classification", choices=["classification", "regression"], help="Task type")
     parser.add_argument("--epochs", type=int, default=3, help="Number of training epochs")
     parser.add_argument("--batch_size", type=int, default=16, help="Batch size per device")
@@ -522,6 +550,7 @@ if __name__ == "__main__":
     run_training(
         case_id=args.case,
         model_name=args.model,
+        model_source=args.model_source,
         task_type=args.task_type,
         epochs=args.epochs,
         batch_size=args.batch_size,
