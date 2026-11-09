@@ -13,7 +13,7 @@ echo  2. Mengunduh semua file wheel (.whl) ke ./wheels/ untuk instalasi offline
 echo  3. Mengunduh bobot model Transformer (IndoBERT dll) ke ./models/
 echo.
 echo Setelah skrip ini selesai:
-echo  Salin SELURUH folder ini ke Flashdisk (kecuali .venv)
+echo  Salin SELURUH folder ini ke Flashdisk
 echo  Maka platform siap dijalankan 100%% OFFLINE di PC Panitia!
 echo ======================================================================
 echo.
@@ -50,24 +50,8 @@ echo [4/4] Mengunduh bobot model Pretrained Transformer ke ./models/ ...
 "%VENV_DIR%\Scripts\python.exe" scripts\download_models.py
 
 echo.
-echo ======================================================================
-echo   MEMERIKSA KELENGKAPAN OFFLINE BUNDLE...
-echo ======================================================================
-"%VENV_DIR%\Scripts\python.exe" -c "
-import os, glob
-wheels = glob.glob('wheels/*.whl')
-models = [d for d in os.listdir('models') if os.path.isdir(os.path.join('models', d))] if os.path.exists('models') else []
-print(f'Total Binary Wheels (.whl) Terunduh : {len(wheels)}')
-print(f'Total Model Offline Terunduh        : {len(models)} -> {models}')
-if len(wheels) > 0 and len(models) >= 3:
-    print('\n>>> STATUS: 100% SUKSES! BUNDLE SIAP DISALIN KE FLASHDISK! <<<')
-    print('Petunjuk ke PC Panitia:')
-    print('  1. Salin seluruh isi folder ini ke Flashdisk (folder .venv opsional ditinggal).')
-    print('  2. Di PC Panitia, jalankan install_offline.bat')
-    print('  3. Jalankan launch_studio.bat untuk membuka platform.')
-else:
-    print('\n[PERINGATAN] Ada file yang belum lengkap. Silakan jalankan ulang script ini.')
-"
-echo ======================================================================
+"%VENV_DIR%\Scripts\python.exe" scripts\verify_bundle.py
+
 echo.
+echo Selesai. Tekan tombol apa saja untuk menutup jendela ini...
 pause

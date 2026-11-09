@@ -45,18 +45,29 @@ Jika babak final Gemastik dilaksanakan pada komputer panitia yang **tidak memili
 ### Langkah A: Di PC Dosen (Koneksi Internet Cepat)
 1. Clone repositori ini dan masuk ke direktori proyek:
    ```bash
-   git clone <URL_REPO>
+   git clone https://github.com/arelquack/tabular-master.git
    cd gemastik-final
    ```
 2. Jalankan skrip packaging bundle:
-   ```cmd
-   package_offline_bundle.bat
-   # (atau ./package_offline_bundle.sh di Linux/macOS)
-   ```
+   - **PowerShell (Terminal Windows Default)**:
+     ```powershell
+     .\package_offline_bundle.ps1
+     # atau
+     .\package_offline_bundle.bat
+     ```
+   - **Command Prompt (CMD) / Klik Ganda**:
+     ```cmd
+     package_offline_bundle.bat
+     ```
+   - **Linux / macOS**:
+     ```bash
+     chmod +x package_offline_bundle.sh
+     ./package_offline_bundle.sh
+     ```
    Skrip ini secara otomatis:
    - Mengunduh seluruh pustaka Python dalam bentuk file binary wheel (`.whl`) ke direktori `./wheels/`.
    - Mengunduh seluruh bobot model NLP pretrained (IndoBERT, IndoBERTweet, RoBERTa) ke direktori `./models/`.
-   - Memverifikasi integritas offline bundle.
+   - Memverifikasi integritas offline bundle melalui `scripts/verify_bundle.py`.
 
 3. Salin (Copy-Paste) seluruh isi folder `gemastik-final` ke **Flashdisk**.
    *(Folder `.venv` opsional tidak perlu dicopy karena akan dibuat ulang secara lokal di PC Panitia).*
@@ -67,15 +78,22 @@ Jika babak final Gemastik dilaksanakan pada komputer panitia yang **tidak memili
 1. Tancapkan Flashdisk ke PC Panitia.
 2. Salin folder `gemastik-final` dari Flashdisk ke Desktop / Drive C: PC Panitia.
 3. Jalankan penginstal offline:
-   ```cmd
-   install_offline.bat
-   # (atau ./install_offline.sh di Linux)
-   ```
+   - **PowerShell**:
+     ```powershell
+     .\install_offline.ps1
+     # atau
+     .\install_offline.bat
+     ```
+   - **CMD / Klik Ganda**:
+     Jalankan `install_offline.bat`
+   - **Linux**:
+     ```bash
+     ./install_offline.sh
+     ```
    Skrip ini membuat `.venv` lokal dan menginstal seluruh pustaka dari folder lokal `./wheels/` dalam 15–30 detik tanpa koneksi internet.
 4. Jalankan platform:
-   ```cmd
-   launch_studio.bat
-   ```
+   - **PowerShell**: `.\launch_studio.ps1` atau `.\launch_studio.bat`
+   - **CMD / Klik Ganda**: `launch_studio.bat`
    Browser akan otomatis terbuka ke `http://localhost:8000`. Seluruh model Transformer di `./models/` akan dimuat secara offline tanpa akses jaringan (`TRANSFORMERS_OFFLINE=1`).
 
 ---

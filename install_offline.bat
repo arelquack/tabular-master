@@ -49,32 +49,7 @@ if exist "wheels" (
 
 echo.
 echo [3/3] Memeriksa kesiapan Hardware (GPU/CUDA) dan Model Offline...
-"%VENV_DIR%\Scripts\python.exe" -c "
-import sys, os
-
-print(f'Python Interpreter : {sys.executable} ({sys.version.split()[0]})')
-
-try:
-    import torch
-    has_cuda = torch.cuda.is_available()
-    dev_name = torch.cuda.get_device_name(0) if has_cuda else 'CPU Multi-Core Mode'
-    print(f'Akselerator Compute: PyTorch {torch.__version__} | CUDA: {has_cuda} ({dev_name})')
-except Exception as e:
-    print('Akselerator Compute: Gagal memeriksa PyTorch:', e)
-
-try:
-    import transformers
-    print(f'Transformers Engine: {transformers.__version__}')
-except Exception as e:
-    print('Transformers Engine:', e)
-
-models_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models')
-if os.path.exists(models_dir):
-    subdirs = [d for d in os.listdir(models_dir) if os.path.isdir(os.path.join(models_dir, d))]
-    print(f'Model Offline Siap : {len(subdirs)} model -> {subdirs}')
-else:
-    print('Model Offline      : Folder ./models/ belum ada.')
-"
+"%VENV_DIR%\Scripts\python.exe" scripts\verify_install.py
 
 echo.
 echo ======================================================================
