@@ -47,7 +47,7 @@ if not exist "wheels" mkdir "wheels"
 
 echo.
 echo [4/4] Mengunduh bobot model Pretrained Transformer ke ./models/ ...
-"%VENV_DIR%\Scripts\python.exe" scripts\download_models.py
+"%VENV_DIR%\Scripts\python.exe" scripts\download_models.py %*
 
 echo.
 "%VENV_DIR%\Scripts\python.exe" scripts\verify_bundle.py

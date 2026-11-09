@@ -52,7 +52,7 @@ if (-not (Test-Path $wheelsDir)) {
 Write-Host ""
 Write-Host "[4/4] Mengunduh bobot model Pretrained Transformer ke ./models/ ..." -ForegroundColor Green
 $downloadScript = Join-Path $PSScriptRoot "scripts\download_models.py"
-& $venvPy "$downloadScript"
+& $venvPy "$downloadScript" @args
 
 Write-Host ""
 $verifyScript = Join-Path $PSScriptRoot "scripts\verify_bundle.py"

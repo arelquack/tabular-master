@@ -6,24 +6,57 @@ Ensures 100% offline capability without internet connectivity.
 
 import os
 import sys
+import argparse
 
-MODELS = [
-    {
+ALL_MODELS = {
+    # Indonesian Models
+    "indobert": {
         "repo_id": "indobenchmark/indobert-base-p1",
         "local_dir": "models/indobert-base-p1",
-        "description": "Standard Indonesian BERT (Formal & General News/Articles, e.g. Kompas, Formal Text)"
+        "category": "indonesian",
+        "description": "Standard Indonesian BERT (Formal & General News, Kompas, Berita)"
     },
-    {
+    "indobertweet": {
         "repo_id": "indolem/indobertweet-base-uncased",
         "local_dir": "models/indobertweet-base-uncased",
-        "description": "Indonesian Twitter & Social Media BERT (Slang, Informal, YouTube Comments)"
+        "category": "indonesian",
+        "description": "Indonesian Twitter & Social Media BERT (Slang, Informal, Komentar)"
     },
-    {
+    "indonesian-roberta": {
         "repo_id": "w11wo/indonesian-roberta-base-sentiment-classifier",
         "local_dir": "models/indonesian-roberta-base-sentiment",
+        "category": "indonesian",
         "description": "Pre-tuned Indonesian RoBERTa Sentiment Classifier (SmSA benchmark)"
+    },
+    
+    # Multilingual & Mixed Code-Switching
+    "xlm-roberta": {
+        "repo_id": "xlm-roberta-base",
+        "local_dir": "models/xlm-roberta-base",
+        "category": "multilingual",
+        "description": "XLM-RoBERTa Multilingual (100 languages, Mixed Indo-Eng, Code-Switching, Slang)"
+    },
+
+    # English & Fast Benchmark Models
+    "distilbert": {
+        "repo_id": "distilbert-base-uncased",
+        "local_dir": "models/distilbert-base-uncased",
+        "category": "english",
+        "description": "DistilBERT English (Lightweight, Ultra-Fast 260MB, Monolingual English)"
+    },
+    "roberta-base": {
+        "repo_id": "roberta-base",
+        "local_dir": "models/roberta-base",
+        "category": "english",
+        "description": "Standard RoBERTa English (Kaggle Benchmark Standard)"
+    },
+    "deberta-v3-small": {
+        "repo_id": "microsoft/deberta-v3-small",
+        "local_dir": "models/deberta-v3-small",
+        "category": "english",
+        "description": "DeBERTa v3 Small (Disentangled Attention, Top SOTA Competition Model)"
     }
-]
+}
 
 def verify_offline_load(local_dir: str) -> bool:
     """Verifies that the downloaded model can be loaded with local_files_only=True (zero internet)."""
@@ -32,23 +65,43 @@ def verify_offline_load(local_dir: str) -> bool:
         tok = AutoTokenizer.from_pretrained(local_dir, local_files_only=True)
         mod = AutoModelForSequenceClassification.from_pretrained(local_dir, local_files_only=True, num_labels=2)
         return tok is not None and mod is not None
-    except Exception as e:
-        # Fallback test with AutoModel if sequence classification head has specific dimension
+    except Exception:
         try:
             from transformers import AutoTokenizer, AutoModel
             tok = AutoTokenizer.from_pretrained(local_dir, local_files_only=True)
             mod = AutoModel.from_pretrained(local_dir, local_files_only=True)
             return tok is not None and mod is not None
         except Exception as e2:
-            print(f"      [VERIFY FAILED]: {e2}")
+            print(f"      [VERIFY ALERT]: {e2}")
             return False
 
 def main():
+    parser = argparse.ArgumentParser(description="Download Transformer models for offline competition deployment.")
+    parser.add_argument(
+        "--preset",
+        type=str,
+        default="all",
+        choices=["all", "indonesian", "core", "english"],
+        help="Model preset to download: 'all' (all 7 UI models), 'core' (Indonesian + XLM-R), 'indonesian' (3 Indo models), 'english' (3 English models)"
+    )
+    args, unknown = parser.parse_known_args()
+
+    if args.preset == "all":
+        selected_keys = list(ALL_MODELS.keys())
+    elif args.preset == "core":
+        selected_keys = ["indobert", "indobertweet", "indonesian-roberta", "xlm-roberta"]
+    elif args.preset == "indonesian":
+        selected_keys = ["indobert", "indobertweet", "indonesian-roberta"]
+    elif args.preset == "english":
+        selected_keys = ["distilbert", "roberta-base", "deberta-v3-small"]
+    else:
+        selected_keys = list(ALL_MODELS.keys())
+
     print("=" * 75)
     print(" OFFLINE MODEL PACKAGER & DOWNLOADER (GEMASTIK FINAL DEPLOYMENT)")
+    print(f" Active Preset: '{args.preset.upper()}' ({len(selected_keys)} Models Selected)")
     print("=" * 75)
-    print("Target Destination: ./models/ inside project root directory")
-    print("Ensures all weights are portable and copyable via Flashdisk to PC Panitia.\n")
+    print("Target Destination: ./models/ inside project root directory\n")
 
     try:
         from huggingface_hub import snapshot_download
@@ -70,7 +123,8 @@ def main():
     os.makedirs("models", exist_ok=True)
     all_success = True
 
-    for item in MODELS:
+    for key in selected_keys:
+        item = ALL_MODELS[key]
         repo_id = item["repo_id"]
         local_dir = item["local_dir"]
         desc = item["description"]
@@ -86,7 +140,7 @@ def main():
                 print(f"    [VERIFIED OFFLINE READY] Model '{repo_id}' is ready in '{local_dir}'!")
                 continue
             else:
-                print("    [WARN] Existing folder corrupted or incomplete. Re-downloading...")
+                print("    [WARN] Existing folder incomplete. Resuming download...")
 
         print("    [DOWNLOADING] Downloading complete weights and tokenizer files...")
         success = False
@@ -101,7 +155,7 @@ def main():
                 print(f"    [DOWNLOAD OK] Snapshot downloaded successfully via huggingface_hub.")
                 success = True
             except Exception as e:
-                print(f"    [WARN] snapshot_download encountered issue: {e}. Trying transformers fallback...")
+                print(f"    [WARN] snapshot_download issue: {e}. Trying transformers fallback...")
 
         if not success and has_hf:
             try:
@@ -129,11 +183,11 @@ def main():
 
     print("\n" + "=" * 75)
     if all_success:
-        print(" [SUCCESS] ALL PRETRAINED MODELS READY IN './models/'")
+        print(" [SUCCESS] ALL REQUESTED PRETRAINED MODELS READY IN './models/'")
         print(" You can now safely copy the entire project folder to a Flashdisk")
         print(" and run 100% OFFLINE on PC Panitia with zero internet connection!")
     else:
-        print(" [WARNING] Some models failed to download. Please re-run on PC Dosen with internet.")
+        print(" [WARNING] Some models encountered download issues. Re-run script to complete.")
     print("=" * 75)
 
 if __name__ == "__main__":
