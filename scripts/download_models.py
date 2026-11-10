@@ -13,18 +13,21 @@ ALL_MODELS = {
     "indobert": {
         "repo_id": "indobenchmark/indobert-base-p1",
         "local_dir": "models/indobert-base-p1",
+        "model_type": "encoder",
         "category": "indonesian",
         "description": "Standard Indonesian BERT (Formal & General News, Kompas, Berita)"
     },
     "indobertweet": {
         "repo_id": "indolem/indobertweet-base-uncased",
         "local_dir": "models/indobertweet-base-uncased",
+        "model_type": "encoder",
         "category": "indonesian",
         "description": "Indonesian Twitter & Social Media BERT (Slang, Informal, Komentar)"
     },
     "indonesian-roberta": {
         "repo_id": "w11wo/indonesian-roberta-base-sentiment-classifier",
         "local_dir": "models/indonesian-roberta-base-sentiment",
+        "model_type": "sequence_classification",
         "category": "indonesian",
         "description": "Pre-tuned Indonesian RoBERTa Sentiment Classifier (SmSA benchmark)"
     },
@@ -33,6 +36,7 @@ ALL_MODELS = {
     "xlm-roberta": {
         "repo_id": "xlm-roberta-base",
         "local_dir": "models/xlm-roberta-base",
+        "model_type": "encoder",
         "category": "multilingual",
         "description": "XLM-RoBERTa Multilingual (100 languages, Mixed Indo-Eng, Code-Switching, Slang)"
     },
@@ -41,39 +45,63 @@ ALL_MODELS = {
     "distilbert": {
         "repo_id": "distilbert-base-uncased",
         "local_dir": "models/distilbert-base-uncased",
+        "model_type": "encoder",
         "category": "english",
         "description": "DistilBERT English (Lightweight, Ultra-Fast 260MB, Monolingual English)"
     },
     "roberta-base": {
         "repo_id": "roberta-base",
         "local_dir": "models/roberta-base",
+        "model_type": "encoder",
         "category": "english",
         "description": "Standard RoBERTa English (Kaggle Benchmark Standard)"
     },
     "deberta-v3-small": {
         "repo_id": "microsoft/deberta-v3-small",
         "local_dir": "models/deberta-v3-small",
+        "model_type": "encoder",
         "category": "english",
         "description": "DeBERTa v3 Small (Disentangled Attention, Top SOTA Competition Model)"
     }
 }
 
-def verify_offline_load(local_dir: str) -> bool:
-    """Verifies that the downloaded model can be loaded with local_files_only=True (zero internet)."""
+ALL_MODELS.update({
+    "sdd-sentiment-general": {
+        "repo_id": "AzrilFahmiardi/sdd-sentiment-general",
+        "local_dir": "models/sdd-sentiment-general",
+        "category": "indonesian",
+        "model_type": "sequence_classification",
+        "description": "IndoBERT 3-class sentiment classifier for Indonesian news and social media"
+    },
+    "indobertweet-sentiment": {
+        "repo_id": "Aardiiiiy/indobertweet-base-Indonesian-sentiment-analysis",
+        "local_dir": "models/indobertweet-base-Indonesian-sentiment-analysis",
+        "category": "indonesian",
+        "model_type": "sequence_classification",
+        "description": "IndoBERTweet fine-tuned for Indonesian sentiment classification"
+    },
+    "indonesian-roberta-base": {
+        "repo_id": "flax-community/indonesian-roberta-base",
+        "local_dir": "models/indonesian-roberta-base",
+        "category": "indonesian",
+        "model_type": "encoder",
+        "description": "Indonesian RoBERTa base encoder for feature extraction"
+    },
+})
+
+def verify_offline_load(local_dir: str, model_type: str = "encoder") -> bool:
+    """Verify the checkpoint with the model architecture it is intended to provide."""
     try:
-        from transformers import AutoTokenizer, AutoModelForSequenceClassification
+        from transformers import AutoTokenizer, AutoModel, AutoModelForSequenceClassification
         tok = AutoTokenizer.from_pretrained(local_dir, local_files_only=True)
-        mod = AutoModelForSequenceClassification.from_pretrained(local_dir, local_files_only=True, num_labels=2)
-        return tok is not None and mod is not None
-    except Exception:
-        try:
-            from transformers import AutoTokenizer, AutoModel
-            tok = AutoTokenizer.from_pretrained(local_dir, local_files_only=True)
+        if model_type == "sequence_classification":
+            mod = AutoModelForSequenceClassification.from_pretrained(local_dir, local_files_only=True)
+        else:
             mod = AutoModel.from_pretrained(local_dir, local_files_only=True)
-            return tok is not None and mod is not None
-        except Exception as e2:
-            print(f"      [VERIFY ALERT]: {e2}")
-            return False
+        return tok is not None and mod is not None
+    except Exception as error:
+        print(f"      [VERIFY ALERT]: {error}")
+        return False
 
 def main():
     parser = argparse.ArgumentParser(description="Download Transformer models for offline competition deployment.")
@@ -82,16 +110,16 @@ def main():
         type=str,
         default="all",
         choices=["all", "indonesian", "core", "english"],
-        help="Model preset to download: 'all' (all 7 UI models), 'core' (Indonesian + XLM-R), 'indonesian' (3 Indo models), 'english' (3 English models)"
+        help="Model preset to download: 'all', 'core' (Indonesian + XLM-R), 'indonesian', or 'english'"
     )
     args, unknown = parser.parse_known_args()
 
     if args.preset == "all":
         selected_keys = list(ALL_MODELS.keys())
     elif args.preset == "core":
-        selected_keys = ["indobert", "indobertweet", "indonesian-roberta", "xlm-roberta"]
+        selected_keys = ["indobert", "indobertweet", "indonesian-roberta", "sdd-sentiment-general", "indobertweet-sentiment", "indonesian-roberta-base", "xlm-roberta"]
     elif args.preset == "indonesian":
-        selected_keys = ["indobert", "indobertweet", "indonesian-roberta"]
+        selected_keys = ["indobert", "indobertweet", "indonesian-roberta", "sdd-sentiment-general", "indobertweet-sentiment", "indonesian-roberta-base"]
     elif args.preset == "english":
         selected_keys = ["distilbert", "roberta-base", "deberta-v3-small"]
     else:
@@ -136,7 +164,7 @@ def main():
         # Check if already downloaded and verified
         if os.path.exists(local_dir) and os.path.exists(os.path.join(local_dir, "config.json")):
             print("    [CHECK] Checking existing local cache...")
-            if verify_offline_load(local_dir):
+            if verify_offline_load(local_dir, item["model_type"]):
                 print(f"    [VERIFIED OFFLINE READY] Model '{repo_id}' is ready in '{local_dir}'!")
                 continue
             else:
@@ -150,7 +178,7 @@ def main():
                 snapshot_download(
                     repo_id=repo_id,
                     local_dir=local_dir,
-                    ignore_patterns=["*.msgpack", "*.h5", "*.ot", "*.onnx"]
+                    ignore_patterns=["*.msgpack", "*.h5", "*.ot", "*.onnx", "optimizer.pt", "scheduler.pt", "training_args.bin", "events.out.tfevents*"]
                 )
                 print(f"    [DOWNLOAD OK] Snapshot downloaded successfully via huggingface_hub.")
                 success = True
@@ -161,9 +189,9 @@ def main():
             try:
                 tokenizer = AutoTokenizer.from_pretrained(repo_id)
                 tokenizer.save_pretrained(local_dir)
-                try:
+                if item["model_type"] == "sequence_classification":
                     model = AutoModelForSequenceClassification.from_pretrained(repo_id)
-                except Exception:
+                else:
                     model = AutoModel.from_pretrained(repo_id)
                 model.save_pretrained(local_dir)
                 print(f"    [DOWNLOAD OK] Saved successfully via transformers API.")
@@ -173,7 +201,7 @@ def main():
 
         if success:
             print("    [VERIFYING] Testing offline loading (local_files_only=True)...")
-            if verify_offline_load(local_dir):
+            if verify_offline_load(local_dir, item["model_type"]):
                 print(f"    [SUCCESS] '{repo_id}' verified 100% OFFLINE READY!")
             else:
                 print(f"    [WARNING] Model downloaded but offline verification produced an alert.")
